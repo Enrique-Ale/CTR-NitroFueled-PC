@@ -38,6 +38,9 @@
 #include <system_error>
 #include <vector>
 #include <vk_mem_alloc.h>
+#ifdef MemoryBarrier
+#undef MemoryBarrier // bbport: winnt.h macro (through fmt), clashes with vk::MemoryBarrier
+#endif
 
 namespace Vulkan {
 

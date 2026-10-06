@@ -27,6 +27,9 @@
 #include <time.h>
 #include <SDL3/SDL.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#define strcasestr SDL_strcasestr /* not in the MinGW C library */
+#endif
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
 #define ERR_INVALID_HANDLE ((int32_t)0x80920003)
@@ -106,8 +109,14 @@ static void refresh_ports(uint64_t now) {
     const char *path=getenv("BB_CONFIG");
     struct stat st;
     if (!path || stat(path,&st)) return;
+#ifdef _WIN32
+    /* No nanoseconds in the CRT's stat: the size tells two writes within a second apart. */
+    if (st.st_mtime==config_mtime.tv_sec && (long)st.st_size==config_mtime.tv_nsec) return;
+    config_mtime.tv_sec=st.st_mtime; config_mtime.tv_nsec=(long)st.st_size;
+#else
     if (st.st_mtim.tv_sec==config_mtime.tv_sec && st.st_mtim.tv_nsec==config_mtime.tv_nsec) return;
     config_mtime=st.st_mtim;
+#endif
     load_ports();
 }
 /* 1 when the gamepad id is claimed by a port other than `except` (ports 2..4 with a name). */
@@ -609,8 +618,14 @@ static void read_inject(void) {
     last_check=now;
     struct stat st;
     if (stat(path,&st)!=0) return;
+#ifdef _WIN32
+    /* Whole-second mtimes: the size tells two edits within a second apart. */
+    if (st.st_mtime==mtime.tv_sec && st.st_size==mtime.tv_nsec) return;
+    mtime=(struct timespec){st.st_mtime,(long)st.st_size};
+#else
     if (st.st_mtim.tv_sec==mtime.tv_sec && st.st_mtim.tv_nsec==mtime.tv_nsec) return;
     mtime=st.st_mtim;
+#endif
     FILE *f=fopen(path,"r");
     if (!f) return;
     static const struct { const char *name; uint32_t ps; } names[]={

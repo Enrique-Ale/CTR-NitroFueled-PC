@@ -15,7 +15,7 @@ static ABI void pure_virtual(void) {
 }
 static ABI void base_dtor(void *self) { (void)self; }
 /* Default notifyError: the library reports allocation failures through the allocator; nothing to do. */
-static _Atomic unsigned notified;
+static unsigned notified; /* __atomic builtins (clang rejects them on _Atomic objects) */
 static ABI void notify_error(void *self,int32_t code,uint64_t size,void *user) {
     (void)self; (void)user;
     if (__atomic_fetch_add(&notified,1,__ATOMIC_RELAXED)<4) printf("Json2: MemAllocator::notifyError(%d, %llu bytes)\n",code,(unsigned long long)size);

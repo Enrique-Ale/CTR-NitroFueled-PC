@@ -9,9 +9,11 @@
 #include <unordered_map>
 #include <cstring>
 #include <string>
+#ifndef _WIN32
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <unistd.h>
+#endif
 #include <functional>
 
 #include "bbport_copy.h"
@@ -62,9 +64,11 @@ void ReportProducer(const char* what, u32 other, const char* other_where, const 
                  "Scheduler: %s: thread %u (%s) entering %s while thread %u (%s) is in %s\n",
                  what, self, ThreadName(self).c_str(), where, other, ThreadName(other).c_str(),
                  other_where ? other_where : "?");
+#ifndef _WIN32
     void* frames[24];
     const int depth = backtrace(frames, 24);
     backtrace_symbols_fd(frames, depth, 2);
+#endif
 }
 } // namespace
 
@@ -297,8 +301,12 @@ void Scheduler::TracePassBreak(void* caller) {
                 static_cast<unsigned long long>(breaks),
                 std::chrono::duration<double>(now - last).count());
     for (size_t i = 0; i < std::min<size_t>(top.size(), 10); ++i) {
+#ifdef _WIN32
+        struct { const char* dli_fname; void* dli_fbase; } info{nullptr, nullptr};
+#else
         Dl_info info{};
         dladdr(top[i].second, &info);
+#endif
         std::printf("Render pass break caller: %llu x %s+0x%lx\n",
                     static_cast<unsigned long long>(top[i].first),
                     info.dli_fname ? info.dli_fname : "?",
@@ -332,8 +340,12 @@ void Scheduler::TraceDirectRecording(void* caller) {
     }
     std::ranges::sort(top, std::greater{});
     for (size_t i = 0; i < std::min<size_t>(top.size(), 8); ++i) {
+#ifdef _WIN32
+        struct { const char* dli_fname; void* dli_fbase; } info{nullptr, nullptr};
+#else
         Dl_info info{};
         dladdr(top[i].second, &info);
+#endif
         std::printf("Recorder sync caller: %llu x %s+0x%lx\n",
                     static_cast<unsigned long long>(top[i].first),
                     info.dli_fname ? info.dli_fname : "?",
