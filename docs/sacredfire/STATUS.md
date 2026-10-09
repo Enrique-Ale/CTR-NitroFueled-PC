@@ -47,7 +47,25 @@ have not been reached yet).
 RSS about 1.1 GB, VRAM about 1 GB, Vulkan allocations 1.6 GB; the Steam Deck's 14 GiB are enough
 with the desktop apps closed.
 
+## Measured at the milestones (run 29, 2026-10-09; `free -g` total/used/free/shared/cache/available, bb-probe RSS)
+
+| milestone | time | free -g | RSS |
+|---|---|---|---|
+| (a) entry + libc init | 16:39:07 | 14/9/2/0/2/4 | 502,156 KiB |
+| (b) first frames (24 FPS, 105 compiles) | 16:39:13 | 14/10/2/0/2/4 | 1,113,012 KiB |
+| (c) driver select with the pad | 16:40:02 | 14/11/1/1/2/3 | 1,512,808 KiB |
+| (d) race loading | 16:40:02 | 14/11/1/1/2/3 | 1,515,908 KiB |
+
 ## Known issues
+
+- **Adventure hub sky** renders as concentric colour stripes (user screenshot, run 29); fur and
+  everything else in the scene are right. Not investigated yet; capture the frame
+  (BB_CAPTURE_TRIGGER) in that hub.
+- **Clobbered packet headers**: in CTR a single dword inside a submitted command buffer is
+  sometimes overwritten with 1 (`Bad PM4 packet ... [00000001]` where a SET_CONTEXT_REG header
+  was). Dropping the rest of the buffer froze the game on the fence behind it; the decoder now
+  resumes at the next packet header. Who writes the 1 is still unknown (BB_WRITE_LOG=1 lists
+  writes into the range).
 
 - **Fur/hair characters** (fixed 2026-10-09, see 06-fur.md): previously missing (driver select, run 12): bodies drawn with the fur material
   are missing; rigid parts (eyes, teeth, hats, kart) draw. The only GPU errors in the run are

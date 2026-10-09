@@ -4,6 +4,8 @@
 // start. Readers load the atomics every frame; writers are the menu and Load().
 
 #pragma once
+#include <array>
+#include <mutex>
 
 #include <atomic>
 
@@ -46,7 +48,11 @@ inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
 inline constexpr int OutputCount = 4;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
+/// SacredFire: controller ports for split screen (bbport.ini port.1..4: SDL GUID or part of the
+/// gamepad name; the runtime re-reads the file when the menu saves it).
+constexpr int ControllerPorts = 4;
 struct Values {
+    std::array<std::array<char, 64>, ControllerPorts> ports{}; ///< guarded by PortsMutex()
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
@@ -88,6 +94,7 @@ struct Values {
 };
 
 Values& Get();
+std::mutex& PortsMutex();
 /// Localized overlay text; the Language selector itself stays in English.
 const char* MenuText(const char* english, const char* russian);
 

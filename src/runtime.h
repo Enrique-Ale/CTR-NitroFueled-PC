@@ -101,6 +101,11 @@ uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
+/* SacredFire: controller ports for split screen. Port 1 is the player's pad (keyboard too); ports
+ * 2..4 take the gamepad named in bbport.ini (port.N=<GUID or part of the name>, written by the
+ * in-game menu) and appear to the game as logged-in users 2..4 while that gamepad is connected. */
+int runtime_pad_user_present(int user);
+void runtime_services_user_change(int user, int login);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);

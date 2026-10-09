@@ -26,7 +26,11 @@ float Clamp(float v, float lo, float hi) {
 void Set(Values& v, const std::string& key, const std::string& value) {
     const float f = float(std::atof(value.c_str()));
     const int i = std::atoi(value.c_str());
-    if (key == "menu_language") {
+    if (key.size() == 6 && key.rfind("port.", 0) == 0 && key[5] >= '1' && key[5] <= '4') {
+        std::lock_guard lk{PortsMutex()};
+        auto& slot = v.ports[size_t(key[5] - '1')];
+        std::snprintf(slot.data(), slot.size(), "%s", value.c_str());
+    } else if (key == "menu_language") {
         if (value == "en") v.menu_language = MenuLanguage::English;
         else if (value == "ru") v.menu_language = MenuLanguage::Russian;
         else std::printf("Settings: unknown menu_language '%s' (expected en or ru)\n", value.c_str());
@@ -89,6 +93,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
 }
 
 } // namespace
+
+std::mutex& PortsMutex() { static std::mutex m; return m; }
 
 Values& Get() {
     static Values values;
@@ -216,6 +222,12 @@ void Save() {
         return std::string(text);
     };
     const auto flag = [](bool value) { return std::string(value ? "1" : "0"); };
+    {
+        std::lock_guard lk{PortsMutex()};
+        for (int p = 0; p < ControllerPorts; ++p) {
+            put(("port." + std::to_string(p + 1)).c_str(), std::string(v.ports[size_t(p)].data()));
+        }
+    }
     put("menu_language", v.menu_language == MenuLanguage::Russian ? "ru" : "en");
     put("upscaler", UpscalerName(v.upscaler));
     put("preset", std::to_string(v.preset.load()));

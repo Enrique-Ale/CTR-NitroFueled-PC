@@ -1036,15 +1036,29 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
-        case 0:
-            // sacredfire: CTR submits command buffers whose tail is still being written (the
-            // copy at submit sees unwritten dwords). The rest of this buffer is dropped, as a
-            // console whose GPU ran ahead would misread it too; later submissions continue.
+        case 0: {
+            // sacredfire: in CTR a single packet header inside a submitted buffer is sometimes
+            // overwritten (seen: 0x00000001 in place of a SET_CONTEXT_REG header). Dropping the
+            // rest of the buffer deadlocked the game on the fence that followed; instead the
+            // decoder resumes at the next dword that looks like a type-3 header (or type-2
+            // padding), losing only the clobbered packet.
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
-            LOG_ERROR(Render_Vulkan, "PM4 type 0 packet (base reg {}, size {}): dropping the rest of this command buffer",
-                      header->type0.base.Value(), header->type0.NumWords());
-            dcb = {};
+            std::size_t skip = 1;
+            while (skip < dcb.size() && skip < 64) {
+                const u32 word = dcb[skip];
+                const u32 kind = word >> 30;
+                const u32 opcode = (word >> 8) & 0xff;
+                if (kind == 2 || (kind == 3 && opcode >= 0x10 && opcode <= 0x9f)) {
+                    break;
+                }
+                ++skip;
+            }
+            LOG_ERROR(Render_Vulkan,
+                      "PM4 type 0 packet (base reg {}, size {}): skipping {} dwords to the next packet",
+                      header->type0.base.Value(), header->type0.NumWords(), skip);
+            dcb = dcb.subspan(skip);
             continue;
+        }
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);

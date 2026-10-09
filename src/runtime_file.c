@@ -34,7 +34,7 @@ typedef struct {
 _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
-typedef struct { int used, host; Listing *dir; size_t position; char path[512]; } File;
+typedef struct { int used, host, save_logged; Listing *dir; size_t position; char path[512]; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
@@ -250,6 +250,8 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     return n;
 }
 static int64_t do_write(int fd,const void *buffer,uint64_t size) {
+    /* SacredFire: the first write into each opened save file is logged (plan milestone d). */
+    { File *sf=get(fd); if (sf && !sf->save_logged && !strncmp(sf->path,"/savedata",9)) { sf->save_logged=1; printf("Runtime: save write: %s (%llu bytes)\n",sf->path,(unsigned long long)size); } }
     int h=host_fd(fd);
     if (h<0) return -EBADF;
     ssize_t n=write(h,buffer,size);

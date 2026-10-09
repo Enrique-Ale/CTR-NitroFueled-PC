@@ -42,27 +42,46 @@ static int new_id(void) { pthread_mutex_lock(&lock); int id=next_id++; pthread_m
 static void note(const char *what) { printf("Runtime: %s\n",what); }
 
 /* ---- UserService ---- */
-static int login_event_pending=1;
+/* SacredFire: UserService events: login of user 1 at start, then logins/logouts of users 2..4 as
+ * the in-game controller ports are assigned and their gamepads connect (runtime_pad.c). */
+static struct { int user, login; } user_events[32];
+static int user_event_count=0, user_events_seeded;
+static void seed_user_events(void) { if (!user_events_seeded) { user_events_seeded=1; user_events[0].user=USER_ID; user_events[0].login=1; user_event_count=1; } }
+void runtime_services_user_change(int user,int login) {
+    pthread_mutex_lock(&lock);
+    seed_user_events();
+    if (user_event_count<(int)(sizeof(user_events)/sizeof(*user_events))) { user_events[user_event_count].user=user; user_events[user_event_count].login=login; ++user_event_count; }
+    pthread_mutex_unlock(&lock);
+    printf("Runtime: user %d %s (controller port %d)\n",user,login ? "logged in" : "logged out",user);
+}
 static ABI int32_t user_initialize(const void *params) { (void)params; note("UserService initialized (user 1 logged in)"); return 0; }
 static ABI int32_t user_terminate(void) { return 0; }
 static ABI int32_t user_initial(int32_t *id) { if (!id) return USER_INVALID_ARGUMENT; *id=USER_ID; return 0; }
 static ABI int32_t user_list(int32_t *ids) {
     if (!ids) return USER_INVALID_ARGUMENT;
-    ids[0]=USER_ID; ids[1]=ids[2]=ids[3]=-1; return 0;
+    int n=0;
+    ids[n++]=USER_ID;
+    for (int user=2;user<=4;++user) if (runtime_pad_user_present(user)) ids[n++]=user;
+    while (n<4) ids[n++]=-1;
+    return 0;
 }
 static ABI int32_t user_name(int32_t id,char *name,uint64_t size) {
-    if (id!=USER_ID || !name) return USER_INVALID_ARGUMENT;
+    if (id<1 || id>4 || !name) return USER_INVALID_ARGUMENT;
+    char player[16];
     const char *value=getenv("BB_USER_NAME") ? getenv("BB_USER_NAME") : "Hunter";
+    if (id!=USER_ID) { snprintf(player,sizeof player,"Player %d",id); value=player; }
     if (strlen(value)+1>size) return (int32_t)0x8096000a; /* BUFFER_TOO_SHORT */
     strcpy(name,value); return 0;
 }
 static ABI int32_t user_event(int32_t *event) {
     if (!event) return USER_INVALID_ARGUMENT;
     pthread_mutex_lock(&lock);
-    int pending=login_event_pending; login_event_pending=0;
+    seed_user_events();
+    if (!user_event_count) { pthread_mutex_unlock(&lock); return USER_NO_EVENT; }
+    const int user=user_events[0].user, login=user_events[0].login;
+    memmove(user_events,user_events+1,(size_t)(user_event_count-1)*sizeof(*user_events)); --user_event_count;
     pthread_mutex_unlock(&lock);
-    if (!pending) return USER_NO_EVENT;
-    event[0]=0; event[1]=USER_ID; /* LOGIN */
+    event[0]=login ? 0 : 1; event[1]=user; /* LOGIN / LOGOUT */
     return 0;
 }
 

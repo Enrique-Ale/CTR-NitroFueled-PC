@@ -518,6 +518,56 @@ void Menu() {
         }
     }
 
+    // SacredFire: controller ports for split screen. Each port takes one connected gamepad; the
+    // runtime logs the matching user in and reads that pad for it. Port 1 is the player.
+    ImGui::SeparatorText(BbSettings::MenuText("Controllers (split screen)", "Контроллеры (разделённый экран)"));
+    {
+        int count = 0;
+        SDL_JoystickID* ids = SDL_GetGamepads(&count);
+        std::vector<std::pair<std::string, std::string>> pads; // guid, label
+        for (int i = 0; ids && i < count; ++i) {
+            char guid[33];
+            SDL_GUIDToString(SDL_GetGamepadGUIDForID(ids[i]), guid, sizeof guid);
+            const char* name = SDL_GetGamepadNameForID(ids[i]);
+            pads.emplace_back(guid, std::string(name ? name : "gamepad") + "  [" + std::string(guid).substr(0, 8) + "]");
+        }
+        SDL_free(ids);
+        bool changed = false;
+        for (int p = 0; p < BbSettings::ControllerPorts; ++p) {
+            std::string current;
+            {
+                std::lock_guard lk{BbSettings::PortsMutex()};
+                current = s.ports[size_t(p)].data();
+            }
+            std::string label = current.empty() ? (p == 0 ? BbSettings::MenuText("(first / last used)", "(первый / последний использованный)") : BbSettings::MenuText("(none)", "(нет)")) : current;
+            for (const auto& [guid, text] : pads) {
+                if (guid == current) label = text;
+            }
+            char title[32];
+            std::snprintf(title, sizeof title, "%s %d", BbSettings::MenuText("Port", "Порт"), p + 1);
+            if (ImGui::BeginCombo(title, label.c_str())) {
+                if (ImGui::Selectable(p == 0 ? BbSettings::MenuText("(first / last used)", "(первый / последний использованный)") : BbSettings::MenuText("(none)", "(нет)"), current.empty())) {
+                    std::lock_guard lk{BbSettings::PortsMutex()};
+                    s.ports[size_t(p)][0] = 0;
+                    changed = true;
+                }
+                for (const auto& [guid, text] : pads) {
+                    if (ImGui::Selectable(text.c_str(), guid == current)) {
+                        std::lock_guard lk{BbSettings::PortsMutex()};
+                        std::snprintf(s.ports[size_t(p)].data(), s.ports[size_t(p)].size(), "%s", guid.c_str());
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (changed) {
+            BbSettings::Save();
+        }
+        ImGui::TextDisabled("%s", BbSettings::MenuText("Ports 2-4 log in as Player 2-4 while their gamepad is connected",
+                                                 "Порты 2-4 входят как Player 2-4, пока подключён их геймпад"));
+    }
+
     ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
     Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
 
