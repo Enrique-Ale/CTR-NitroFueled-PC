@@ -121,7 +121,8 @@ static SDL_Gamepad *current_gamepad(void) {
 typedef struct { uint16_t size, version; uint32_t reserved; uint64_t max_system, system, max_in_use, in_use; } MallocManagedSize;
 static void report_guest_heap(void) {
     static int enabled=-1; static uint64_t last;
-    if (enabled<0) enabled=getenv("BB_FRAME_STATS")!=NULL;
+    /* SacredFire: the stub offset belongs to Bloodborne's libc.prx and image layout; other profiles skip it. */
+    if (enabled<0) { const char *profile=getenv("BB_GAME_PROFILE"); enabled=getenv("BB_FRAME_STATS")!=NULL && (!profile || !strcmp(profile,"bloodborne")); }
     const uint64_t now=now_us();
     if (!enabled || now-last<5000000) return;
     last=now;
