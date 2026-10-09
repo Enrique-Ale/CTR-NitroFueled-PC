@@ -19,6 +19,10 @@ if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3 && co
     fi
     echo 'Need pkg-config with vulkan and sdl3, cmake and ninja (see shell.nix).' >&2; exit 1
 fi
+# SacredFire: header-only libraries the host lacks (magic_enum, VulkanMemoryAllocator, xbyak) come
+# from tools/deps.sh into out/deps/prefix; CMake finds them through CMAKE_PREFIX_PATH.
+if [[ ! -f out/deps/prefix/include/vk_mem_alloc.h ]]; then bash tools/deps.sh; fi
+export CMAKE_PREFIX_PATH="$PWD/out/deps/prefix${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
 read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3)"
 read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3)"
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libbbgpu.so.
