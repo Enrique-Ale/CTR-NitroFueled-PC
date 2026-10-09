@@ -9,9 +9,10 @@ Updated 2026-10-09.
 | Loader reaches the eboot entry, libc.prx/Fios2/NpToolkit2 initialized | reached |
 | First frame presented | reached: the license screen renders at 25-30 FPS, 51 draws/frame |
 | Sound and input | reached: two audio ports on PipeWire, Steam Deck Controller through SDL3 |
-| Saving | reached: user/savedata/1/CUSA13795/savedata0/SYS-DATA.sav written after the license screen |
+| Saving | reached: user/savedata/1/CUSA13795/savedata{0,1}/SYS-DATA.sav written; user confirmed progress persists between launches (2026-10-09) |
 | Main menu | reached (2026-10-09, run 12): after the license screens and Bink intro videos the game's own log shows menu/garage activity ("changeHeroAndOutfit", "Loading hero DriverNGin"), ~300 draws/frame at 30 FPS |
-| One full race | reached (2026-10-09, run 14): arcade races play through with sound, the Steam Deck controller and saving (user report); adventure mode being tried |
+| One full race | reached (2026-10-09, run 14): arcade races play through with sound, the Steam Deck controller and saving (user report) |
+| Adventure mode | plays after the sampler fix (user tried it; not played to the end) |
 
 ## How to run
 
