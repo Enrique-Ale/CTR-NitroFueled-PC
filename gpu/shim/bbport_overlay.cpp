@@ -174,9 +174,14 @@ void Menu() {
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
     bool keep_open = true;
+    // SacredFire: the menu title names the game profile.
+    const char* title_profile = std::getenv("BB_GAME_PROFILE");
+    const bool title_ctr = title_profile && std::strcmp(title_profile, "ctr") == 0;
     if (!ImGui::Begin(
-            BbSettings::MenuText("Bloodborne - Graphics  (Insert / L3+R3)###bbport_settings",
-                                 "Bloodborne — настройки  (Insert / L3+R3)###bbport_settings"),
+            title_ctr ? BbSettings::MenuText("SacredFire - Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings",
+                                             "SacredFire — Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings")
+                      : BbSettings::MenuText("Bloodborne - Graphics  (Insert / L3+R3)###bbport_settings",
+                                             "Bloodborne — настройки  (Insert / L3+R3)###bbport_settings"),
             &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;

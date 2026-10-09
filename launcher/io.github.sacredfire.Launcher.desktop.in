@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=SacredFire (Crash Team Racing: Nitro-Fueled)
+Comment=Crash Team Racing: Nitro-Fueled, natively on Linux
+Exec=@LAUNCHER@
+Icon=applications-games
+Categories=Game;

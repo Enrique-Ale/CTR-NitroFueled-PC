@@ -54,6 +54,11 @@ void runtime_services_user_change(int user,int login) {
     pthread_mutex_unlock(&lock);
     printf("Runtime: user %d %s (controller port %d)\n",user,login ? "logged in" : "logged out",user);
 }
+/* The local user's name: BB_USER_NAME, else per game profile ("Hunter" is Bloodborne's). */
+static const char *default_user_name(void) {
+    const char *profile=getenv("BB_GAME_PROFILE");
+    return profile && !strcmp(profile,"bloodborne") ? "Hunter" : "Player 1";
+}
 static ABI int32_t user_initialize(const void *params) { (void)params; note("UserService initialized (user 1 logged in)"); return 0; }
 static ABI int32_t user_terminate(void) { return 0; }
 static ABI int32_t user_initial(int32_t *id) { if (!id) return USER_INVALID_ARGUMENT; *id=USER_ID; return 0; }
@@ -68,7 +73,7 @@ static ABI int32_t user_list(int32_t *ids) {
 static ABI int32_t user_name(int32_t id,char *name,uint64_t size) {
     if (id<1 || id>4 || !name) return USER_INVALID_ARGUMENT;
     char player[16];
-    const char *value=getenv("BB_USER_NAME") ? getenv("BB_USER_NAME") : "Hunter";
+    const char *value=getenv("BB_USER_NAME") ? getenv("BB_USER_NAME") : default_user_name();
     if (id!=USER_ID) { snprintf(player,sizeof player,"Player %d",id); value=player; }
     if (strlen(value)+1>size) return (int32_t)0x8096000a; /* BUFFER_TOO_SHORT */
     strcpy(name,value); return 0;
@@ -288,7 +293,7 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     if (preset) { ime_complete(0,preset); return 0; }
     if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Text")) {
         const char *name=getenv("BB_USER_NAME");
-        ime_complete(0,name ? name : initial[0] ? initial : "Hunter");
+        ime_complete(0,name ? name : initial[0] ? initial : default_user_name());
     } else printf("Runtime: ImeDialog opened: type in the game window, Enter to confirm, Esc to cancel\n");
     return 0;
 }

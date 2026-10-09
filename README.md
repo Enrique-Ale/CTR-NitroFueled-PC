@@ -1,3 +1,27 @@
+# SacredFire — Crash Team Racing: Nitro-Fueled, natively on Linux
+
+SacredFire runs *Crash Team Racing: Nitro-Fueled* (PlayStation 4, CUSA13795, update 1.21) as a
+native x86-64 Linux executable, built on [bbport](https://github.com/deadinside28/bloodborne_pc)
+(GPL-2.0-or-later, see below): the game's own code runs on the CPU, a small runtime replaces the
+PS4 system libraries, and the vendored shadPS4 video core translates the PS4 GPU work to Vulkan.
+Developed and tested on a Steam Deck.
+
+- **Status**: menus, arcade and adventure play with sound, controller and saving; fur and sky
+  render correctly; 30 FPS, or the 60 FPS patch from the in-game menu (40-45 FPS in races on
+  the Deck, 60 in menus). Split screen with a second controller works.
+- **Run**: put the merged 1.21 dump (update over base) at `orig/CUSA13795`, then `bash run.sh`.
+  `BB_GAMEPAD=<name>` picks the controller; `BB_NEO=1` is PS4 Pro mode.
+- **In-game menu** (Insert or L3+R3): game patches (60 FPS, motion blur off, Pro 1080p),
+  controller ports for split screen, FPS counter.
+- **Logs and notes**: `docs/sacredfire/` (status, imports implemented, fur and sky
+  investigations, controllers, patches).
+- The GTK launcher and the AppImage below are still the Bloodborne ones; CTR support for them
+  is in progress.
+
+Everything below this line is the upstream bbport README, kept as the base this builds on.
+
+---
+
 THIS PROJECT IS NOT RELATED TO SHADPS4. ALL QUESTIONS RELATED TO THIS PROJECT SHOULD BE SENT TO THE DISCORD SERVER https://discord.gg/KYZRKk9CB, NOT TO THE SHADPS4 SERVER.
 
 
