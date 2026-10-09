@@ -86,8 +86,15 @@ static int is_preferred(SDL_JoystickID id, const char *want) {
     const char *name=SDL_GetGamepadNameForID(id);
     return !strcasecmp(guid,want) || (name && strcasestr(name,want));
 }
+/* Any button, trigger or stick input on a gamepad right now. */
+static int gamepad_active(SDL_Gamepad *g) {
+    for (int b=0;b<SDL_GAMEPAD_BUTTON_COUNT;++b) if (SDL_GetGamepadButton(g,(SDL_GamepadButton)b)) return 1;
+    static const SDL_GamepadAxis axes[]={SDL_GAMEPAD_AXIS_LEFTX,SDL_GAMEPAD_AXIS_LEFTY,SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY};
+    for (size_t a=0;a<sizeof(axes)/sizeof(*axes);++a) { int v=SDL_GetGamepadAxis(g,axes[a]); if (v>12000 || v<-12000) return 1; }
+    return SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER)>8000 || SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)>8000;
+}
 /* The chosen gamepad, else the first while it is not connected (checked again every second, it
- * is taken as soon as it connects); called under lock. */
+ * is taken as soon as it connects); the controller used last takes over (below); called under lock. */
 static SDL_Gamepad *current_gamepad(void) {
     static int on_preferred; static uint64_t last_scan;
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
@@ -112,6 +119,38 @@ static SDL_Gamepad *current_gamepad(void) {
             }
         }
         SDL_free(ids);
+    }
+    /* SacredFire: the controller touched last is the active one. Every other connected gamepad is
+     * kept open and polled ten times a second; one that produces input while the active one is idle
+     * takes over (and ends the search for the BB_GAMEPAD choice). Pick up any pad and press a button. */
+    static uint64_t last_switch_scan;
+    if (now-last_switch_scan>100000) {
+        last_switch_scan=now;
+        static SDL_Gamepad *others[8]; static int other_count;
+        int count=0;
+        SDL_JoystickID *ids=SDL_GetGamepads(&count);
+        for (int i=0;i<other_count;++i) if (others[i] && !SDL_GamepadConnected(others[i])) { SDL_CloseGamepad(others[i]); others[i]=NULL; }
+        for (int i=0; ids && i<count; ++i) {
+            if (gamepad && SDL_GetGamepadID(gamepad)==ids[i]) continue;
+            int known=0;
+            for (int j=0;j<other_count;++j) if (others[j] && SDL_GetGamepadID(others[j])==ids[i]) known=1;
+            if (!known) {
+                int slot=-1;
+                for (int j=0;j<other_count;++j) if (!others[j]) { slot=j; break; }
+                if (slot<0 && other_count<8) slot=other_count++;
+                if (slot>=0) others[slot]=SDL_OpenGamepad(ids[i]);
+            }
+        }
+        SDL_free(ids);
+        if (gamepad && !gamepad_active(gamepad)) {
+            for (int j=0;j<other_count;++j) {
+                if (!others[j] || !gamepad_active(others[j])) continue;
+                SDL_Gamepad *previous=gamepad;
+                gamepad=others[j]; others[j]=previous; on_preferred=1;
+                printf("Runtime: gamepad switched to %s (it was used)\n",SDL_GetGamepadName(gamepad));
+                break;
+            }
+        }
     }
     return gamepad;
 }
