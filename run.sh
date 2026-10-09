@@ -84,6 +84,13 @@ if [[ $profile == ctr ]]; then
     # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
     export BB_NEO=${BB_NEO:-0}
     echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
+    # The on-disk shader/pipeline cache reused across launches breaks the fur geometry pipeline
+    # (docs/sacredfire/06-fur.md): a fresh cache compiles it right. Cleared per launch until the
+    # cache's module/permutation matching is fixed (BB_KEEP_SHADER_CACHE=1 keeps it).
+    if [[ ${BB_KEEP_SHADER_CACHE:-0} != 1 ]]; then
+        rm -rf "${BB_USER_DIR:-$data/user}/cache/CUSA13795"
+        echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
+    fi
     patch_args=()
 else
     # Sizes chosen below for the previous launch are recomputed after an in-game restart.

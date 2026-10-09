@@ -32,3 +32,14 @@ compiled without any read past slot 32, i.e. the good variant; the validation ru
 the same shader reading slots 32..60. The slot base therefore comes from draw-time data folded
 into soffset, so both variants exist and the fold covers the bad one. If fur ever goes missing
 again, look for "sacredfire GS ring read" lines and VUID-RuntimeSpirv-Location-06272.
+
+## Follow-up (run 26/27): the on-disk shader cache
+
+With the fix in place, a launch that reuses `user/cache/CUSA13795` (SPIR-V modules named
+`<hash>_<permutation index>.spv`, serialized pipelines) shows the fur broken again without
+recompiling the geometry shader; a launch with that directory empty compiles it (log: VERT_ITEMSIZE
+warning, no out-of-vertex reads) and fur is right. User-confirmed twice. run.sh therefore clears the
+cache per CTR launch. Root cause to find: permutation indices are assigned in first-seen order per
+run, so `<hash>_1.spv` may hold a different specialization (plain VS vs export stage of the GS
+pipeline) than the one the pipeline cache expects; check vk_pipeline_cache.cpp's cache load against
+the `.meta` specialization records.
