@@ -40,6 +40,11 @@ None (no STOP). The game runs through license screens and intro videos. Next: re
 menu, then a race; implement imports as they are hit (libSceFont and the NpToolkit2 request paths
 have not been reached yet).
 
+## Memory (menus, run 12)
+
+RSS about 1.1 GB, VRAM about 1 GB, Vulkan allocations 1.6 GB; the Steam Deck's 14 GiB are enough
+with the desktop apps closed.
+
 ## Known issues
 
 - The license screen's accept needed more than one attempt (reported by the user); the save that

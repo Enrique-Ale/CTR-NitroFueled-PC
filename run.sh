@@ -78,6 +78,8 @@ fi
 "$PYTHON" tools/gen_import_names.py --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
 if [[ $profile == ctr ]]; then
+    # CTR: no patches; the game runs at its own 30 FPS against a 60 Hz vblank.
+    fps=${BB_FPS:-30}
     patch_args=()
 else
     # Sizes chosen below for the previous launch are recomputed after an in-game restart.

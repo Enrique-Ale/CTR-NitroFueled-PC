@@ -32,7 +32,13 @@ typedef struct EventFlag {
     struct EventFlag *next;
 } EventFlag;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t changed=PTHREAD_COND_INITIALIZER;
+/* Deadlines are on CLOCK_MONOTONIC, so the condition variable must use that clock too. */
+static pthread_cond_t changed;
+static pthread_once_t changed_once=PTHREAD_ONCE_INIT;
+static void init_changed(void) {
+    pthread_condattr_t a; pthread_condattr_init(&a); pthread_condattr_setclock(&a,CLOCK_MONOTONIC);
+    pthread_cond_init(&changed,&a); pthread_condattr_destroy(&a);
+}
 static EventFlag *registry;
 static uint32_t next_id=1;
 static size_t created, deleted, waits, sets, timeouts;
@@ -71,6 +77,7 @@ static ABI int32_t ef_create(uint32_t *out,const char *name,uint32_t attr,uint64
     return 0;
 }
 static ABI int32_t ef_delete(uint32_t id) {
+    pthread_once(&changed_once,init_changed);
     pthread_mutex_lock(&lock);
     EventFlag **link=&registry;
     while (*link && (*link)->id!=id) link=&(*link)->next;
@@ -86,6 +93,7 @@ static ABI int32_t ef_delete(uint32_t id) {
     return 0;
 }
 static ABI int32_t ef_set(uint32_t id,uint64_t bits) {
+    pthread_once(&changed_once,init_changed);
     pthread_mutex_lock(&lock);
     EventFlag *f=find(id);
     if (!f) { pthread_mutex_unlock(&lock); return ERR(3); }
@@ -104,6 +112,7 @@ static ABI int32_t ef_clear(uint32_t id,uint64_t bits) {
     return 0;
 }
 static int32_t wait_pattern(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t *result,uint32_t *timeout,int block) {
+    pthread_once(&changed_once,init_changed);
     uint32_t wait_mode=mode&(WAIT_AND|WAIT_OR), clear=mode&(CLEAR_ALL|CLEAR_PAT);
     if (!pattern || (wait_mode!=WAIT_AND && wait_mode!=WAIT_OR) || clear==(CLEAR_ALL|CLEAR_PAT) || (mode&~(uint32_t)0x33)) return ERR(22);
     pthread_mutex_lock(&lock);
@@ -151,6 +160,7 @@ static int32_t wait_pattern(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t 
 static ABI int32_t ef_wait(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t *result,uint32_t *timeout) { return wait_pattern(id,pattern,mode,result,timeout,1); }
 static ABI int32_t ef_poll(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t *result) { return wait_pattern(id,pattern,mode,result,NULL,0); }
 static ABI int32_t ef_cancel(uint32_t id,uint64_t pattern,int32_t *waiters) {
+    pthread_once(&changed_once,init_changed);
     pthread_mutex_lock(&lock);
     EventFlag *f=find(id);
     if (!f) { pthread_mutex_unlock(&lock); return ERR(3); }
