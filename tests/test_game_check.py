@@ -56,8 +56,18 @@ class GameCheckTests(unittest.TestCase):
 
     def test_supported_image_passes(self):
         game = self.game('CUSA03173', '01.09')
-        with mock.patch.object(game_check, 'SUPPORTED_IMAGE', game_check.image_sha256(game)):
+        table = {game_check.image_sha256(game): game_check.SUPPORTED[game_check.SUPPORTED_IMAGE]}
+        with mock.patch.object(game_check, 'SUPPORTED', table):
             self.assertIsNone(game_check.problem(game))
+            self.assertEqual(game_check.profile(game)['name'], 'bloodborne')
+
+    def test_ctr_update_missing_and_profile_guess(self):
+        game = self.game('CUSA13795', '01.00')
+        self.assertEqual(game_check.problem(game), ('missing_update', 'CUSA13795', '01.00'))
+        self.assertIn('1.21', game_check.explain(*game_check.problem(game)))
+        self.assertIsNone(game_check.profile(game))
+        with mock.patch.dict(os.environ, {'BB_SKIP_GAME_CHECK': '1'}):
+            self.assertEqual(game_check.profile(game)['name'], 'ctr')
 
     def test_skip_switch(self):
         os.environ['BB_SKIP_GAME_CHECK'] = '1'

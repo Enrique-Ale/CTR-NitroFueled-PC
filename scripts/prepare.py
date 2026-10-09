@@ -143,6 +143,7 @@ def prepare(game, out):
     # bbport: only the supported executable runs (game_check.py); others fail in the game's code.
     if found := game_check.problem(game, hashlib.sha256(image).hexdigest()):
         raise GameCheckError(game_check.explain(*found))
+    game_profile = game_check.profile(game, hashlib.sha256(image).hexdigest())
     dp = next(p for p in ph if p['type'] == 2)
     dyn = []
     for pos in range(dp['offset'], dp['offset'] + dp['filesz'], 16):
@@ -236,7 +237,9 @@ def prepare(game, out):
         if path.is_file():
             resources[path.relative_to(game / 'dvdroot_ps4').parts[0]] += 1
             total_bytes += path.stat().st_size
-    report = dict(source_sha256=hashlib.sha256(source).hexdigest(), source_bytes=len(source),
+    (out / 'profile.txt').write_text((game_profile['name'] if game_profile else 'unknown') + '\n')
+    report = dict(game_profile=game_profile['name'] if game_profile else None,
+                  source_sha256=hashlib.sha256(source).hexdigest(), source_bytes=len(source),
                   sfo=sfo((game / 'sce_sys/param.sfo').read_bytes()), entry=hex(header[4]),
                   image_bytes=size, program_headers=ph, self_segments=segments,
                   unavailable_metadata_headers=missing, needed=[string(v) for t, v in dyn if t == 1],

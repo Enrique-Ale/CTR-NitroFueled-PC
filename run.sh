@@ -49,9 +49,15 @@ if [[ -z ${PYTHON:-} ]]; then
     fi
 fi
 if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1; fi
-# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default next to this directory.
-game=${BB_GAME_DIR:-../CUSA03173}
+# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default: orig/CUSA13795 (SacredFire's
+# read-only link tree of the CTR dump) when it exists, else Bloodborne next to this directory.
+if [[ -z ${BB_GAME_DIR:-} && -f orig/CUSA13795/eboot.bin ]]; then game=orig/CUSA13795; else game=${BB_GAME_DIR:-../CUSA03173}; fi
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
+# SacredFire: the game profile (scripts/game_check.py: bloodborne or ctr) selects the linked modules
+# and skips the Bloodborne-only steps (patches, render scaling, upscaler assets).
+profile=$("$PYTHON" scripts/game_check.py "$game") || { echo "$profile" >&2; exit 2; }
+export BB_GAME_PROFILE=$profile
+echo "Game profile: $profile"
 original_game=$game
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \
     --mods-dir "${BB_MODS_DIR:-$data/mods}" --config "${BB_MODS_CONFIG:-$data/mods.json}" \
@@ -63,56 +69,65 @@ if [[ $game != "$(realpath "$original_game")" ]]; then
 fi
 "$PYTHON" scripts/prepare.py "$game" --out "$out"
 "$PYTHON" scripts/link_libc.py "$game" --out "$out"
-"$PYTHON" scripts/link_modules.py "$game" --out "$out"
+if [[ $profile == ctr ]]; then
+    "$PYTHON" scripts/link_modules.py "$game" --out "$out" --modules libc.prx libSceFios2.prx libSceNpToolkit2.prx
+else
+    "$PYTHON" scripts/link_modules.py "$game" --out "$out"
+fi
 # SacredFire: symbol names for this eboot's host-side imports (shadPS4's aerolib list, fetched once).
 "$PYTHON" tools/gen_import_names.py --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
-# Sizes chosen below for the previous launch are recomputed after an in-game restart.
-if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
-    unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
-fi
-# BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
-# Frame rate: BB_FPS=uncap (default; delta-time patch, vblank 480 Hz, frames shown at once),
-# 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
-fps=${BB_FPS:-uncap}
-# bbport.ini output_res other than 1080p (720p for the Steam Deck, 1440p, 2160p): the whole game
-# renders at the preset's size of the output (a patch), the upscaler fills the output, the UI is
-# drawn at the output size. Preset and output changes need a restart.
-# Live resolution changes keep the guest at 1920x1080 and scale host targets at run time instead
-# (output and presets change in the menu without a restart, but post-processing stays at 1080p
-# and scene targets are copied back: much slower on the Steam Deck and older GPUs). Chosen by
-# BB_LIVE_RES=0/1, else bbport.ini live_resolution=0/1/auto (auto: the GPU check, strong
-# discrete GPUs get them); off when unset. 1080p output and TAA always use the live path.
-if [[ -z ${BB_RENDER_RES:-} ]]; then
-    read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
-fi
-live=0
-if [[ -n ${scaled_output:-} ]]; then
-    live=${BB_LIVE_RES:-}
-    # Bash builtins only: the AppImage's PATH has no sed/grep (a missing one ended run.sh silently).
-    if [[ -z $live && -f $BB_CONFIG ]]; then
-        while IFS= read -r line || [[ -n $line ]]; do
-            [[ $line =~ ^live_resolution=([01]|auto)$ ]] && live=${BASH_REMATCH[1]}
-        done < "$BB_CONFIG"
+if [[ $profile == ctr ]]; then
+    patch_args=()
+else
+    # Sizes chosen below for the previous launch are recomputed after an in-game restart.
+    if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
+        unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
     fi
-    if [[ $live == auto ]]; then
-        if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabilities
-        elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
-        else caps=out/bb-gpu-capabilities; fi
-        live=$("$caps" --live-resolution 2> >(while IFS= read -r line; do
-            [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line"; done >&2)) || live=0
+    # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
+    # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank 480 Hz, frames shown at once),
+    # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
+    fps=${BB_FPS:-uncap}
+    # bbport.ini output_res other than 1080p (720p for the Steam Deck, 1440p, 2160p): the whole game
+    # renders at the preset's size of the output (a patch), the upscaler fills the output, the UI is
+    # drawn at the output size. Preset and output changes need a restart.
+    # Live resolution changes keep the guest at 1920x1080 and scale host targets at run time instead
+    # (output and presets change in the menu without a restart, but post-processing stays at 1080p
+    # and scene targets are copied back: much slower on the Steam Deck and older GPUs). Chosen by
+    # BB_LIVE_RES=0/1, else bbport.ini live_resolution=0/1/auto (auto: the GPU check, strong
+    # discrete GPUs get them); off when unset. 1080p output and TAA always use the live path.
+    if [[ -z ${BB_RENDER_RES:-} ]]; then
+        read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
     fi
-    [[ $live == 1 ]] || live=0
+    live=0
+    if [[ -n ${scaled_output:-} ]]; then
+        live=${BB_LIVE_RES:-}
+        # Bash builtins only: the AppImage's PATH has no sed/grep (a missing one ended run.sh silently).
+        if [[ -z $live && -f $BB_CONFIG ]]; then
+            while IFS= read -r line || [[ -n $line ]]; do
+                [[ $line =~ ^live_resolution=([01]|auto)$ ]] && live=${BASH_REMATCH[1]}
+            done < "$BB_CONFIG"
+        fi
+        if [[ $live == auto ]]; then
+            if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabilities
+            elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
+            else caps=out/bb-gpu-capabilities; fi
+            live=$("$caps" --live-resolution 2> >(while IFS= read -r line; do
+                [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line"; done >&2)) || live=0
+        fi
+        [[ $live == 1 ]] || live=0
+    fi
+    if [[ $live == 1 ]]; then
+        echo "Output ${scaled_output}: live resolution changes (live_resolution=0: startup patch)"
+    elif [[ -n ${scaled_output:-} ]]; then
+        export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output BB_AUTO_RENDER_RES=1
+        export BB_DMEM_MB=${BB_DMEM_MB:-9152}
+        echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB} MiB (live_resolution=1: live changes)"
+    fi
+    "$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
+        --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"
+    patch_args=(--patches "$out/patches.bin")
 fi
-if [[ $live == 1 ]]; then
-    echo "Output ${scaled_output}: live resolution changes (live_resolution=0: startup patch)"
-elif [[ -n ${scaled_output:-} ]]; then
-    export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output BB_AUTO_RENDER_RES=1
-    export BB_DMEM_MB=${BB_DMEM_MB:-9152}
-    echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB} MiB (live_resolution=1: live changes)"
-fi
-"$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
-    --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"
 # Background upload of the game's GPU memory into VRAM ahead of use (BufferCache::Preupload):
 # 1 = only memory already in VRAM that the game rewrote (no new VRAM), 2 = all of it (~3 GB more
 # VRAM), 0 = off. BB_GUEST_GPU_MEMORY=1 puts guest direct memory in GPU-visible dma-buf chunks
@@ -165,7 +180,7 @@ if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
 # FSR 4: faster post passes next to the downloaded ones (incremental; tools/fsr4_optimize.sh).
-if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
+if [[ $profile != ctr && -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
     bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
 fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
@@ -174,7 +189,7 @@ else
     bash build.sh
     probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
 fi
-probe_args=("$out/boot-linked.bin" --import-names "$out/import_names.txt" --content-profile "$out/content.bin" --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
+probe_args=("$out/boot-linked.bin" --import-names "$out/import_names.txt" --content-profile "$out/content.bin" "${patch_args[@]}" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then
     "$probe" "${probe_args[@]}" &
     mod_pid=$!
