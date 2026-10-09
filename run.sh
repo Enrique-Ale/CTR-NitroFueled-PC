@@ -80,6 +80,10 @@ fi
 if [[ $profile == ctr ]]; then
     # CTR: no patches; the game runs at its own 30 FPS against a 60 Hz vblank.
     fps=${BB_FPS:-30}
+    # BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then
+    # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
+    export BB_NEO=${BB_NEO:-0}
+    echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
     patch_args=()
 else
     # Sizes chosen below for the previous launch are recomputed after an in-game restart.

@@ -491,7 +491,9 @@ struct Sampler {
         case AnisoRatio::Sixteen:
             return 16.0f;
         default:
-            UNREACHABLE();
+            // sacredfire: CTR's adventure mode binds samplers with a reserved ratio (5..7); the
+            // hardware clamps to its maximum, so do we instead of stopping.
+            return 16.0f;
         }
     }
 };

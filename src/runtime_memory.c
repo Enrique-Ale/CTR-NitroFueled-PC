@@ -18,14 +18,15 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. BB_DMEM_MB raises it (the resolution
- * patches above 1080p need about 4 GiB more; run.sh sets it). */
+/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB; on the PS4 Pro (BB_NEO=1) 5568 MiB.
+ * BB_DMEM_MB raises it (the resolution patches above 1080p need about 4 GiB more; run.sh sets it). */
 static uint64_t pool_size_bytes(void) {
     static uint64_t size;
     if (!size) {
-        const char *env = getenv("BB_DMEM_MB");
+        const char *env = getenv("BB_DMEM_MB"), *neo = getenv("BB_NEO");
+        const uint64_t base = neo && neo[0] == '1' ? 5568 : 5056;
         uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
-        if (mb < 5056 || mb > 16384) mb = 5056;
+        if (mb < base || mb > 16384) mb = base;
         size = mb * 1024 * 1024;
     }
     return size;

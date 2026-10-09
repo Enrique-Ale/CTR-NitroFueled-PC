@@ -362,12 +362,14 @@ static ABI int32_t localtime_to_utc(int64_t local,int64_t *utc,GuestTimezone *tz
     return 0;
 }
 
-/* Console model: a base PS4 (Neo mode off) unless BB_NEO=1, running the game in the 6-CPU mode
- * (sceKernelGetCpumode 0): the game then creates its worker threads for 6 cores. */
-static ABI int32_t is_neo_mode(void) { static int neo=-1; if (neo<0) { const char *e=getenv("BB_NEO"); neo=e && e[0]=='1'; } return neo; }
-static ABI int32_t get_cpumode(void) { return 0; }
-/* The core the caller runs on, folded into the 6 cores a game may use. */
-static ABI int32_t get_current_cpu(void) { int c=sched_getcpu(); return c<0 ? 0 : c%6; }
+/* Console model: a base PS4 unless BB_NEO=1 (the "PS4 Pro mode" toggle: sceKernelIsNeoMode 1, the
+ * 7-CPU "normal" mode 5 of sceKernelGetCpumode, and the Pro's direct memory budget in
+ * runtime_memory.c). On the base model the game runs in the 6-CPU mode (cpumode 0). */
+static int neo_mode(void) { static int neo=-1; if (neo<0) { const char *e=getenv("BB_NEO"); neo=e && e[0]=='1'; } return neo; }
+static ABI int32_t is_neo_mode(void) { return neo_mode(); }
+static ABI int32_t get_cpumode(void) { return neo_mode() ? 5 : 0; }
+/* The core the caller runs on, folded into the cores a game may use (6, or 7 on the Pro). */
+static ABI int32_t get_current_cpu(void) { int c=sched_getcpu(); return c<0 ? 0 : c%(neo_mode() ? 7 : 6); }
 /* libSceRandom: up to 64 bytes from the kernel's random source per call. */
 static ABI int32_t random_number(void *buffer,uint64_t size) {
     if (!buffer || size>64) return (int32_t)0x817C0002; /* SCE_RANDOM_ERROR_INVALID */
