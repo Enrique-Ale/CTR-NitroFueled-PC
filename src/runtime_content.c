@@ -33,6 +33,15 @@ static ABI int32_t module_load(uint16_t id) {
     else printf("Runtime: system module 0x%x loaded (host implementation)\n",id);
     return 0;
 }
+/* SacredFire: sceSysmoduleLoadModuleInternalWithArg: internal module ids are 0x8000xxxx; the
+ * module's start arguments are ignored and the module's start result is 0. */
+static ABI int32_t module_load_internal(uint32_t id,uint64_t argc,const void *argv,uint32_t flags,const void *option,int32_t *result) {
+    (void)argc; (void)argv; (void)flags; (void)option;
+    if ((id&0xffff0000)!=0x80000000) return INVALID_ID;
+    int32_t r=module_load((uint16_t)id);
+    if (!r && result) *result=0;
+    return r;
+}
 static ABI int32_t module_loaded(uint16_t id) {
     if (!id) return INVALID_ID;
     return module_refs[id] ? 0 : NOT_LOADED;
@@ -78,12 +87,13 @@ static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint
     ++lists; return 0;
 }
 uintptr_t runtime_content_resolve(const char *name) {
-    if (!strcmp(name,"g8cM39EUZ6o#M#N")) return (uintptr_t)module_load;
-    if (!strcmp(name,"fMP5NHUOaMk#M#N")) return (uintptr_t)module_loaded;
-    if (!strcmp(name,"eR2bZFAAU0Q#M#N")) return (uintptr_t)module_unload;
-    if (!strcmp(name,"R9lA82OraNs#c#d")) return (uintptr_t)content_init;
-    if (!strcmp(name,"99b82IKXpH4#c#d")) return (uintptr_t)param_int;
-    if (!strcmp(name,"xnd8BJzAxmk#c#d")) return (uintptr_t)addon_list;
+    if (runtime_nid_equals(name,"g8cM39EUZ6o#libSceSysmodule")) return (uintptr_t)module_load;
+    if (runtime_nid_equals(name,"fMP5NHUOaMk#libSceSysmodule")) return (uintptr_t)module_loaded;
+    if (runtime_nid_equals(name,"eR2bZFAAU0Q#libSceSysmodule")) return (uintptr_t)module_unload;
+    if (runtime_nid_equals(name,"hHrGoGoNf+s#libSceSysmodule")) return (uintptr_t)module_load_internal;
+    if (runtime_nid_equals(name,"R9lA82OraNs#libSceAppContent")) return (uintptr_t)content_init;
+    if (runtime_nid_equals(name,"99b82IKXpH4#libSceAppContent")) return (uintptr_t)param_int;
+    if (runtime_nid_equals(name,"xnd8BJzAxmk#libSceAppContent")) return (uintptr_t)addon_list;
     return 0;
 }
 void runtime_content_report(void) {

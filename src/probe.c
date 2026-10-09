@@ -339,12 +339,15 @@ int main(int argc, char **argv) {
 #endif
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
     check_cpu();
-    int cpu_only = 0, strict_imports = 0;
+    int cpu_only = 0, strict_imports = 0, list_imports = 0;
     unsigned timeout_seconds = 10;
-    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL;
+    const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL, *import_names=NULL;
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--cpu-only")) cpu_only = 1;
         else if (!strcmp(argv[i], "--strict-imports")) strict_imports = 1;
+        /* SacredFire: --list-imports resolves every import, prints the outcome and exits without running. */
+        else if (!strcmp(argv[i], "--list-imports")) { list_imports = 1; cpu_only = 1; }
+        else if (!strcmp(argv[i], "--import-names") && i+1<argc) import_names=argv[++i];
         else if (!strcmp(argv[i], "--content-profile") && i+1<argc) content_profile=argv[++i];
         else if (!strcmp(argv[i], "--app0") && i+1<argc) app0=argv[++i];
         else if (!strcmp(argv[i], "--user") && i+1<argc) user_dir=argv[++i];
@@ -353,8 +356,13 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
+        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--list-imports] [--import-names file] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
         return 1;
+    }
+    if (import_names) {
+        int loaded = runtime_load_import_names(import_names);
+        if (loaded < 0) fail("cannot read the import names file");
+        printf("Import names: %d symbols from %s\n", loaded, import_names);
     }
     if (content_profile) {
         FILE *profile=fopen(content_profile,"rb");
@@ -520,20 +528,35 @@ int main(int argc, char **argv) {
         t[8] = 0x48; t[9] = 0xb8; memcpy(t + 10, &handler, 8);
         t[18] = 0xff; t[19] = 0xe0;
     }
+    /* SacredFire (--list-imports): how each import was bound: 1 runtime, 2 native module, 3 trap. */
+    unsigned char *outcome = calloc(import_count ? import_count : 1, 1);
+    if (!outcome) fail("allocation failed");
     for (uint64_t i = 0; i < nr; ++i) {
         uintptr_t value = relocs[i].kind == 2 ? (uintptr_t)(data_traps + page_size * relocs[i].value + relocs[i].addend)
                         : relocs[i].kind == 1 ? (uintptr_t)(traps + 32 * relocs[i].value)
                         : (uintptr_t)image + relocs[i].value;
         if (relocs[i].kind) {
             uintptr_t resolved = runtime_resolve(names[relocs[i].value], relocs[i].kind == 2);
-            if (resolved) value = resolved + relocs[i].addend;
+            if (resolved) { value = resolved + relocs[i].addend; outcome[relocs[i].value] = 1; }
             else if (native_libc && bindings[relocs[i].value]) {
                 uint64_t address=bindings[relocs[i].value];
                 if (binding_kinds[relocs[i].value]!=relocs[i].kind || !mapped(segments,ns,address,relocs[i].addend+1)) fail("native export kind/range mismatch");
                 value=(uintptr_t)image+address+relocs[i].addend;
-            }
+                outcome[relocs[i].value] = 2;
+            } else outcome[relocs[i].value] = 3;
         }
         memcpy(image + relocs[i].target, &value, 8);
+    }
+    if (list_imports) {
+        static const char *words[] = {"unreferenced", "runtime", "native", "unresolved"};
+        unsigned counts[4] = {0};
+        for (uint64_t i = 0; i < import_count; ++i) {
+            const char *symbol = runtime_symbol(names[i]);
+            printf("%-12s %-40s %s\n", words[outcome[i]], names[i], symbol ? symbol : "?");
+            ++counts[outcome[i]];
+        }
+        printf("Imports: %u runtime, %u native, %u unresolved, %u unreferenced\n", counts[1], counts[2], counts[3], counts[0]);
+        return 0;
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
     if (!cpu_only) bbgpu_patch_image(image, size);

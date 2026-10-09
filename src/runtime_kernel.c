@@ -287,7 +287,117 @@ static ABI int32_t posix_key_create(uint32_t *k,KeyDestructor d) { int32_t r=key
 static ABI int32_t posix_key_delete(uint32_t k) { int32_t r=key_delete(k); return r ? r&0xffff : 0; }
 static ABI int32_t posix_key_set(uint32_t k,void *v) { int32_t r=key_set(k,v); return r ? r&0xffff : 0; }
 
+/* SacredFire: what the SDK 6.00 libc.prx (and the game) ask libkernel for at start-up.
+ * Each entry states the contract it fakes; see docs/sacredfire/03-imports-log.md. */
+typedef void (ABI *ThreadHook)(void);
+static ThreadHook thread_dtors, thread_atexit_report;
+static int32_t (ABI *thread_atexit_count)(void);
+static _Atomic size_t thread_dtor_runs;
+/* libc registers the function that runs a thread's C++/TLS destructors; libkernel calls it when a
+ * thread ends, before its keys are destroyed. */
+static ABI int32_t set_thread_dtors(ThreadHook f) { thread_dtors=f; return 0; }
+/* libc's count of pending thread-atexit entries and its report function (process exit diagnostics). */
+static ABI int32_t set_thread_atexit_count(int32_t (ABI *f)(void)) { thread_atexit_count=f; return 0; }
+static ABI int32_t set_thread_atexit_report(ThreadHook f) { thread_atexit_report=f; return 0; }
+/* The rtld keeps per-module counters of threads inside atexit handlers: plain atomic increments. */
+static ABI void rtld_atexit_increment(uint64_t *counter) { if (counter) __atomic_fetch_add(counter,1,__ATOMIC_SEQ_CST); }
+static ABI void rtld_atexit_decrement(uint64_t *counter) { if (counter) __atomic_fetch_sub(counter,1,__ATOMIC_SEQ_CST); }
+void runtime_kernel_thread_exit(void) {
+    if (thread_dtors) { ++thread_dtor_runs; thread_dtors(); }
+}
+/* __pthread_cxa_finalize(dso): run the __cxa_atexit handlers registered for a module (libc's
+ * module_stop). The runtime owns the handler list (runtime_finalize). */
+static ABI void pthread_cxa_finalize(void *dso) { runtime_finalize(dso); }
+/* Module queries used by libc's unwinder and dladdr paths: the image has one module (the eboot) plus
+ * the linked libc/Fios2, none registered with a dynamic loader. "No such module" (ESRCH) makes the
+ * unwinder stop at the frame, as it does on a console for addresses outside any module. */
+static _Atomic unsigned module_info_misses;
+static ABI int32_t module_info_from_addr(uint64_t address,int flags,void *info) {
+    (void)flags; (void)info;
+    if (__atomic_fetch_add(&module_info_misses,1,__ATOMIC_RELAXED)<4) printf("Kernel: sceKernelGetModuleInfoFromAddr(%#llx) -> ESRCH\n",(unsigned long long)address);
+    return ERR(3);
+}
+static ABI int32_t module_info_for_unwind(uint64_t address,int flags,void *info) {
+    (void)flags; (void)info;
+    if (__atomic_fetch_add(&module_info_misses,1,__ATOMIC_RELAXED)<4) printf("Kernel: *GetModuleInfoForUnwind(%#llx) -> ESRCH\n",(unsigned long long)address);
+    return ERR(3);
+}
+/* libunwind helpers in libkernel: no program header matches (the unwinder falls back to its own
+ * tables), and no return address is a signal trampoline. */
+static ABI int32_t elf_phdr_match_addr(void *phdr_info,void *address) { (void)phdr_info; (void)address; return 0; }
+static ABI int32_t is_signal_return(void *address) { (void)address; return 0; }
+/* AddressSanitizer is never present in a release process. */
+static ABI int32_t sanitizer_enabled(void) { return 0; }
+static ABI void *sanitizer_replace(void) { return NULL; }
+/* libc's heap asks for the module's segment layout to size its arena bookkeeping: an answer of
+ * "not available" makes it use its defaults (the SDK's libc handles the error). Logged to confirm. */
+static _Atomic unsigned segment_info_calls;
+static ABI int32_t memory_module_segment_info(void *info) {
+    (void)info;
+    if (__atomic_fetch_add(&segment_info_calls,1,__ATOMIC_RELAXED)<2) puts("Kernel: sceKernelInternalMemoryGetModuleSegmentInfo -> EINVAL (defaults)");
+    return ERR(22);
+}
+/* Pages are never swapped on the console; locking is a no-op here as well. */
+static ABI int32_t kernel_mlock(const void *address,uint64_t length) { (void)address; (void)length; return 0; }
+/* libSceLibcInternalExt: heap tracing is off; no trace buffer exists. */
+static ABI int32_t libc_heap_trace_info(void *info) { (void)info; return ERR(2); }
+static ABI int32_t posix_nanosleep_alias(const GuestTimespec *rq,GuestTimespec *rem) { return posix_nanosleep(rq,rem); }
+/* Time zone conversions with the host's zone (the console uses the user's configured zone). */
+static ABI int32_t utc_to_localtime(int64_t utc,int64_t *local,GuestTimezone *tz,int32_t *dst) {
+    if (!local) return ERR(22);
+    time_t t=(time_t)utc; struct tm lt;
+    if (!localtime_r(&t,&lt)) return ERR(22);
+    *local=utc+lt.tm_gmtoff;
+    if (tz) { tz->minuteswest=(int32_t)(-lt.tm_gmtoff/60); tz->dsttime=lt.tm_isdst>0; }
+    if (dst) *dst=lt.tm_isdst>0;
+    return 0;
+}
+static ABI int32_t localtime_to_utc(int64_t local,int64_t *utc,GuestTimezone *tz,int32_t *dst) {
+    if (!utc) return ERR(22);
+    time_t t=(time_t)local; struct tm lt;
+    if (!localtime_r(&t,&lt)) return ERR(22);
+    *utc=local-lt.tm_gmtoff;
+    if (tz) { tz->minuteswest=(int32_t)(-lt.tm_gmtoff/60); tz->dsttime=lt.tm_isdst>0; }
+    if (dst) *dst=lt.tm_isdst>0;
+    return 0;
+}
+
+/* Console model: a base PS4 (Neo mode off) unless BB_NEO=1, running the game in the 6-CPU mode
+ * (sceKernelGetCpumode 0): the game then creates its worker threads for 6 cores. */
+static ABI int32_t is_neo_mode(void) { static int neo=-1; if (neo<0) { const char *e=getenv("BB_NEO"); neo=e && e[0]=='1'; } return neo; }
+static ABI int32_t get_cpumode(void) { return 0; }
+/* The core the caller runs on, folded into the 6 cores a game may use. */
+static ABI int32_t get_current_cpu(void) { int c=sched_getcpu(); return c<0 ? 0 : c%6; }
+/* libSceRandom: up to 64 bytes from the kernel's random source per call. */
+static ABI int32_t random_number(void *buffer,uint64_t size) {
+    if (!buffer || size>64) return (int32_t)0x817C0002; /* SCE_RANDOM_ERROR_INVALID */
+    uint64_t done=0;
+    while (done<size) { ssize_t n=getrandom((char *)buffer+done,size-done,0); if (n<0) { if (errno==EINTR) continue; return (int32_t)0x817C0002; } done+=(uint64_t)n; }
+    return 0;
+}
+/* Condition variable attributes carry nothing the runtime uses (pshared/clock); an initialized
+ * attribute is a non-NULL marker that destroy clears, as the mutex attributes do. */
+static int condattr_marker;
+static ABI int32_t condattr_init(void **attr) { if (!attr) return ERR(22); *attr=&condattr_marker; return 0; }
+static ABI int32_t condattr_destroy(void **attr) { if (!attr || !*attr) return ERR(22); *attr=NULL; return 0; }
+
 static const RuntimeExport exports[]={
+    {"sceKernelIsNeoMode",is_neo_mode}, {"sceKernelGetCpumode",get_cpumode}, {"sceKernelGetCurrentCpu",get_current_cpu},
+    {"sceRandomGetRandomNumber",random_number},
+    {"scePthreadCondattrInit",condattr_init}, {"scePthreadCondattrDestroy",condattr_destroy},
+    {"_sceKernelSetThreadDtors",set_thread_dtors}, {"_sceKernelSetThreadAtexitCount",set_thread_atexit_count},
+    {"_sceKernelSetThreadAtexitReport",set_thread_atexit_report},
+    {"_sceKernelRtldThreadAtexitIncrement",rtld_atexit_increment}, {"_sceKernelRtldThreadAtexitDecrement",rtld_atexit_decrement},
+    {"__pthread_cxa_finalize",pthread_cxa_finalize},
+    {"sceKernelGetModuleInfoFromAddr",module_info_from_addr}, {"sceKernelGetModuleInfoForUnwind",module_info_for_unwind},
+    {"sceSysmoduleGetModuleInfoForUnwind",module_info_for_unwind},
+    {"__elf_phdr_match_addr",elf_phdr_match_addr}, {"_is_signal_return",is_signal_return},
+    {"sceKernelIsAddressSanitizerEnabled",sanitizer_enabled},
+    {"sceKernelGetSanitizerMallocReplaceExternal",sanitizer_replace}, {"sceKernelGetSanitizerNewReplaceExternal",sanitizer_replace},
+    {"sceKernelInternalMemoryGetModuleSegmentInfo",memory_module_segment_info},
+    {"sceKernelMlock",kernel_mlock}, {"sceLibcHeapGetTraceInfo",libc_heap_trace_info},
+    {"_nanosleep",posix_nanosleep_alias},
+    {"sceKernelConvertUtcToLocaltime",utc_to_localtime}, {"sceKernelConvertLocaltimeToUtc",localtime_to_utc},
     {"sceKernelClockGettime",kernel_clock_gettime}, {"clock_gettime",posix_clock_gettime},
     {"clock_getres",posix_clock_getres},
     {"sceKernelGetProcessTime",process_time}, {"sceKernelGetProcessTimeCounter",process_time_counter},
@@ -315,6 +425,7 @@ static const RuntimeExport exports[]={
 uintptr_t runtime_kernel_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 #else
 uintptr_t runtime_kernel_resolve(const char *name) { (void)name; return 0; }
+void runtime_kernel_thread_exit(void) {}
 int32_t runtime_guest_errno(int e) { return e ? 5 : 0; }
 void runtime_thread_keys_cleanup(void) {}
 #endif

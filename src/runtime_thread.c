@@ -222,6 +222,7 @@ static void *host_start(void *p) {
     attach(t);
     set_host_name(t->name);
     if (!setjmp(t->exit_jump)) t->result=t->entry(t->argument);
+    runtime_kernel_thread_exit();
     runtime_thread_keys_cleanup();
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
     return t->result;
@@ -310,6 +311,35 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
     return 0;
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }
+/* SacredFire: the thread's name into a 32-byte buffer, and its kernel thread id. */
+static ABI int32_t thread_getname(GuestThread *t,char *name) {
+    if (!find_thread(t)) return ERR(3);
+    if (!name) return ERR(22);
+    memcpy(name,t->name,sizeof(t->name)); return 0;
+}
+static ABI int32_t thread_getthreadid(void) { return (int32_t)syscall(SYS_gettid); }
+/* Deferred cancellation: a thread without cancellation points keeps running, as on the console; the
+ * request is noted so the caller sees success. No guest thread of this game is expected to reach a
+ * cancellation point; a cancel that must take effect would need the point implemented. */
+static _Atomic unsigned cancels;
+static ABI int32_t thread_cancel(GuestThread *t) {
+    if (!find_thread(t)) return ERR(3);
+    if (__atomic_fetch_add(&cancels,1,__ATOMIC_RELAXED)<4) printf("Runtime: scePthreadCancel(%s) noted; deferred cancellation never fires here\n",t->name);
+    return 0;
+}
+/* POSIX scheduling parameters: the policy and priority recorded for the thread (SCHED_OTHER 2,
+ * FIFO 1, RR 3 as on FreeBSD); the host scheduler is not changed. */
+typedef struct { int32_t priority; } GuestSchedParam;
+static ABI int32_t posix_getschedparam(GuestThread *t,int32_t *policy,GuestSchedParam *param) {
+    if (!find_thread(t)) return 3;
+    if (!policy || !param) return 22;
+    *policy=t->attr.policy; param->priority=t->attr.prio; return 0;
+}
+static ABI int32_t posix_setschedparam(GuestThread *t,int32_t policy,const GuestSchedParam *param) {
+    if (!find_thread(t)) return 3;
+    if (!param || policy<1 || policy>3) return 22;
+    t->attr.policy=policy; t->attr.prio=param->priority; return 0;
+}
 
 /* POSIX (libScePosix) variants return positive errno values. */
 static int32_t posix(int32_t r) { return r ? (int32_t)((uint32_t)r&0xffff) : 0; }
@@ -324,28 +354,30 @@ static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_joi
 
 uintptr_t runtime_thread_resolve(const char *name) {
     static const struct { const char *nid; void *fn; } table[]={
-        {"aI+OeCz8xrQ#p#J",thread_self}, {"EotR8a3ASf4#I#J",thread_self},
-        {"9BcDykPmo1I#p#J",guest_error},
-        {"nsYoNRywwNg#p#J",attr_init}, {"62KCwEMmzcM#p#J",attr_destroy},
-        {"x1X76arYMxU#p#J",attr_get}, {"8+s5BzZjxSg#p#J",attr_affinity},
-        {"UTXzJbWhhTE#p#J",attr_set_stack}, {"-Wreprtu0Qs#p#J",attr_set_detach},
-        {"4+h9EzwKF4I#p#J",attr_set_policy}, {"DzES9hQF4f4#p#J",attr_set_param},
-        {"3qxgM4ezETA#p#J",attr_set_affinity}, {"eXbUSpEaTsA#p#J",attr_set_inherit},
-        {"JaRMy+QcpeU#p#J",attr_get_detach}, {"-fA+7ZlGDQs#p#J",attr_get_stack},
-        {"FXPWHNk8Of0#p#J",attr_get_param}, {"El+cQ20DynU#p#J",attr_set_guard},
-        {"6UgtwV+0zb4#p#J",thread_create}, {"onNY9Byn-W8#p#J",thread_join},
-        {"4qGrR6eoP9Y#p#J",thread_detach}, {"3kg7rT0NQIs#p#J",thread_exit},
-        {"T72hz6ffq08#p#J",thread_yield}, {"1tKyG7RlMJo#p#J",thread_get_prio},
-        {"W0Hpm2X0uPE#p#J",thread_set_prio}, {"bt3CTBKmGyI#p#J",thread_set_affinity}, {"rcrVFJsQWRY#p#J",thread_get_affinity},
-        {"GBUY7ywdULE#p#J",thread_rename}, {"3PtV6p3QNX4#p#J",thread_equal},
-        {"wtkt-teR1so#I#J",posix_attr_init}, {"zHchY8ft5pk#I#J",posix_attr_destroy},
-        {"E+tyo3lp5Lw#I#J",posix_attr_set_detach}, {"2Q0z6rnBrTE#I#J",posix_attr_set_stack},
-        {"euKRgm0Vn2M#I#J",posix_attr_set_param}, {"OxhIB8LB-PQ#I#J",posix_create},
-        {"Jmi+9w9u0E4#I#J",posix_create_name}, {"h9CcP3J0oVM#I#J",posix_join},
-        {"FJrT5LuUBAU#I#J",thread_exit},
+        {"aI+OeCz8xrQ#libkernel",thread_self}, {"EotR8a3ASf4",thread_self},
+        {"9BcDykPmo1I#libkernel",guest_error},
+        {"nsYoNRywwNg#libkernel",attr_init}, {"62KCwEMmzcM#libkernel",attr_destroy},
+        {"x1X76arYMxU#libkernel",attr_get}, {"8+s5BzZjxSg#libkernel",attr_affinity},
+        {"UTXzJbWhhTE#libkernel",attr_set_stack}, {"-Wreprtu0Qs#libkernel",attr_set_detach},
+        {"4+h9EzwKF4I#libkernel",attr_set_policy}, {"DzES9hQF4f4#libkernel",attr_set_param},
+        {"3qxgM4ezETA#libkernel",attr_set_affinity}, {"eXbUSpEaTsA#libkernel",attr_set_inherit},
+        {"JaRMy+QcpeU#libkernel",attr_get_detach}, {"-fA+7ZlGDQs#libkernel",attr_get_stack},
+        {"FXPWHNk8Of0#libkernel",attr_get_param}, {"El+cQ20DynU#libkernel",attr_set_guard},
+        {"6UgtwV+0zb4#libkernel",thread_create}, {"onNY9Byn-W8#libkernel",thread_join},
+        {"4qGrR6eoP9Y#libkernel",thread_detach}, {"3kg7rT0NQIs#libkernel",thread_exit},
+        {"T72hz6ffq08#libkernel",thread_yield}, {"1tKyG7RlMJo#libkernel",thread_get_prio},
+        {"W0Hpm2X0uPE#libkernel",thread_set_prio}, {"bt3CTBKmGyI#libkernel",thread_set_affinity}, {"rcrVFJsQWRY#libkernel",thread_get_affinity},
+        {"GBUY7ywdULE#libkernel",thread_rename}, {"3PtV6p3QNX4#libkernel",thread_equal},
+        {"wtkt-teR1so",posix_attr_init}, {"zHchY8ft5pk",posix_attr_destroy},
+        {"E+tyo3lp5Lw",posix_attr_set_detach}, {"2Q0z6rnBrTE",posix_attr_set_stack},
+        {"euKRgm0Vn2M",posix_attr_set_param}, {"OxhIB8LB-PQ",posix_create},
+        {"Jmi+9w9u0E4",posix_create_name}, {"h9CcP3J0oVM",posix_join},
+        {"FJrT5LuUBAU",thread_exit},
+        {"How7B8Oet6k#libkernel",thread_getname}, {"EI-5-jlq2dE#libkernel",thread_getthreadid}, {"qBDmpCyGssE#libkernel",thread_cancel},
+        {"FIs3-UQT9sg",posix_getschedparam}, {"Xs9hdiD7sAA",posix_setschedparam},
     };
     for (size_t i=0;i<sizeof(table)/sizeof(*table);++i)
-        if (!strcmp(name,table[i].nid)) return (uintptr_t)table[i].fn;
+        if (runtime_nid_equals(name,table[i].nid)) return (uintptr_t)table[i].fn;
     return 0;
 }
 void runtime_thread_report(void) {

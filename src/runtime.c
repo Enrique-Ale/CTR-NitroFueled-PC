@@ -17,6 +17,7 @@ typedef struct {
 static ExitHandler *handlers;
 static size_t handler_count, handler_capacity, calls_init, calls_atexit, calls_cxa;
 static uint64_t capabilities;
+static int libc_import(const char *name);
 static _Atomic size_t guards_acquired, guards_released;
 static uint64_t stack_canary;
 static _Atomic size_t memory_calls;
@@ -91,6 +92,7 @@ void runtime_report(void) {
     runtime_mutex_report();
     runtime_rwlock_report();
     runtime_sema_report();
+    runtime_eventflag_report();
     runtime_content_report();
     runtime_memory_report();
     runtime_ajm_report();
@@ -202,29 +204,34 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (!(capabilities & 1)) return 0;
     if (is_data) {
         static int32_t need_libc_internal = 1; /* SDK marker variable referenced by Fios2 */
-        if (!strcmp(name, "f7uOxY9mM1U#p#J")) return (uintptr_t)&stack_canary;
-        if (!strcmp(name, "ZT4ODD2Ts9o#libSceLibcInternal")) return (uintptr_t)&need_libc_internal;
+        if (runtime_nid_equals(name,"f7uOxY9mM1U#libkernel")) return (uintptr_t)&stack_canary;
+        if (runtime_nid_equals(name,"ZT4ODD2Ts9o#libSceLibcInternal")) return (uintptr_t)&need_libc_internal;
+        /* __progname (SDK 6.00 libc): the process name libkernel sets from the executable. */
+        static const char *progname="eboot.bin";
+        if (runtime_nid_equals(name,"djxxOmW6-aw#libkernel")) return (uintptr_t)&progname;
         return 0;
     }
-    /* Exact scoped imports for CUSA03173; the suffix identifies library/module. */
-    if (!strcmp(name, "bzQExy189ZI#q#q")) return (uintptr_t)init_env;
-    if (!strcmp(name, "8G2LB+A3rzg#q#q")) return (uintptr_t)guest_atexit;
-    if (!strcmp(name, "tsvEmnenz48#q#q")) return (uintptr_t)guest_cxa_atexit;
-    if (!strcmp(name, "uMei1W9uyNo#q#q")) return (uintptr_t)guest_libc_exit;
+    /* Imports named NID#library (link_modules.py); patterns name the library they are meant for. */
+    if (runtime_nid_equals(name,"bzQExy189ZI#libc")) return (uintptr_t)init_env;
+    if (runtime_nid_equals(name,"8G2LB+A3rzg#libc")) return (uintptr_t)guest_atexit;
+    if (runtime_nid_equals(name,"tsvEmnenz48#libc")) return (uintptr_t)guest_cxa_atexit;
+    if (runtime_nid_equals(name,"uMei1W9uyNo#libc")) return (uintptr_t)guest_libc_exit;
     /* Not imported by the current eboot, exposed for ABI tests/future use. */
-    if (!strcmp(name, "H2e8t5ScQGc#q#q")) return (uintptr_t)guest_finalize;
-    if (!strcmp(name, "3GPpjQdAMTw#q#q")) return (uintptr_t)guard_acquire;
-    if (!strcmp(name, "9rAeANT2tyE#q#q")) return (uintptr_t)guard_release;
-    if (!strcmp(name, "2emaaluWzUw#q#q")) return (uintptr_t)guard_abort;
-    if (!strcmp(name, "Ou3iL1abvng#p#J")) return (uintptr_t)stack_fail;
-    if (!strcmp(name, "8zTFvBIAIN8#q#q")) return (uintptr_t)guest_memset;
-    if (!strcmp(name, "Q3VBxCXhUHs#q#q")) return (uintptr_t)guest_memcpy;
-    if (!strcmp(name, "+P6FRGH4LfA#q#q")) return (uintptr_t)guest_memmove;
-    if (!strcmp(name, "DfivPArhucg#q#q")) return (uintptr_t)guest_memcmp;
-    if (!strcmp(name, "j4ViWNHEgww#q#q")) return (uintptr_t)guest_strlen;
-    if (!strcmp(name, "vNe1w4diLCs#p#J")) return (uintptr_t)guest_tls_get_addr;
-    if (!strcmp(name, "959qrazPIrg#p#J")) return (uintptr_t)guest_procparam;
-    if (!strcmp(name, "p5EcQeEeJAE#p#J")) return (uintptr_t)guest_set_heap_api;
+    if (runtime_nid_equals(name,"H2e8t5ScQGc#libc")) return (uintptr_t)guest_finalize;
+    if (runtime_nid_equals(name,"3GPpjQdAMTw#libc")) return (uintptr_t)guard_acquire;
+    if (runtime_nid_equals(name,"9rAeANT2tyE#libc")) return (uintptr_t)guard_release;
+    if (runtime_nid_equals(name,"2emaaluWzUw#libc")) return (uintptr_t)guard_abort;
+    if (runtime_nid_equals(name,"Ou3iL1abvng#libkernel")) return (uintptr_t)stack_fail;
+    if (runtime_nid_equals(name,"8zTFvBIAIN8#libc")) return (uintptr_t)guest_memset;
+    if (runtime_nid_equals(name,"Q3VBxCXhUHs#libc")) return (uintptr_t)guest_memcpy;
+    if (runtime_nid_equals(name,"+P6FRGH4LfA#libc")) return (uintptr_t)guest_memmove;
+    if (runtime_nid_equals(name,"DfivPArhucg#libc")) return (uintptr_t)guest_memcmp;
+    if (runtime_nid_equals(name,"j4ViWNHEgww#libc")) return (uintptr_t)guest_strlen;
+    if (runtime_nid_equals(name,"vNe1w4diLCs#libkernel")) return (uintptr_t)guest_tls_get_addr;
+    if (runtime_nid_equals(name,"959qrazPIrg#libkernel")) return (uintptr_t)guest_procparam;
+    if (runtime_nid_equals(name,"p5EcQeEeJAE#libkernel")) return (uintptr_t)guest_set_heap_api;
+    /* Everything else a libc import needs comes from the linked libc.prx itself. */
+    if (libc_import(name)) return 0;
     uintptr_t mutex = runtime_mutex_resolve(name);
     if (mutex) return mutex;
     uintptr_t thread = runtime_thread_resolve(name);
@@ -235,6 +242,8 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (timer) return timer;
     uintptr_t sema = runtime_sema_resolve(name);
     if (sema) return sema;
+    uintptr_t eventflag = runtime_eventflag_resolve(name);
+    if (eventflag) return eventflag;
     uintptr_t rwlock = runtime_rwlock_resolve(name);
     if (rwlock) return rwlock;
     uintptr_t memory = runtime_memory_resolve(name);
@@ -260,15 +269,59 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
 static const struct { const char *nid, *symbol; } import_names[]={
 #include "import_names.inc"
 };
-/* Symbol name for a scoped NID, or NULL when this eboot/libc never imports it. */
+/* SacredFire: names generated for the eboot being run (--import-names), searched before the
+ * compiled Bloodborne table. Both are matched on the bare NID: a NID is a hash of the symbol name. */
+static struct { char nid[12]; char *symbol; } *loaded_names;
+static size_t loaded_count;
+static size_t nid_length(const char *name) { const char *h=strchr(name,'#'); return h ? (size_t)(h-name) : strlen(name); }
+int runtime_load_import_names(const char *path) {
+    FILE *f=fopen(path,"r");
+    if (!f) return -1;
+    char line[512];
+    size_t capacity=0;
+    while (fgets(line,sizeof(line),f)) {
+        char nid[16], library[128], symbol[384];
+        if (line[0]=='#' || sscanf(line,"%15s %127s %383s",nid,library,symbol)!=3 || strlen(nid)!=11 || symbol[0]=='?') continue;
+        if (loaded_count==capacity) {
+            capacity=capacity ? capacity*2 : 1024;
+            void *grown=realloc(loaded_names,capacity*sizeof(*loaded_names));
+            if (!grown) { fclose(f); return -1; }
+            loaded_names=grown;
+        }
+        memcpy(loaded_names[loaded_count].nid,nid,12);
+        size_t length=strlen(symbol)+1;
+        loaded_names[loaded_count].symbol=malloc(length);
+        if (!loaded_names[loaded_count].symbol) { fclose(f); return -1; }
+        memcpy(loaded_names[loaded_count].symbol,symbol,length);
+        ++loaded_count;
+    }
+    fclose(f);
+    return (int)loaded_count;
+}
+/* Symbol name for an import, or NULL when nothing names its NID. */
 const char *runtime_symbol(const char *nid) {
+    size_t n=nid_length(nid);
+    if (n!=11) return NULL;
+    for (size_t i=0;i<loaded_count;++i)
+        if (!memcmp(nid,loaded_names[i].nid,11)) return loaded_names[i].symbol;
     for (size_t i=0;i<sizeof(import_names)/sizeof(*import_names);++i)
-        if (!strcmp(nid,import_names[i].nid)) return import_names[i].symbol;
+        if (!memcmp(nid,import_names[i].nid,11)) return import_names[i].symbol;
     return NULL;
 }
 /* Same symbol name means same contract whether imported from libkernel or
  * libScePosix, so newer modules resolve by name through runtime_symbol. */
+/* SacredFire: the symbol-keyed tables model the system libraries, never libc: an import from libc or
+ * libSceLibcInternal binds to the linked libc.prx (link_modules.py). The few libc symbols the runtime
+ * takes over (_init_env, atexit, memcpy, ...) are named explicitly in runtime_resolve. */
+static int libc_import(const char *name) {
+    const char *library=strchr(name,'#');
+    if (!library) return 0;
+    ++library;
+    return (!strncmp(library,"libc",4) && (!library[4] || library[4]=='#')) ||
+           (!strncmp(library,"libSceLibcInternal",18) && (!library[18] || library[18]=='#'));
+}
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t count,const char *nid) {
+    if (libc_import(nid)) return 0;
     const char *symbol=runtime_symbol(nid);
     if (!symbol) return 0;
     for (size_t i=0;i<count;++i) if (!strcmp(symbol,table[i].name)) return (uintptr_t)table[i].function;
@@ -276,5 +329,5 @@ uintptr_t runtime_lookup(const RuntimeExport *table,size_t count,const char *nid
 }
 const char *runtime_import_name(const char *name) {
     const char *symbol=runtime_symbol(name);
-    return symbol ? symbol : "name not resolved; see analysis.json import_name_hints";
+    return symbol ? symbol : "name not resolved; see out/import_names.txt and analysis.json import_name_hints";
 }

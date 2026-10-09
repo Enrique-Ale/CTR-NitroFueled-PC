@@ -196,6 +196,12 @@ def link(game, out, module_names=DEFAULT_MODULES):
                           tls_relocations=tls_relocations, exports=count, sha256=m['sha256']))
         base = (base + modsize + 65535) & ~65535
 
+    # SacredFire: the loader and runtime see every import as NID#library (the eboot's own
+    # library/module indices stay inside boot.bin and this linker). Plain names stay as they are.
+    def canonical(name):
+        identity = main['identity'](name)
+        return f'{identity[0]}#{identity[1][0]}' if identity else name
+    names = [canonical(name) for name in names]
     bindings, unresolved = [], []
     for identity, index in identities.items():
         found = exports.get(identity)

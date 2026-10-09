@@ -383,6 +383,8 @@ static ABI int64_t sce_rmdir(const char *p) { return sce(path_op(p,1,0)); }
 static ABI int64_t posix_rmdir(const char *p) { return posix(path_op(p,1,0)); }
 static ABI int64_t sce_unlink(const char *p) { return sce(path_op(p,2,0)); }
 static ABI int64_t posix_unlink(const char *p) { return posix(path_op(p,2,0)); }
+/* SacredFire: sceKernelGetdents is getdirentries without the base pointer. */
+static ABI int64_t sce_getdents_nobase(int fd,char *b,uint64_t n) { int64_t base=0; return sce(do_getdents(fd,b,n,&base)); }
 static ABI int32_t sce_check_reachability(const char *p) {
     GuestStat s; return (int32_t)sce(do_stat(p,&s));
 }
@@ -398,6 +400,7 @@ static const RuntimeExport exports[]={
     {"sceKernelFstat",sce_fstat}, {"fstat",posix_fstat},
     {"sceKernelStat",sce_stat}, {"stat",posix_stat},
     {"sceKernelGetdirentries",sce_getdents}, {"getdirentries",posix_getdents},
+    {"sceKernelGetdents",sce_getdents_nobase},
     {"sceKernelRename",sce_rename}, {"rename",posix_rename},
     {"sceKernelFtruncate",sce_ftruncate}, {"ftruncate",posix_ftruncate},
     {"sceKernelTruncate",sce_truncate}, {"truncate",posix_truncate},

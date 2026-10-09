@@ -605,6 +605,23 @@ static ABI int32_t direct_memory_type(uint64_t phys, int *type, void **start, vo
     read_unlock();
     return ACCESS;
 }
+/* SacredFire: sceKernelDirectMemoryQuery: the allocated block containing `offset` (flags 0) or the
+ * first block at or after it (flags 1, FIND_NEXT); EACCES when none exists. */
+typedef struct { uint64_t start, end; int32_t type; int32_t reserved; } DirectQueryInfo;
+static ABI int32_t direct_memory_query(uint64_t offset, int flags, DirectQueryInfo *info, uint64_t info_size) {
+    if (!info || info_size<sizeof(*info)) return INVALID;
+    const Block *best=NULL;
+    read_lock();
+    for (int i=0;i<LIMIT;++i) {
+        if (!blocks[i].used) continue;
+        if (offset>=blocks[i].start && offset-blocks[i].start<blocks[i].size) { best=&blocks[i]; break; }
+        if ((flags&1) && blocks[i].start>offset && (!best || blocks[i].start<best->start)) best=&blocks[i];
+    }
+    if (best) { info->start=best->start; info->end=best->start+best->size; info->type=best->type; info->reserved=0; }
+    read_unlock();
+    ++queries;
+    return best ? 0 : ACCESS;
+}
 static ABI int32_t batch_map2(BatchEntry *entries, int count, int *processed, int flags) {
     if (!entries || count<0) return INVALID;
     int32_t result=0; int done=0;
@@ -638,15 +655,15 @@ static const RuntimeExport exports[]={
     {"sceKernelMprotect",kernel_mprotect}, {"sceKernelQueryMemoryProtection",query_protection},
     {"sceKernelVirtualQuery",virtual_query}, {"sceKernelGetDirectMemoryType",direct_memory_type},
     {"sceKernelBatchMap",batch_map}, {"sceKernelBatchMap2",batch_map2},
-    {"mmap",posix_mmap},
+    {"mmap",posix_mmap}, {"sceKernelDirectMemoryQuery",direct_memory_query},
 };
 uintptr_t runtime_memory_resolve(const char *name) {
     /* Direct-memory NIDs are exercised by test_runtime.c before names are loaded. */
-    if (!strcmp(name, "pO96TwzOm5E#p#J")) return (uintptr_t)direct_size;
-    if (!strcmp(name, "rTXw65xmLIA#p#J")) return (uintptr_t)direct_allocate;
-    if (!strcmp(name, "L-Q3LEjIbgA#p#J")) return (uintptr_t)direct_map;
-    if (!strcmp(name, "MBuItvba6z8#p#J")) return (uintptr_t)direct_release;
-    if (!strcmp(name, "cQke9UuBQOk#p#J")) return (uintptr_t)direct_unmap;
+    if (runtime_nid_equals(name,"pO96TwzOm5E#libkernel")) return (uintptr_t)direct_size;
+    if (runtime_nid_equals(name,"rTXw65xmLIA#libkernel")) return (uintptr_t)direct_allocate;
+    if (runtime_nid_equals(name,"L-Q3LEjIbgA#libkernel")) return (uintptr_t)direct_map;
+    if (runtime_nid_equals(name,"MBuItvba6z8#libkernel")) return (uintptr_t)direct_release;
+    if (runtime_nid_equals(name,"cQke9UuBQOk#libkernel")) return (uintptr_t)direct_unmap;
     return RUNTIME_LOOKUP(exports,name);
 }
 /* Host-owned memory the guest can see (image, stacks, trampolines) lives in

@@ -3,6 +3,7 @@
 #include <time.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #ifndef _WIN32
 #include <setjmp.h>
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
@@ -44,6 +45,8 @@ void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uin
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
 uintptr_t runtime_sema_resolve(const char *name);
+uintptr_t runtime_eventflag_resolve(const char *name);
+void runtime_eventflag_report(void);
 void runtime_sema_report(void);
 unsigned runtime_sema_waiters(uint32_t id);
 uintptr_t runtime_time_resolve(const char *name);
@@ -53,8 +56,24 @@ void runtime_content_report(void);
 typedef struct { const char *name; void *function; } RuntimeExport;
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 const char *runtime_symbol(const char *nid);
+/* SacredFire: imports are named "NID#library" (link_modules.py); a pattern "NID" matches the NID from
+ * any library, "NID#library" only from that library. The eboot's own index suffixes never reach here. */
+static inline int runtime_nid_equals(const char *name, const char *pattern) {
+    const char *h = strchr(name, '#'), *k = strchr(pattern, '#');
+    size_t n = h ? (size_t)(h - name) : strlen(name), p = k ? (size_t)(k - pattern) : strlen(pattern);
+    if (n != p || memcmp(name, pattern, n)) return 0;
+    if (!k) return 1; /* any library */
+    const char *library = h ? h + 1 : "", *want = k + 1;
+    const char *end = strchr(library, '#');
+    size_t l = end ? (size_t)(end - library) : strlen(library);
+    return l == strlen(want) && !memcmp(library, want, l);
+}
+/* Loads "NID library symbol" lines generated for the prepared eboot (tools/gen_import_names.py). */
+int runtime_load_import_names(const char *path);
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid);
 uintptr_t runtime_kernel_resolve(const char *name);
+/* SacredFire: a guest thread is ending: libc's thread destructors (_sceKernelSetThreadDtors) run first. */
+void runtime_kernel_thread_exit(void);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
 void runtime_file_report(void);

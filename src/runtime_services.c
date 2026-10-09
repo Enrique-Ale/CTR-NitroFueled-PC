@@ -196,6 +196,18 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
 DIALOG(msg,1) DIALOG(save,2) DIALOG(profile,3) DIALOG(commerce,4)
 static ABI int32_t profile_result(void *result) { if (result) memset(result,0,4); return 0; }
+/* SacredFire: the message dialog closed as if the user pressed its first button: result OK (0),
+ * button 1 (OK/Yes). OrbisMsgDialogResult: mode, result, buttonId, reserved[32]. */
+typedef struct { int32_t mode, result, button; char reserved[32]; } MsgDialogResult;
+static ABI int32_t msg_result(MsgDialogResult *r) {
+    if (!dialogs[1].initialized) return DIALOG_NOT_INITIALIZED;
+    if (!r) return (int32_t)0x80B80001;
+    r->result=0; r->button=1; memset(r->reserved,0,sizeof(r->reserved)); return 0;
+}
+/* NetCtl init/term bracket the disconnected state; a resolver abort has nothing to abort offline. */
+static ABI int32_t netctl_init(void) { return 0; }
+static ABI int32_t netctl_term(void) { return 0; }
+static ABI int32_t resolver_abort(int32_t rid,int32_t flags) { (void)rid; (void)flags; return 0; }
 /* ImeDialog: text typed on the keyboard into the game window (title bar shows it).
  * OrbisImeDialogParam: user, type, languages(8), enter label, method, filter,
  * option, max length, char16 buffer, position, alignment, placeholder, title. */
@@ -329,7 +341,58 @@ static ABI int32_t playgo_locus(int32_t handle,const uint16_t *ids,uint32_t coun
     }
     return 0;
 }
-static ABI int32_t playgo_speed(int32_t handle,int32_t speed) { (void)speed; return handle==playgo_handle && handle ? 0 : PLAYGO_BAD_HANDLE; }
+/* The install speed the game last set (FULL 2 by default); the package being complete, the speed
+ * changes nothing but is reported back as set. */
+static int32_t playgo_install_speed=2;
+static ABI int32_t playgo_speed(int32_t handle,int32_t speed) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (speed<0 || speed>2) return (int32_t)0x80B20002; /* INVALID_ARGUMENT */
+    playgo_install_speed=speed; return 0;
+}
+static ABI int32_t playgo_get_speed(int32_t handle,int32_t *speed) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!speed) return PLAYGO_BAD_POINTER;
+    *speed=playgo_install_speed; return 0;
+}
+/* Progress of a fully installed package: every chunk's progress equals its total (sizes are
+ * not read from playgo-chunk.dat; the ratio is what games act on), ETA 0 seconds. */
+typedef struct { uint64_t progress, total; } PlayGoProgress;
+static ABI int32_t playgo_progress(int32_t handle,const uint16_t *ids,uint32_t count,PlayGoProgress *out) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!ids || !out) return PLAYGO_BAD_POINTER;
+    if (!count) return PLAYGO_BAD_SIZE;
+    for (uint32_t i=0;i<count;++i) if (ids[i]>=playgo_chunks) return PLAYGO_BAD_CHUNK;
+    out->progress=out->total=(uint64_t)count*65536; return 0;
+}
+static ABI int32_t playgo_eta(int32_t handle,const uint16_t *ids,uint32_t count,int64_t *eta) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!ids || !eta) return PLAYGO_BAD_POINTER;
+    if (!count) return PLAYGO_BAD_SIZE;
+    *eta=0; return 0;
+}
+/* The to-do list (chunks still to install) is empty and stays so; prefetching is accepted. */
+typedef struct { uint16_t chunk; uint8_t locus, reserved; } PlayGoToDo;
+static ABI int32_t playgo_get_todo(int32_t handle,PlayGoToDo *list,uint32_t count,uint32_t *out) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!list || !out) return PLAYGO_BAD_POINTER;
+    (void)count; *out=0; return 0;
+}
+static ABI int32_t playgo_set_todo(int32_t handle,const PlayGoToDo *list,uint32_t count) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!list) return PLAYGO_BAD_POINTER;
+    (void)count; return 0;
+}
+static ABI int32_t playgo_prefetch(int32_t handle,const uint16_t *ids,uint32_t count,int8_t locus) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!ids) return PLAYGO_BAD_POINTER;
+    if (!count) return PLAYGO_BAD_SIZE;
+    (void)locus; return 0;
+}
+static ABI int32_t playgo_close(int32_t handle) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    playgo_handle=0; return 0;
+}
+static ABI int32_t playgo_term(void) { playgo_handle=0; return 0; }
 
 /* ---- DiscMap: the game is fully installed, no disc bitmap exists ---- */
 #define DISC_MAP_NO_BITMAP ((int32_t)0x81100004)
@@ -448,6 +511,8 @@ static const RuntimeExport exports[]={
     {"sceCommonDialogInitialize",common_init},
     {"sceMsgDialogInitialize",msg_init}, {"sceMsgDialogOpen",msg_open},
     {"sceMsgDialogUpdateStatus",msg_status}, {"sceMsgDialogTerminate",msg_term},
+    {"sceMsgDialogGetResult",msg_result},
+    {"sceNetCtlInit",netctl_init}, {"sceNetCtlTerm",netctl_term}, {"sceNetResolverAbort",resolver_abort},
     {"sceSaveDataDialogInitialize",save_init}, {"sceSaveDataDialogOpen",save_open},
     {"sceSaveDataDialogUpdateStatus",save_status}, {"sceSaveDataDialogTerminate",save_term},
     {"sceNpProfileDialogInitialize",profile_init}, {"sceNpProfileDialogOpen",profile_open},
@@ -462,6 +527,9 @@ static const RuntimeExport exports[]={
     {"sceNpTrophyGetGameInfo",trophy_game_info}, {"sceNpTrophyGetTrophyInfo",trophy_info},
     {"scePlayGoInitialize",playgo_init}, {"scePlayGoOpen",playgo_open}, {"scePlayGoGetChunkId",playgo_chunk_ids},
     {"scePlayGoGetLocus",playgo_locus}, {"scePlayGoSetInstallSpeed",playgo_speed},
+    {"scePlayGoGetInstallSpeed",playgo_get_speed}, {"scePlayGoGetProgress",playgo_progress}, {"scePlayGoGetEta",playgo_eta},
+    {"scePlayGoGetToDoList",playgo_get_todo}, {"scePlayGoSetToDoList",playgo_set_todo}, {"scePlayGoPrefetch",playgo_prefetch},
+    {"scePlayGoClose",playgo_close}, {"scePlayGoTerminate",playgo_term},
     {"sceMouseInit",ok_void}, {"sceMouseOpen",mouse_open}, {"sceMouseRead",mouse_read}, {"sceMouseClose",mouse_close},
     {"sceAudioInOpen",audio_in_open},
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
