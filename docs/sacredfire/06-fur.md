@@ -1,0 +1,24 @@
+# Fur/hair materials missing (open)
+
+Symptom: every fur-covered body (Crash included) is absent; rigid parts draw. Not readbacks, not
+in-place command decoding, not the 1D-texture view (all tried; the 1D view change is kept as it
+is correct on its own). Vulkan validation (BB_VK_VALIDATION=1, run 22) on the fur pipeline:
+
+- The fur geometry shader (one program, cache hash 0xdcc4d960) declares inputs at locations 0..14
+  (60 components) plus gl_in {Position, PointSize, ClipDistance} (7): 67 > this GPU's
+  maxGeometryInputComponents 64 (VUID-RuntimeSpirv-Location-06272). Upstream shadPS4 0.19 has a
+  fur regression on AMD iGPUs (issue #4413, 2026-10-08) and the same recompiler code.
+- Its export (vertex) stage writes only locations 0..6 (ESGS itemsize 32 dwords); no cached vertex
+  module writes more than 10 locations. So GS reads of locations 7..14 are not an interface the
+  game intends (VUID-RuntimeSpirv-OpEntryPoint-08743).
+- Hypothesis (next step): in shader_recompiler/ir/passes/ring_access_elimination.cpp,
+  HwStage::Geometry, a ring read whose soffset bucket is >= gs_info.in_vertex_data_size belongs to
+  the next input vertex (ESGS layout: component-major, 256 bytes per component, vertices
+  consecutive). Map `vertex += bucket / itemsize; bucket %= itemsize` before deriving the
+  attribute. That makes the GS declare 7 locations (32 components) and match its ES.
+  Then delete user/cache/CUSA13795/*.spv (cached modules keep the old interface) and retest with
+  validation on. If the GS legitimately needs more than 64 components, drop the unused PointSize/
+  ClipDistance members of gl_in in the backend (spirv_emit_context.cpp) to save 3.
+- Also seen: VUID-VkGraphicsPipelineCreateInfo-layout-07988 (vertex-stage descriptors flagged
+  fragment-only / missing from the layout) in 20 pipeline creations; check whether it is confined
+  to these GS pipelines after the fix.

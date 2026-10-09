@@ -51,8 +51,10 @@ with the desktop apps closed.
 - **Fur/hair characters do not render** (driver select, run 12): bodies drawn with the fur material
   are missing; rigid parts (eyes, teeth, hats, kart) draw. The only GPU errors in the run are
   "image view type Color1D is incompatible with image type Color2D" (4 images) and one
-  geometry-shader ring stride warning. Backported shadPS4 #5133 and #5171 (1D images lowered to
-  2D in the recompiler and the texture cache); result pending. Frame analyzer:
+  geometry-shader ring stride warning. The shadPS4 #5133/#5171 backport crashed RADV at pipeline
+  creation and was reverted (patch kept in the session notes). Diagnosis and next step in
+  06-fur.md: the fur geometry shader exceeds maxGeometryInputComponents (64) because ring reads of
+  the second input vertex are mapped to extra attribute locations. Frame analyzer:
   `BB_CAPTURE_TRIGGER=out/capture_trigger BB_CAPTURE_DIR=out/capture`, `touch out/capture_trigger`.
 
 - The license screen's accept needed more than one attempt (reported by the user); the save that
