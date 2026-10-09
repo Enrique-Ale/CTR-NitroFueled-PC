@@ -48,7 +48,7 @@ with the desktop apps closed.
 
 ## Known issues
 
-- **Fur/hair characters do not render** (driver select, run 12): bodies drawn with the fur material
+- **Fur/hair characters** (fixed 2026-10-09, see 06-fur.md): previously missing (driver select, run 12): bodies drawn with the fur material
   are missing; rigid parts (eyes, teeth, hats, kart) draw. The only GPU errors in the run are
   "image view type Color1D is incompatible with image type Color2D" (4 images) and one
   geometry-shader ring stride warning. The shadPS4 #5133/#5171 backport crashed RADV at pipeline

@@ -22,3 +22,13 @@ is correct on its own). Vulkan validation (BB_VK_VALIDATION=1, run 22) on the fu
 - Also seen: VUID-VkGraphicsPipelineCreateInfo-layout-07988 (vertex-stage descriptors flagged
   fragment-only / missing from the layout) in 20 pipeline creations; check whether it is confined
   to these GS pipelines after the fix.
+
+## Outcome (2026-10-09, run 25)
+
+The ring-read mapping now folds a slot at or past `in_vertex_data_size` onto the next input
+vertex (ring_access_elimination.cpp, HwStage::Geometry) and logs any read past slot 32. With the
+SPIR-V cache cleared, fur renders (user report: "looks fine now"). In that run the geometry shader
+compiled without any read past slot 32, i.e. the good variant; the validation run before it had
+the same shader reading slots 32..60. The slot base therefore comes from draw-time data folded
+into soffset, so both variants exist and the fold covers the bad one. If fur ever goes missing
+again, look for "sacredfire GS ring read" lines and VUID-RuntimeSpirv-Location-06272.

@@ -1037,10 +1037,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
         case 0:
+            // sacredfire: CTR submits command buffers whose tail is still being written (the
+            // copy at submit sees unwritten dwords). The rest of this buffer is dropped, as a
+            // console whose GPU ran ahead would misread it too; later submissions continue.
             ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
-            UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
-                            header->type0.base.Value(), header->type0.NumWords());
-            break;
+            LOG_ERROR(Render_Vulkan, "PM4 type 0 packet (base reg {}, size {}): dropping the rest of this command buffer",
+                      header->type0.base.Value(), header->type0.NumWords());
+            dcb = {};
+            continue;
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);
