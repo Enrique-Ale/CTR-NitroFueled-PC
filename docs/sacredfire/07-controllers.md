@@ -14,4 +14,5 @@
   bbport.ini (`port.N=<GUID>`), the runtime re-reads the file within a second, opens that
   gamepad for the port and logs user N in (UserService login event, name "Player N") while it
   is connected; `scePadOpen(user N)` returns handle N and reads that pad only (no keyboard).
-  Unassigning a port logs the user out. Untested in a real split-screen race yet.
+  Unassigning a port logs the user out. Confirmed 2026-10-09: a second gamepad assigned to port 2
+  logged user 2 in ("user 2 logged in (controller port 2)") and joined a split-screen session.

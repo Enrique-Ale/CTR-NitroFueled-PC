@@ -13,6 +13,8 @@ Updated 2026-10-09.
 | Main menu | reached (2026-10-09, run 12): after the license screens and Bink intro videos the game's own log shows menu/garage activity ("changeHeroAndOutfit", "Loading hero DriverNGin"), ~300 draws/frame at 30 FPS |
 | One full race | reached (2026-10-09, run 14): arcade races play through with sound, the Steam Deck controller and saving (user report) |
 | Adventure mode | plays after the sampler fix (user tried it; not played to the end) |
+| Split screen | works: a second gamepad on port 2 joins (user-confirmed) |
+| Game patches | 60 FPS and motion-blur-off switch from the menu; motion blur off confirmed working |
 
 ## How to run
 
