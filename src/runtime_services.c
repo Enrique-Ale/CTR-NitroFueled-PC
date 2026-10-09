@@ -172,7 +172,8 @@ static ABI int32_t voice_info(uint32_t port,uint32_t *info) {
 /* ---- Common dialogs: nothing is displayed; an opened dialog finishes. ---- */
 typedef struct { const char *name; int initialized, status; } Dialog;
 static Dialog dialogs[]={{"CommonDialog",0,0},{"MsgDialog",0,0},{"SaveDataDialog",0,0},
-                         {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0}};
+                         {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0},
+                         {"WebBrowserDialog",0,0},{"InvitationDialog",0,0}};
 static int common_initialized;
 static ABI int32_t common_init(void) { common_initialized=1; return 0; }
 static int32_t dialog_init(int i) {
@@ -194,7 +195,12 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_open(const void *p) { (void)p; return dialog_open(i); } \
     static ABI int32_t tag##_status(void) { return dialog_status(i); } \
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
-DIALOG(msg,1) DIALOG(save,2) DIALOG(profile,3) DIALOG(commerce,4)
+DIALOG(msg,1) DIALOG(save,2) DIALOG(profile,3) DIALOG(commerce,4) DIALOG(webbrowser,6) DIALOG(invitation,7)
+/* SacredFire: the web browser and invitation dialogs close at once with a zeroed result (user
+ * closed / no invitation sent); Close on the browser is accepted. */
+static ABI int32_t webbrowser_close(void) { if (!dialogs[6].initialized) return DIALOG_NOT_INITIALIZED; dialogs[6].status=3; return 0; }
+static ABI int32_t webbrowser_result(void *result) { if (result) memset(result,0,16); return 0; }
+static ABI int32_t invitation_result(void *result) { if (result) memset(result,0,16); return 0; }
 static ABI int32_t profile_result(void *result) { if (result) memset(result,0,4); return 0; }
 /* SacredFire: the message dialog closed as if the user pressed its first button: result OK (0),
  * button 1 (OK/Yes). OrbisMsgDialogResult: mode, result, buttonId, reserved[32]. */
@@ -205,6 +211,9 @@ static ABI int32_t msg_result(MsgDialogResult *r) {
     r->result=0; r->button=1; memset(r->reserved,0,sizeof(r->reserved)); return 0;
 }
 /* NetCtl init/term bracket the disconnected state; a resolver abort has nothing to abort offline. */
+/* UserService event callbacks (ForNpToolkit): registered, never called (no login/logout happens). */
+static ABI int32_t user_event_register(void *cb,void *arg) { (void)cb; (void)arg; return 0; }
+static ABI int32_t user_event_unregister(void) { return 0; }
 static ABI int32_t netctl_init(void) { return 0; }
 static ABI int32_t netctl_term(void) { return 0; }
 static ABI int32_t resolver_abort(int32_t rid,int32_t flags) { (void)rid; (void)flags; return 0; }
@@ -394,6 +403,49 @@ static ABI int32_t playgo_close(int32_t handle) {
 }
 static ABI int32_t playgo_term(void) { playgo_handle=0; return 0; }
 
+/* ---- SacredFire: console features that are absent or idle offline ----
+ * SharePlay: initialized, nothing connected, prohibition accepted. */
+static int shareplay_prohibition;
+static ABI int32_t shareplay_init(void *heap,uint64_t size) { (void)heap; (void)size; return 0; }
+static ABI int32_t shareplay_term(void) { return 0; }
+static ABI int32_t shareplay_prohibit(int32_t mode) { shareplay_prohibition=mode; return 0; }
+/* OrbisSharePlayConnectionInfo: status (0 = dormant), user ids and reserved bytes: 48 bytes zeroed. */
+static ABI int32_t shareplay_connection(void *info) { if (!info) return (int32_t)0x80B10003; memset(info,0,48); return 0; }
+/* Video recording (the Share button's clips): memory query answers a small size so the game's
+ * allocation succeeds; opening a recording fails, which games treat as "recording off".
+ * Error codes: 0x80B4 is libSceVideoRecording's facility; the exact member is assumed. */
+#define VIDEO_RECORDING_UNAVAILABLE ((int32_t)0x80B40001)
+static ABI int32_t videorec_memsize(const void *param) { (void)param; return 0x10000; }
+static ABI int32_t videorec_open(const char *path,const void *param,void *buffer,uint64_t size) {
+    (void)param; (void)buffer; (void)size;
+    printf("Runtime: video recording to %s refused (unavailable)\n",path ? path : "(null)");
+    return VIDEO_RECORDING_UNAVAILABLE;
+}
+static ABI int32_t videorec_fail(void) { return VIDEO_RECORDING_UNAVAILABLE; }
+static ABI int32_t videorec_status(void) { return 0; } /* SCE_VIDEO_RECORDING_STATUS_NONE */
+/* Content export (screenshots/videos to the console gallery): initialized, every export fails.
+ * 0x80AD is assumed for the facility; games check for a negative result. */
+#define CONTENT_EXPORT_UNAVAILABLE ((int32_t)0x80AD0001)
+static ABI int32_t contentexport_init(const void *param) { (void)param; return 0; }
+static ABI int32_t contentexport_term(void) { return 0; }
+static ABI int32_t contentexport_fail(void) { return CONTENT_EXPORT_UNAVAILABLE; }
+/* Game live streaming: initialized, streaming never enabled. */
+static ABI int32_t livestream_init(uint64_t heap_size) { (void)heap_size; return 0; }
+static ABI int32_t livestream_term(void) { return 0; }
+static ABI int32_t livestream_enable(int32_t enable) { (void)enable; return 0; }
+/* Screenshots: the system's screenshot permission flag; nothing observes it here. */
+static ABI int32_t screenshot_toggle(void) { return 0; }
+/* NpManager/NpAuth "A" (account id) variants: the user is signed out. */
+static ABI int32_t np_account_id(int32_t user,uint64_t *id) { (void)user; if (id) *id=0; return NP_SIGNED_OUT; }
+/* Trophy context/handle destruction: ids come from new_id and are never reused. */
+static ABI int32_t trophy_destroy(int32_t id) { return id>0 ? 0 : TROPHY_INVALID; }
+/* HTTP extras: nothing is in flight, so aborting, chunked mode and the SSL callback are accepted;
+ * response header queries fail as every request does offline. */
+static ABI int32_t http_ok(void) { return 0; }
+/* Commerce dialog result: closed without a purchase (result 0, zeroed). PS Store icon: no overlay. */
+static ABI int32_t commerce_result(void *result) { if (result) memset(result,0,8); return 0; }
+static ABI int32_t commerce_icon(void) { return 0; }
+
 /* ---- DiscMap: the game is fully installed, no disc bitmap exists ---- */
 #define DISC_MAP_NO_BITMAP ((int32_t)0x81100004)
 static ABI int32_t discmap_on_hdd(const char *path,int64_t offset,int64_t size,int32_t *result) {
@@ -530,6 +582,37 @@ static const RuntimeExport exports[]={
     {"scePlayGoGetInstallSpeed",playgo_get_speed}, {"scePlayGoGetProgress",playgo_progress}, {"scePlayGoGetEta",playgo_eta},
     {"scePlayGoGetToDoList",playgo_get_todo}, {"scePlayGoSetToDoList",playgo_set_todo}, {"scePlayGoPrefetch",playgo_prefetch},
     {"scePlayGoClose",playgo_close}, {"scePlayGoTerminate",playgo_term},
+    {"sceSharePlayInitialize",shareplay_init}, {"sceSharePlayTerminate",shareplay_term},
+    {"sceSharePlaySetProhibition",shareplay_prohibit}, {"sceSharePlayGetCurrentConnectionInfoA",shareplay_connection},
+    {"sceVideoRecordingQueryMemSize2",videorec_memsize}, {"sceVideoRecordingOpen2",videorec_open},
+    {"sceVideoRecordingStart",videorec_fail}, {"sceVideoRecordingStop",videorec_fail}, {"sceVideoRecordingClose",videorec_fail},
+    {"sceVideoRecordingGetStatus",videorec_status},
+    {"sceContentExportInit",contentexport_init}, {"sceContentExportTerm",contentexport_term},
+    {"sceContentExportStart",contentexport_fail}, {"sceContentExportFromFile",contentexport_fail}, {"sceContentExportFinish",contentexport_fail},
+    {"sceGameLiveStreamingInitialize",livestream_init}, {"sceGameLiveStreamingTerminate",livestream_term},
+    {"sceGameLiveStreamingEnableLiveStreaming",livestream_enable},
+    {"sceScreenShotEnable",screenshot_toggle}, {"sceScreenShotDisable",screenshot_toggle},
+    {"sceNpCheckNpAvailabilityA",np_signed_out}, {"sceNpGetAccountIdA",np_account_id},
+    {"sceNpGetParentalControlInfoA",np_signed_out}, {"sceNpGetUserIdByAccountId",np_signed_out},
+    {"sceNpAuthGetAuthorizationCodeA",np_signed_out}, {"sceNpAuthGetIdTokenA",np_signed_out},
+    {"sceNpTrophyDestroyContext",trophy_destroy}, {"sceNpTrophyDestroyHandle",trophy_destroy},
+    {"sceHttpAbortRequest",http_ok}, {"sceHttpCreateRequestWithURL2",http_object},
+    {"sceHttpGetAllResponseHeaders",http_fail}, {"sceHttpParseResponseHeader",http_fail},
+    {"sceHttpSetChunkedTransferEnabled",http_ok}, {"sceHttpsSetSslCallback",http_ok},
+    {"sceNpCommerceDialogGetResult",commerce_result}, {"sceNpCommerceShowPsStoreIcon",commerce_icon}, {"sceNpCommerceHidePsStoreIcon",commerce_icon},
+    {"sceWebBrowserDialogInitialize",webbrowser_init}, {"sceWebBrowserDialogOpen",webbrowser_open},
+    {"sceWebBrowserDialogUpdateStatus",webbrowser_status}, {"sceWebBrowserDialogTerminate",webbrowser_term},
+    {"sceWebBrowserDialogClose",webbrowser_close}, {"sceWebBrowserDialogGetResult",webbrowser_result},
+    {"sceInvitationDialogInitialize",invitation_init}, {"sceInvitationDialogOpenA",invitation_open},
+    {"sceInvitationDialogUpdateStatus",invitation_status}, {"sceInvitationDialogTerminate",invitation_term},
+    {"sceInvitationDialogGetResultA",invitation_result},
+    /* libSceNpToolkit2.prx's private entry points into NetCtl, NpManager and UserService: the same
+     * contracts as the public ones (disconnected, signed out, one user with no events). */
+    {"sceNetCtlRegisterCallbackForNpToolkit",netctl_register}, {"sceNetCtlCheckCallbackForNpToolkit",netctl_check},
+    {"sceNetCtlUnregisterCallbackForNpToolkit",netctl_unregister},
+    {"sceNpRegisterStateCallbackForToolkit",np_register}, {"sceNpUnregisterStateCallbackForToolkit",ok_void},
+    {"sceNpCheckCallbackForLib",ok_void},
+    {"sceUserServiceRegisterEventCallback",user_event_register}, {"sceUserServiceUnregisterEventCallback",user_event_unregister},
     {"sceMouseInit",ok_void}, {"sceMouseOpen",mouse_open}, {"sceMouseRead",mouse_read}, {"sceMouseClose",mouse_close},
     {"sceAudioInOpen",audio_in_open},
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
