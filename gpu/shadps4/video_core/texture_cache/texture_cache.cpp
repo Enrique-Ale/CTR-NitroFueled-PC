@@ -326,13 +326,8 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
     if (image_info.guest_address == cache_image.info.guest_address) {
         const u32 lhs_block_size = image_info.num_bits * image_info.num_samples;
         const u32 rhs_block_size = cache_image.info.num_bits * cache_image.info.num_samples;
-        // sacredfire: a 1D view of a 2D image (or the reverse) is not a valid Vulkan view; CTR binds
-        // the same memory as a 1D texture (fur ramps) and as a 2D one. Keep separate images.
-        const auto is_1d = [](AmdGpu::ImageType t) {
-            return t == AmdGpu::ImageType::Color1D || t == AmdGpu::ImageType::Color1DArray;
-        };
         if (image_info.BlockDim() != cache_image.info.BlockDim() ||
-            lhs_block_size != rhs_block_size || is_1d(image_info.type) != is_1d(cache_image.info.type)) {
+            lhs_block_size != rhs_block_size) {
             // Very likely this kind of overlap is caused by allocation from a pool.
             if (safe_to_delete) {
                 FreeImage(cache_image_id);

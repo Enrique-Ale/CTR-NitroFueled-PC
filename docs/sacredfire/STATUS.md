@@ -58,9 +58,13 @@ with the desktop apps closed.
 
 ## Known issues
 
-- **Adventure hub sky** renders as concentric colour stripes (user screenshot, run 29); fur and
-  everything else in the scene are right. Not investigated yet; capture the frame
-  (BB_CAPTURE_TRIGGER) in that hub.
+- **Adventure hub sky stripes** (fixed 2026-10-09, run 31): the frame analyzer showed the final
+  colour-grading pass sampling a 1024x32 lookup table built from height-1 render targets that the
+  game samples as 1D textures; the cache gave those 1D views a separate image filled from guest
+  memory (never written by the GPU), so the LUT was garbage and gradients banded. Fix: 1D images
+  are lowered to 2D with height 1 in the SPIR-V backend (image type, coordinates, offsets,
+  derivatives, size queries), views and images (the 1D part of shadPS4 #5133/#5171, without the
+  cube-map changes that crashed RADV here). User-confirmed.
 - **Clobbered packet headers**: in CTR a single dword inside a submitted command buffer is
   sometimes overwritten with 1 (`Bad PM4 packet ... [00000001]` where a SET_CONTEXT_REG header
   was). Dropping the rest of the buffer froze the game on the fence behind it; the decoder now

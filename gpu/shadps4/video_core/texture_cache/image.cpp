@@ -50,8 +50,7 @@ static vk::ImageUsageFlags ImageUsageFlags(const Vulkan::Instance& instance,
 static vk::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
     switch (type) {
     case AmdGpu::ImageType::Color1D:
-    case AmdGpu::ImageType::Color1DArray:
-        return vk::ImageType::e1D;
+    case AmdGpu::ImageType::Color1DArray: // sacredfire: lowered to 2D, height 1
     case AmdGpu::ImageType::Color2D:
     case AmdGpu::ImageType::Color2DMsaa:
     case AmdGpu::ImageType::Color2DArray:

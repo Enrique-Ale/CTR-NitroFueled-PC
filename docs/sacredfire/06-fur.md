@@ -43,3 +43,10 @@ cache per CTR launch. Root cause to find: permutation indices are assigned in fi
 run, so `<hash>_1.spv` may hold a different specialization (plain VS vs export stage of the GS
 pipeline) than the one the pipeline cache expects; check vk_pipeline_cache.cpp's cache load against
 the `.meta` specialization records.
+
+## 1D images lowered to 2D (run 31)
+
+The minimal form of the upstream change (image type Dim2D with height 1, coordinate/offset/
+derivative padding, size queries, e2D views and images) compiles and runs without the RADV crash
+seen with the full #5133 backport; the interim "keep 1D images apart" rule is reverted. It fixed
+the adventure hub sky (a colour LUT built from height-1 render targets).
