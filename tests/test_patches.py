@@ -187,3 +187,18 @@ class IntelTonemapTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExternalGamePatchTests(unittest.TestCase):
+    """SacredFire: external patches filtered by TITLE_ID and chosen through bbport.ini patch_* keys."""
+
+    def test_title_id_filter_and_ini_selection(self):
+        import patches
+        found = patches.external_patches(ROOT / 'patches', '01.21', ROOT / 'patches/Bloodborne.xml', title_id='CUSA13795')
+        keys = [key for key, _, _ in found]
+        self.assertIn('CrashTeamRacing.xml/60 FPS Unlock', keys)
+        self.assertIn('CrashTeamRacing.xml/Disable Motion Blur', keys)
+        self.assertEqual(patches.external_patches(ROOT / 'patches', '01.21', ROOT / 'patches/Bloodborne.xml', title_id='CUSA99999'), [])
+        selected = patches.external_selection(found, None, {'patch_60fps': '1', 'patch_no_motion_blur': '0'})
+        self.assertEqual([key for key, _, _ in selected], ['CrashTeamRacing.xml/60 FPS Unlock'])
+        self.assertEqual(patches.external_selection(found, None, {}), [])

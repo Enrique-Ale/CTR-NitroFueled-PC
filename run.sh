@@ -78,8 +78,11 @@ fi
 "$PYTHON" tools/gen_import_names.py --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
 if [[ $profile == ctr ]]; then
-    # CTR: no patches; the game runs at its own 30 FPS against a 60 Hz vblank.
+    # CTR: the game's own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches come
+    # from patches/CrashTeamRacing.xml, chosen in the in-game menu (bbport.ini patch_* keys).
     fps=${BB_FPS:-30}
+    "$PYTHON" scripts/patches.py --external-only --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
+        --app-version 01.21 --title-id CUSA13795 --out "$out" --settings "$BB_CONFIG"
     # BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then
     # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
     export BB_NEO=${BB_NEO:-0}
@@ -91,7 +94,7 @@ if [[ $profile == ctr ]]; then
         rm -rf "${BB_USER_DIR:-$data/user}/cache/CUSA13795"
         echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
     fi
-    patch_args=()
+    patch_args=(--patches "$out/patches.bin")
 else
     # Sizes chosen below for the previous launch are recomputed after an in-game restart.
     if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then

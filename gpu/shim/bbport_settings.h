@@ -42,6 +42,14 @@ inline constexpr Effect Effects[] = {
     {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
+/// SacredFire: game patches for the CTR profile (patches/CrashTeamRacing.xml, selected by these
+/// bbport.ini keys, compiled at start by scripts/patches.py in external-only mode; restart required).
+inline constexpr Effect GamePatches[] = {
+    {"patch_60fps", "60 FPS unlock (illusion)", "60 FPS (illusion)", false},
+    {"patch_no_motion_blur", "Disable motion blur (illusion)", "Без размытия в движении (illusion)", false},
+    {"patch_pro_1080p", "1080p in PS4 Pro mode (TroyWarez; with BB_NEO=1)", "1080p в режиме PS4 Pro (TroyWarez; с BB_NEO=1)", false},
+};
+inline constexpr int GamePatchCount = int(sizeof(GamePatches) / sizeof(GamePatches[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.
 inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
 inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
@@ -74,6 +82,7 @@ struct Values {
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
+    std::atomic<bool> game_patches[GamePatchCount]{}; ///< SacredFire: see GamePatches
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
@@ -88,6 +97,7 @@ struct Values {
     int startup_upscaler = UpscalerFsr3;
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
+    bool startup_game_patches[GamePatchCount]{};
     int startup_model_lod = 0;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;

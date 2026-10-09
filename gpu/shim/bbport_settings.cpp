@@ -89,6 +89,11 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.effects[e] = i != 0;
             }
         }
+        for (int g = 0; g < GamePatchCount; ++g) {
+            if (key == GamePatches[g].key) {
+                v.game_patches[g] = i != 0;
+            }
+        }
     }
 }
 
@@ -171,6 +176,9 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.startup_effects[e] = v.effects[e];
     }
+    for (int g = 0; g < GamePatchCount; ++g) {
+        v.startup_game_patches[g] = v.game_patches[g];
+    }
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
@@ -246,6 +254,9 @@ void Save() {
     // Read by patches.py at start.
     for (int e = 0; e < EffectCount; ++e) {
         put(Effects[e].key, flag(v.effects[e]));
+    }
+    for (int g = 0; g < GamePatchCount; ++g) {
+        put(GamePatches[g].key, flag(v.game_patches[g]));
     }
     put("model_lod", std::to_string(v.model_lod.load()));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +

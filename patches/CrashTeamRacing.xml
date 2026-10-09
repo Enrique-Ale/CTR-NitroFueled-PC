@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Crash Team Racing Nitro-Fueled (CUSA13795) 1.21 patches, from
+     https://github.com/illusionyy/PS-Game-Patch (patches/xml/CrashTeamRacingUS-Orbis.xml),
+     authors illusion and TroyWarez. Selected in the in-game menu (bbport.ini patch_* keys),
+     compiled by scripts/patches.py (external-only mode) into out/patches.bin at start. -->
+<Patch>
+    <TitleID>
+        <ID>CUSA13795</ID>
+    </TitleID>
+    <Metadata Title="Crash Team Racing Nitro-Fueled"
+              Name="60 FPS Unlock"
+              Note="Version 2.0 now removes double buffer vsync."
+              Author="illusion"
+              PatchVer="2.0"
+              AppVer="01.21"
+              AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="bytes" Address="0x017a9d90" Value="41899688040000"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Crash Team Racing Nitro-Fueled"
+              Name="Disable Motion Blur"
+              Author="illusion"
+              PatchVer="1.0"
+              AppVer="01.21"
+              AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="bytes" Address="0x00ef0f52" Value="9090909090"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Crash Team Racing Nitro-Fueled"
+              Name="Resolution Patch (1080p for PS4 Pro)"
+              Author="TroyWarez"
+              PatchVer="1.0"
+              AppVer="01.21"
+              AppElf="eboot.bin">
+        <PatchList>
+            <Line Type="bytes" Address="0x017a9db3" Value="84"/>
+        </PatchList>
+    </Metadata>
+</Patch>

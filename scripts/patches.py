@@ -206,9 +206,16 @@ def compile_patches(xml, names, app_version, segments):
 BLOODBORNE_IDS={'CUSA00207','CUSA00208','CUSA00900','CUSA01363','CUSA03173','CUSA03023'}
 
 
-def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'):
+# SacredFire: bbport.ini keys (the in-game menu) -> external patch keys, per game profile.
+GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
+                 'patch_no_motion_blur':'CrashTeamRacing.xml/Disable Motion Blur',
+                 'patch_pro_1080p':'CrashTeamRacing.xml/Resolution Patch (1080p for PS4 Pro)'}
+
+
+def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml', title_id=None):
     """[(key, file, metadata)] of eboot patches for this version in directory/*.xml.
-    key is "<file name>/<patch name>" (the launcher's selection, patches.json)."""
+    key is "<file name>/<patch name>" (the launcher's selection, patches.json).
+    title_id (SacredFire): the game's TITLE_ID; files naming other ids are skipped."""
     found=[]
     directory=Path(directory)
     for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
@@ -219,20 +226,22 @@ def external_patches(directory, app_version='01.09', exclude=Path(__file__).reso
             print(f'Patches: {path.name}: {error}',file=sys.stderr)
             continue
         ids={e.text.strip() for e in root.iter('ID') if e.text}
-        if ids and not ids&BLOODBORNE_IDS: continue
+        if ids and (title_id not in ids if title_id else not ids&BLOODBORNE_IDS): continue
         for meta in root.iter('Metadata'):
             if meta.get('AppVer')==app_version and meta.get('AppElf','eboot.bin')=='eboot.bin':
                 found.append((f'{path.name}/{meta.get("Name")}',path,meta))
     return found
 
 
-def external_selection(found, config):
+def external_selection(found, config, ini=None):
     """Selected external patches: patches.json {"enabled": [...], "disabled": [...]} overrides
-    each file's isEnabled."""
+    each file's isEnabled; bbport.ini patch_* keys (GAME_PATCH_KEYS, the in-game menu) add to it."""
     settings={}
     if config and Path(config).is_file():
         settings=json.loads(Path(config).read_text())
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
+    for key,patch in GAME_PATCH_KEYS.items():
+        if (ini or {}).get(key)=='1': enabled.add(patch); disabled.discard(patch)
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 
@@ -271,6 +280,9 @@ def main():
     p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
     p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
+    p.add_argument('--title-id',default=None,help='the game (external patch files naming other ids are skipped)')
+    p.add_argument('--external-only',action='store_true',
+                   help='SacredFire: only --patches-dir patches selected by patches.json and bbport.ini patch_* keys')
     p.add_argument('--print-scaled',action='store_true',
                    help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
     a=p.parse_args()
@@ -286,6 +298,15 @@ def main():
             settings['preset']=os.environ['BB_UPSCALE_PRESET']
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
+        return
+    if a.external_only:
+        segments=eboot_segments((a.out/'eboot.elf').read_bytes())
+        found=external_patches(a.patches_dir,a.app_version,a.xml,a.title_id) if a.patches_dir else []
+        writes=compile_external(external_selection(found,a.patches_config,read_settings(a.settings)),segments)
+        blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
+        for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
+        (a.out/'patches.bin').write_bytes(blob)
+        print(f'Patches: {len(writes)} writes from external patches')
         return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]

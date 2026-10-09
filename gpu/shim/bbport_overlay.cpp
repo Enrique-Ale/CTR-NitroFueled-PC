@@ -11,6 +11,8 @@
 #include <string>
 
 #include <SDL3/SDL.h>
+#include <cstdlib>
+#include <cstring>
 #include "bbport_settings.h"
 #include "imgui.h"
 #include "imgui_impl_vulkan.h"
@@ -464,6 +466,20 @@ void Menu() {
         "остаётся в 1080p — на Steam Deck и старых видеокартах это заметно медленнее. "
         "Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает "
         "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
+    // SacredFire: the CTR profile has its own patch list instead of Bloodborne's effects.
+    const char* game_profile = std::getenv("BB_GAME_PROFILE");
+    const bool ctr_profile = game_profile && std::strcmp(game_profile, "ctr") == 0;
+    if (ctr_profile) {
+        ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
+                                                  "Патчи игры (после перезапуска)"));
+        for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
+            const auto& patch = BbSettings::GamePatches[g];
+            Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
+        }
+        Hint(BbSettings::MenuText("From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied to the executable at start.",
+                                  "Из patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), применяются к исполняемому файлу при запуске."));
+    }
+    if (!ctr_profile) {
     ImGui::SeparatorText(BbSettings::MenuText("Game effects (restart required)",
                                               "Эффекты игры (после перезапуска)"));
     const char* lods[] = {BbSettings::MenuText("Highest (-2)", "Максимальная (-2)"),
@@ -500,12 +516,16 @@ void Menu() {
         "Свободная камера: удерживайте Cross и нажимайте L3 (клавиатура: Space + Z). "
         "Debug menu: левый touchpad / Tab. Нужны DbgFont14h.ccm и DbgFont14h.tpf "
         "в dvdroot_ps4/font из мода Nexus #253. Правый touchpad: Backspace."));
+    }
 
     bool restart =
         s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||
         s.live_resolution != s.startup_live_resolution || BbSettings::ResolutionNeedsRestart();
     for (int e = 0; e < BbSettings::EffectCount; ++e) {
         restart |= s.effects[e] != s.startup_effects[e];
+    }
+    for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
+        restart |= s.game_patches[g] != s.startup_game_patches[g];
     }
     if (restart) {
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
