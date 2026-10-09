@@ -95,6 +95,13 @@ if [[ $profile == ctr ]]; then
         echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
     fi
     patch_args=(--patches "$out/patches.bin")
+    # With the 60 FPS patch the game's own limiter paces frames; a 60 Hz virtual vblank would
+    # quantize a slightly late frame to 30 FPS (measured: 40-44 FPS alternating 16.7/33 ms).
+    # A 480 Hz vblank lets frames flip as they come (menus 60 FPS instead of 50).
+    if [[ -f $BB_CONFIG ]] && grep -qx 'patch_60fps=1' "$BB_CONFIG"; then
+        export BB_VBLANK_HZ=${BB_VBLANK_HZ:-480}
+        echo "60 FPS patch on: virtual vblank ${BB_VBLANK_HZ} Hz"
+    fi
 else
     # Sizes chosen below for the previous launch are recomputed after an in-game restart.
     if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then

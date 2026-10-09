@@ -13,3 +13,16 @@ TroyWarez): "60 FPS Unlock", "Disable Motion Blur", "Resolution Patch (1080p for
   to the image after relocation (`--patches`). Bloodborne's built-in patch logic is untouched.
 - `BB_PATCHES_DIR` points at another folder of shadPS4-format XML files for this title.
 - The 1080p Pro patch only makes sense with `BB_NEO=1`.
+
+## 60 FPS on the Steam Deck (measured 2026-10-09)
+
+- With a 60 Hz virtual vblank the game alternated between 16.7 and 33 ms frames (40-44 FPS in
+  races, 50 in menus): a frame slightly late for the vblank costs a whole extra one. run.sh now
+  sets `BB_VBLANK_HZ=480` when `patch_60fps=1`; menus then hold 57-60 FPS.
+- Races stay at 37-45 FPS. In the default memory model the command-processing thread is the
+  limit (idle 5%, ~1,400 draws/frame at ~10 µs each plus write-tracking faults). The experimental
+  PC model (`BB_PC_MODEL=1`) frees that thread (idle 40%, no write faults) but commits the whole
+  direct-memory arena as GPU-visible memory: amdgpu GTT 5.8 GB (1.8 GB in the default model),
+  which on the Deck's shared 16 GB pushed 15 GB into swap; the game then waited 18.5 ms per frame
+  for the previous frame. Not usable here without a bounded GTT budget.
+- Threads during a race (old model): no single thread saturated; machine ~80% busy on 8 threads.
