@@ -12,7 +12,8 @@ let
   assetDirs = [ "scripts" "patches" "launcher" ];
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so" "tools"
+    "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so"
+    "tools" "tools/gen_import_names.py"
   ] ++ assetDirs;
   src = builtins.path {
     name = "bbport-src";
@@ -76,6 +77,8 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $d/bin $out/bin
     cp run.sh $d/
     cp -r scripts patches launcher $d/
+    # run.sh generates the eboot's import names with it (shadPS4's aerolib list, fetched once).
+    install -Dm755 tools/gen_import_names.py $d/tools/gen_import_names.py
     install -m755 out/bb-probe $d/bin/bb-probe
     install -m755 out/bb-gpu-capabilities $d/bin/bb-gpu-capabilities
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so

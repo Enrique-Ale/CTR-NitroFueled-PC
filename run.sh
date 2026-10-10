@@ -151,6 +151,12 @@ else
     bash build.sh
     probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
 fi
+# The user directory (saves, shader cache) must exist and be named to the GPU library before the
+# game starts: its path table is built when the library loads (before the port hands it the
+# directory), and a missing directory makes it fall back to ~/.local/share/shadPS4, which the
+# cache clearing above would miss (seen on the first launch from a fresh data directory).
+export BB_GPU_USER_DIR=${BB_USER_DIR:-$data/user}
+mkdir -p "$BB_GPU_USER_DIR"
 probe_args=("$out/boot-linked.bin" --import-names "$out/import_names.txt" --content-profile "$out/content.bin" "${patch_args[@]}" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then
     "$probe" "${probe_args[@]}" &

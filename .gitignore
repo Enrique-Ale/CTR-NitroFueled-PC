@@ -32,3 +32,5 @@ user/
 pgo/
 logs/
 bbport.ini
+# Alternate builds set aside (out.arch, out.nix: see packaging/appimage.sh)
+/out.*/

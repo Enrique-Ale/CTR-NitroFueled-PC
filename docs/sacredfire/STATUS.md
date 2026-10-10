@@ -95,7 +95,13 @@ with the desktop apps closed.
   package upgrade repaired PyGObject); `python3 launcher/sacredfire_launcher.py --play` starts
   the game with the saved settings (tested: PS4 Pro mode on, Pro 1080p patch, two controller
   ports, 30 FPS).
-- `packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` with `nix bundle`. It
-  needs Nix and binaries built inside `nix-shell shell.nix` (their RUNPATHs name the store paths
-  the bundle collects); the archbuild container has no Nix and its binaries link the system
-  libraries, so the AppImage has to be built on a machine with Nix. Untested in this tree.
+- `packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` (841 MB) with `nix bundle`.
+  Built and tested on 2026-10-09 in the archbuild container after installing single-user Nix
+  (`pacman -S nix`, /nix owned by the user, nixos-unstable channel): the runtime and GPU library
+  were rebuilt inside `nix-shell shell.nix` so their RUNPATHs name store paths, then bundled.
+  `AppRun --play` from the extracted image boots the game with a fresh data directory
+  (~/.local/share/sacredfire: generated files, saves, shader cache, bbport.ini). Two fixes came out
+  of it: the package now carries tools/gen_import_names.py (run.sh needs it), and run.sh exports
+  BB_GPU_USER_DIR and creates the user directory before the game starts (the GPU library builds
+  its path table when it loads and fell back to ~/.local/share/shadPS4 on a first launch, which the
+  per-launch shader cache clearing would have missed). Steps in packaging/appimage.sh's header.
