@@ -63,7 +63,7 @@ DEFAULTS = {
     "gamepad": "",
     "gamepad_name": "",
     "neo": False,
-    "keep_shader_cache": False,
+    "clear_shader_cache": False,
     "frame_stats": False,
     "save_log": False,
     "mangohud": False,
@@ -138,8 +138,8 @@ def game_environment(s):
     if s.get("gamepad"):
         env["BB_GAMEPAD"] = s["gamepad"]
     env["BB_NEO"] = "1" if s.get("neo") else "0"
-    if s.get("keep_shader_cache"):
-        env["BB_KEEP_SHADER_CACHE"] = "1"
+    if s.get("clear_shader_cache"):
+        env["BB_CLEAR_SHADER_CACHE"] = "1"
     if s["frame_stats"]:
         env["BB_FRAME_STATS"] = "1"
     if s.get("save_log"):
@@ -193,9 +193,32 @@ def combo_value(row):
     return row.values[row.get_selected()]
 
 
+APP_ID = "io.github.sacredfire.Launcher"
+
+
+def install_game_icon(game_dir):
+    """The game's own icon (sce_sys/icon0.png) as this app's icon: copied into the user's icon
+    theme under the application id, where GTK and the desktop find it (launcher/install-desktop.sh
+    does the same for the menu entry). Game files never enter the repository."""
+    try:
+        source = Path(game_dir).expanduser() / "sce_sys/icon0.png"
+        if not source.is_file():
+            return False
+        share = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+        target = share / "icons/hicolor/512x512/apps" / f"{APP_ID}.png"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if not target.is_file() or target.stat().st_size != source.stat().st_size:
+            target.write_bytes(source.read_bytes())
+        return True
+    except OSError:
+        return False
+
+
 class LauncherWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title=f"{TITLE} — {GAME}")
+        if install_game_icon(self.settings["game_dir"] if hasattr(self, "settings") else load_settings()["game_dir"]):
+            self.set_icon_name(APP_ID)
         self.set_default_size(720, 760)
         self.settings = load_settings()
         set_language(self.settings.get("ui_language", ""))
@@ -298,9 +321,9 @@ class LauncherWindow(Adw.ApplicationWindow):
         dev.add(self.stats_row)
         self.save_log_row = Adw.SwitchRow(title=tr("Save the log to a file (logs/)"), active=self.settings["save_log"])
         dev.add(self.save_log_row)
-        self.cache_row = Adw.SwitchRow(title=tr("Keep the shader cache between launches"),
-                                       subtitle=tr("Cleared per launch by default: a reused cache broke the fur materials"),
-                                       active=self.settings["keep_shader_cache"])
+        self.cache_row = Adw.SwitchRow(title=tr("Clear the shader cache at start"),
+                                       subtitle=tr("The cache is kept by default so known areas do not compile shaders mid-race; clear it after GPU driver updates or rendering glitches"),
+                                       active=self.settings["clear_shader_cache"])
         dev.add(self.cache_row)
         self.validation_row = Adw.SwitchRow(title=tr("Vulkan validation layer (slow)"), active=self.settings["vk_validation"])
         dev.add(self.validation_row)
@@ -387,7 +410,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["mangohud"] = self.mangohud_row.get_active()
         s["frame_stats"] = self.stats_row.get_active()
         s["save_log"] = self.save_log_row.get_active()
-        s["keep_shader_cache"] = self.cache_row.get_active()
+        s["clear_shader_cache"] = self.cache_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.env_row.get_text()
         s["ui_language"] = combo_value(self.ui_language_row)
@@ -495,7 +518,7 @@ class LauncherWindow(Adw.ApplicationWindow):
 
 class LauncherApp(Adw.Application):
     def __init__(self):
-        super().__init__(application_id="io.github.sacredfire.Launcher",
+        super().__init__(application_id=APP_ID,
                          flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
 
     def do_activate(self):

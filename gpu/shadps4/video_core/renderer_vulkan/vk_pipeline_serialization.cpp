@@ -122,7 +122,14 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    fetch_shader_data = spec.fetch_shader_data;
+    // sacredfire: only the vertex stage carries a fetch shader. Stages are loaded in SwStage order
+    // (fragment, tessellation, vertex, geometry), and an unconditional assignment let a geometry
+    // stage clear the fetch shader the vertex stage had just set: every preloaded pipeline with a
+    // geometry shader (CTR's fur) was built without vertex inputs. RefreshGraphicsKey keeps the
+    // last stage that had one; do the same here.
+    if (spec.fetch_shader_data) {
+        fetch_shader_data = spec.fetch_shader_data;
+    }
     return true;
 }
 

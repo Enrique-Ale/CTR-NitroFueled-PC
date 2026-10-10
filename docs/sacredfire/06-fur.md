@@ -65,3 +65,15 @@ its fine again"); with the on-disk cache the preloaded module decided it for the
 The comparison now covers every field the recompiler reads; the compute stage's `shared_memory_size`
 (read by the shared-memory passes) joins its comparison for the same reason. Cache versions bumped
 (binary 8: the fold and the 1D lowering changed codegen without a bump; meta 8, pipeline key 6).
+
+The specialization fix alone did not cure the cached case (run 44: fur wrong with the cache
+kept, no geometry shader recompiled). Second cause, in the preload path
+(vk_pipeline_serialization.cpp, LoadShaderMeta): the pipeline's fetch shader was assigned from
+every stage's metadata, and stages load in SwStage order (fragment, tessellation control and
+evaluation, vertex, geometry). For a pipeline with a geometry stage the geometry metadata, which
+has no fetch shader, cleared the one the vertex stage had just set, so every preloaded GS pipeline
+was built without vertex attributes. The runtime path (RefreshGraphicsKey's bind_stage) only
+takes a fetch shader from a stage that has one; the preload path now does the same.
+
+Run 45 (cache kept, both fixes): fur right ("fur looks fine now"). run.sh keeps the cache from
+here on; BB_CLEAR_SHADER_CACHE=1 clears it.

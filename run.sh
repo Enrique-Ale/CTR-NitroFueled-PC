@@ -11,7 +11,7 @@ if [[ ${1:-} == --software ]]; then
     if [[ -z ${VK_DRIVER_FILES:-} ]]; then echo 'Lavapipe not found; set VK_DRIVER_FILES.' >&2; exit 1; fi
     export VK_LOADER_LAYERS_DISABLE='~implicit~'
 fi
-# BB_PREBUILT=1 (packaged builds, the AppImage): out/bb-probe and its GPU library are installed
+# BB_PREBUILT=1 (packaged builds, the AppImage): out/sacredfire (the game executable) and its GPU library are installed
 # next to this script; nothing is built and no nix-shell is needed.
 # BB_DATA_DIR: writable directory for the generated files (out/), saves (user/) and bbport.ini;
 # by default this directory.
@@ -80,12 +80,14 @@ patch_args=(--patches "$out/patches.bin")
 # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
 export BB_NEO=${BB_NEO:-0}
 echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
-# The on-disk shader/pipeline cache reused across launches breaks the fur geometry pipeline
-# (docs/sacredfire/06-fur.md): a fresh cache compiles it right. Cleared per launch until the
-# cache's module/permutation matching is fixed (BB_KEEP_SHADER_CACHE=1 keeps it).
-if [[ ${BB_KEEP_SHADER_CACHE:-0} != 1 ]]; then
+# The on-disk shader/pipeline cache (user/cache/CUSA13795) is kept across launches: the GPU
+# library preloads every pipeline from earlier sessions at start, so areas seen before no longer
+# compile shaders mid-race. BB_CLEAR_SHADER_CACHE=1 (launcher: "Clear the shader cache at start")
+# deletes it first; the fur breakage that once forced a clear per launch is fixed
+# (docs/sacredfire/06-fur.md: geometry specialization and preload fetch shader).
+if [[ ${BB_CLEAR_SHADER_CACHE:-0} == 1 ]]; then
     rm -rf "${BB_USER_DIR:-$data/user}/cache/CUSA13795"
-    echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
+    echo "Shader cache: cleared for this launch (BB_CLEAR_SHADER_CACHE=1)"
 fi
 # With the 60 FPS patch the game's own limiter paces frames; a 60 Hz virtual vblank would
 # quantize a slightly late frame to 30 FPS (measured: 40-44 FPS alternating 16.7/33 ms).
@@ -146,10 +148,10 @@ if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
-    probe=${BB_PROBE:-bin/bb-probe}
+    probe=${BB_PROBE:-bin/sacredfire}
 else
     bash build.sh
-    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
+    probe=${BB_PROBE:-out/sacredfire}  # BB_PROBE: a wrapper (gdb) around it
 fi
 # The user directory (saves, shader cache) must exist and be named to the GPU library before the
 # game starts: its path table is built when the library loads (before the port hands it the
