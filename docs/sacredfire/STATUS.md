@@ -118,3 +118,6 @@ with the desktop apps closed.
   (gpu/shim/window.cpp decodes the PNG with miniz; nothing from the dump enters the repository).
   launcher/install-desktop.sh and the launcher copy it into the user's icon theme as
   io.github.sacredfire.Launcher for the menu entry and the launcher window.
+- AppImage rebuilt (2026-10-10) with the renamed executable, the icon and the cache fixes:
+  `dist/SacredFire-CTR-x86_64.AppImage`, programs `sacredfire` (launcher) and `sacredfire-game`.
+  Repository: https://github.com/T3CHNOLOG1C/SacredFire.
