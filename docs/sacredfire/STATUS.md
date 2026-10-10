@@ -121,3 +121,15 @@ with the desktop apps closed.
 - AppImage rebuilt (2026-10-10) with the renamed executable, the icon and the cache fixes:
   `dist/SacredFire-CTR-x86_64.AppImage`, programs `sacredfire` (launcher) and `sacredfire-game`.
   Repository: https://github.com/T3CHNOLOG1C/SacredFire.
+
+## Release preparation (2026-10-10)
+
+- Draft release v0.1 on GitHub with `dist/SacredFire-CTR-x86_64.AppImage` (841 MB) attached;
+  the repository stays private until the user publishes it. Tags 0.1 to 0.5-pre3 are bbport's,
+  so SacredFire releases use a `v` prefix.
+- `.github/workflows/tests.yml` runs the Python tests, shell syntax and compile checks on every
+  push; `.github/ISSUE_TEMPLATE/` has the bug report form; `CONTRIBUTING.md` states the
+  no-game-files rule and how changes are made.
+- Game patches credited to illusion and TroyWarez (illusionyy/PS-Game-Patch) in the patch
+  file, the settings table, the patch compiler, run.sh, the launcher, the README and here.
+- A first start without network no longer aborts (import names fall back to the compiled table).
