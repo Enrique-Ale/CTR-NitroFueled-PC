@@ -32,6 +32,19 @@ to the end. Name your GPU and driver.
   what was tried, what fixed it). `STATUS.md` there is the summary of where things stand.
 - Commit messages say what changed and why. No generated trailers.
 
+## Releases
+
+The AppImage is a GPL binary, so each published one has to match a published commit:
+
+1. Commit everything and tag the commit: `git tag vX.Y && git push origin vX.Y`.
+2. Build from that checkout (`bash build.sh` inside `nix-shell shell.nix`, as the header of
+   `packaging/appimage.sh` describes); `out/VERSION` then reads `vX.Y`.
+3. `bash packaging/appimage.sh` refuses an untagged, unbuilt or uncommitted tree and writes
+   `dist/SacredFire-x86_64.AppImage` with its `.sha256`. The launcher's title bar, `run.sh`'s
+   first lines and `VERSION` inside the package show the tag.
+4. Create the GitHub release for the tag `vX.Y` (not for a branch), attach the AppImage and its
+   checksum, and name the tag in the notes.
+
 ## Licenses
 
 SacredFire is GPL-2.0-or-later (see `LICENSE`), as are bbport and shadPS4 it is built on.

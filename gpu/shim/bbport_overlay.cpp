@@ -174,10 +174,10 @@ void Menu() {
     ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
     ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
     bool keep_open = true;
-    // SacredFire: the menu title names the game profile.
+    // SacredFire: the menu title.
     if (!ImGui::Begin(
-            BbSettings::MenuText("SacredFire - Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings",
-                                 "SacredFire — Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings"),
+            BbSettings::MenuText("SacredFire  (Insert / L3+R3)###bbport_settings",
+                                 "SacredFire  (Insert / L3+R3)###bbport_settings"),
             &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
@@ -474,7 +474,7 @@ void Menu() {
         "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
     }
     // Game patches (patches/CrashTeamRacing.xml): bbport's own game-effect patches went with its
-    // Bloodborne profile (git tag bloodborne-support).
+    // Bloodborne profile (removed 2026-10-09).
     ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
                                               "Патчи игры (после перезапуска)"));
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {

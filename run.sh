@@ -150,10 +150,13 @@ if [[ -z ${BB_VBLANK_HZ:-} ]]; then
 fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
     probe=${BB_PROBE:-bin/sacredfire}
+    version=$(cat VERSION 2>/dev/null || true)
 else
     bash build.sh
     probe=${BB_PROBE:-out/sacredfire}  # BB_PROBE: a wrapper (gdb) around it
+    version=$(cat out/VERSION 2>/dev/null || true)
 fi
+echo "SacredFire ${version:-unknown version}"
 # The user directory (saves, shader cache) must exist and be named to the GPU library before the
 # game starts: its path table is built when the library loads (before the port hands it the
 # directory), and a missing directory makes it fall back to ~/.local/share/shadPS4, which the

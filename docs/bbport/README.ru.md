@@ -1,4 +1,4 @@
-<!-- README проекта bbport (основа SacredFire) на момент удаления профиля Bloodborne (git tag bloodborne-support). -->
+<!-- README проекта bbport (основа SacredFire) на момент удаления профиля Bloodborne (2026-10-09). -->
 
 ДАННЫЙ ПРОЕКТ НЕ ИМЕЕТ ОТНОШЕНИЯ К SHADPS4. ВСЕ ВОПРОСЫ, СВЯЗАННЫЕ С ЭТИМ ПРОЕКТОМ - ПИШИТЕ НА ДИСКОРД СЕРВЕР https://discord.gg/KYZRKk9CB, А НЕ НА СЕРВЕР SHADPS4
 

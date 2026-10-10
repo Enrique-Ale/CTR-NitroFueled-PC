@@ -9,7 +9,7 @@
 
 namespace BbGnmHooks {
 /// Patches the image (the loader calls it once, before any game code runs, while the image is
-/// still writable). Each entry is checked byte for byte against the 1.09 eboot.
+/// still writable). Each table entry is checked byte for byte against the image first.
 void PatchImage(unsigned char* image, std::uint64_t size);
 
 /// BB_GNM_OBSERVE=1: checks a submitted command buffer against the packets the hooked API calls

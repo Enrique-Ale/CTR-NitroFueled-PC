@@ -95,7 +95,7 @@ with the desktop apps closed.
   package upgrade repaired PyGObject); `python3 launcher/sacredfire_launcher.py --play` starts
   the game with the saved settings (tested: PS4 Pro mode on, Pro 1080p patch, two controller
   ports, 30 FPS).
-- `packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` (841 MB) with `nix bundle`.
+- `packaging/appimage.sh` builds `dist/SacredFire-x86_64.AppImage` (841 MB) with `nix bundle`.
   Built and tested on 2026-10-09 in the archbuild container after installing single-user Nix
   (`pacman -S nix`, /nix owned by the user, nixos-unstable channel): the runtime and GPU library
   were rebuilt inside `nix-shell shell.nix` so their RUNPATHs name store paths, then bundled.
@@ -119,12 +119,12 @@ with the desktop apps closed.
   launcher/install-desktop.sh and the launcher copy it into the user's icon theme as
   io.github.sacredfire.Launcher for the menu entry and the launcher window.
 - AppImage rebuilt (2026-10-10) with the renamed executable, the icon and the cache fixes:
-  `dist/SacredFire-CTR-x86_64.AppImage`, programs `sacredfire` (launcher) and `sacredfire-game`.
+  `dist/SacredFire-x86_64.AppImage`, programs `sacredfire` (launcher) and `sacredfire-game`.
   Repository: https://github.com/T3CHNOLOG1C/SacredFire.
 
 ## Release preparation (2026-10-10)
 
-- Draft release v0.1 on GitHub with `dist/SacredFire-CTR-x86_64.AppImage` (841 MB) attached;
+- Draft release v0.1 on GitHub with `dist/SacredFire-x86_64.AppImage` (841 MB) attached;
   the repository stays private until the user publishes it. Tags 0.1 to 0.5-pre3 are bbport's,
   so SacredFire releases use a `v` prefix.
 - `.github/workflows/tests.yml` runs the Python tests, shell syntax and compile checks on every
@@ -133,3 +133,22 @@ with the desktop apps closed.
 - Game patches credited to illusion and TroyWarez (illusionyy/PS-Game-Patch) in the patch
   file, the settings table, the patch compiler, run.sh, the launcher, the README and here.
 - A first start without network no longer aborts (import names fall back to the compiled table).
+
+## Before publication (2026-10-10, later)
+
+- `gpu/shim/bbport_gnm_table.inc` and `tools/re/gnm_names.txt` deleted: 500 function offsets
+  with prologue bytes from Bloodborne's executable, the only bytes from a commercial binary in
+  the tree. `bbport_gnm_hooks.cpp` compiles without the table (`__has_include`; Count 0, the
+  BB_GNM_* switches print that no table is compiled in). The table is regenerated locally by
+  `tools/re/gen_gnm_table.py` and is git-ignored.
+- The `bloodborne-support` tag was deleted locally and on GitHub; docs name the removal commit
+  (9773394) instead. The commits before it remain in `main`'s history.
+- Branding: the README headline, the desktop entry's Name, the launcher's title bar, the in-game
+  menu title and the AppImage name (`SacredFire-x86_64.AppImage`) lead with SacredFire; the game's
+  title appears only descriptively, with a trademark note under the README's disclaimer. No
+  logos or key art are in the repository (the icon is read from the user's own game folder).
+- Builds are stamped: `build.sh` writes `out/VERSION` (nearest `v*` tag or commit, `-dirty`),
+  `run.sh` prints it, the launcher's title shows it, the package carries it as `VERSION`, and
+  `packaging/appimage.sh` refuses an uncommitted or unbuilt tree and writes
+  `dist/SacredFire-x86_64.AppImage.{sha256,build.txt}` (version, commit, nixpkgs). Release steps
+  are in CONTRIBUTING.md.

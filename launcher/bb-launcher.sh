@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the SacredFire launcher (Crash Team Racing: Nitro-Fueled, GTK4). With Python, PyGObject,
+# Starts the SacredFire launcher (GTK4). With Python, PyGObject,
 # GTK 4 and libadwaita installed it runs directly; otherwise through nix-shell (launcher/shell.nix).
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 script=sacredfire_launcher.py

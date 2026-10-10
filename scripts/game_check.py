@@ -4,8 +4,7 @@
 Profile: Crash Team Racing Nitro-Fueled CUSA13795 with the 1.21 update merged in (the patches in
 patches/CrashTeamRacing.xml use that executable's addresses). The check compares the loaded
 executable image, whose hash is the same whatever tool dumped it (the SELF headers around it
-differ). BB_SKIP_GAME_CHECK=1 skips it. bbport's Bloodborne profile was removed; git tag
-bloodborne-support is the last tree that has it.
+differ). BB_SKIP_GAME_CHECK=1 skips it. bbport's Bloodborne profile was removed on 2026-10-09.
 """
 import hashlib
 import os

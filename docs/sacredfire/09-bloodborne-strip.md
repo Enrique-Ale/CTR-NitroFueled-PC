@@ -1,6 +1,6 @@
 # Removing the Bloodborne profile (2026-10-09)
 
-Checkpoint: git tag `bloodborne-support` (commit d50cd78) is the last tree with both profiles.
+Removal commit: 9773394 (its parent is the last tree with both profiles).
 Scope chosen: profile and tooling only; bbport's GPU modules stay in `gpu/` (inert for CTR).
 
 ## Removed
@@ -20,7 +20,10 @@ Scope chosen: profile and tooling only; bbport's GPU modules stay in `gpu/` (ine
 
 - `gpu/shim/bbport_gnm_hooks.cpp`, `bbport_guest_hooks.cpp`, `bbport_heap_sites.cpp`,
   `bbport_free_check.cpp`: byte-checked against the image, inert on CTR; on only with their
-  BB_* switches.
+  BB_* switches. 2026-10-10: the libGnm function table (`gpu/shim/bbport_gnm_table.inc`, 500
+  offsets with prologue bytes copied from Bloodborne's executable) and `tools/re/gnm_names.txt`
+  were deleted before publication; the hook module compiles to nothing without the table, which
+  `tools/re/gen_gnm_table.py` regenerates locally (git-ignored).
 - The temporal upscalers, TAA, object motion vectors and scene proxy: compiled in, off by default
   (`BB_UPSCALER`, `BB_OBJECT_MOTION` override). Their settings keys stay in bbport.ini.
 - `src/import_names.inc`: the compiled fallback name table (out/import_names.txt is generated

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""SacredFire launcher: Crash Team Racing: Nitro-Fueled, natively on Linux (GTK4 / libadwaita).
+"""SacredFire launcher (GTK4 / libadwaita): runs Crash Team Racing: Nitro-Fueled natively on Linux.
 
 Picks the game folder (the merged 1.21 dump), the controller and the start-up options passed to
 run.sh as environment variables, edits the port's settings in bbport.ini (game patches, FPS
@@ -8,8 +8,8 @@ counter), starts and stops the game and shows its output. Launcher settings live
 ~/.config/sacredfire-launcher/settings.json. `--play` starts the game with the saved settings
 without a window (Steam Deck game mode).
 
-Derived from bbport's Bloodborne launcher (git tag bloodborne-support has it); this one knows
-only the CTR profile.
+Derived from bbport's launcher (removed with the Bloodborne profile on 2026-10-09); this one
+knows only the CTR profile.
 """
 
 import json
@@ -32,6 +32,19 @@ sys.path.insert(0, str(PORT_DIR / "scripts"))
 import game_check  # noqa: E402
 
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
+
+
+def port_version():
+    """The build's source revision: VERSION in the package, out/VERSION in a checkout (build.sh
+    writes it: the nearest v* tag or the commit, "-dirty" with uncommitted changes)."""
+    for name in ("VERSION", "out/VERSION"):
+        try:
+            return (PORT_DIR / name).read_text().strip()
+        except OSError:
+            continue
+    return ""
+
+
 DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "sacredfire-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
@@ -217,7 +230,7 @@ def install_game_icon(game_dir):
 
 class LauncherWindow(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title=f"{TITLE} — {GAME}")
+        super().__init__(application=app, title=f"{TITLE} {port_version()}".rstrip())
         if install_game_icon(self.settings["game_dir"] if hasattr(self, "settings") else load_settings()["game_dir"]):
             self.set_icon_name(APP_ID)
         self.set_default_size(720, 760)

@@ -26,10 +26,18 @@ struct Entry {
     bool cb_method; // calls the command buffer's reserve callback: rdi is the command buffer
     const char* pm4;
 };
+// The function table (offsets and the prologue bytes moved into the stubs) is generated from the
+// game's executable by tools/re/gen_gnm_table.py and is not part of the repository: without it
+// Count is 0, nothing is patched and the BB_GNM_* switches do nothing.
+#if __has_include("bbport_gnm_table.inc")
 constexpr Entry Table[] = {
 #include "bbport_gnm_table.inc"
 };
 constexpr std::size_t Count = sizeof(Table) / sizeof(Table[0]);
+#else
+constexpr Entry Table[1] = {};
+constexpr std::size_t Count = 0;
+#endif
 
 /// Hook stub per function: `lock inc qword [rip+counter]`, the moved prologue, `jmp` back past it.
 constexpr std::size_t SlotSize = 256; // observing stubs are ~190 bytes
@@ -514,6 +522,10 @@ void PatchImage(unsigned char* image, std::uint64_t size) {
     const char* observe_env = std::getenv("BB_GNM_OBSERVE");
     observe = observe_env && observe_env[0] == '1';
     if (!observe && (!env || env[0] != '1')) {
+        return;
+    }
+    if (Count == 0) {
+        std::printf("Gnm hooks: no function table compiled in (tools/re/gen_gnm_table.py), off\n");
         return;
     }
     const std::size_t stub_bytes = (Count + 1) * SlotSize; // + the shared exit thunk

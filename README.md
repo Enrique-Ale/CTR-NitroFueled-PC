@@ -1,4 +1,4 @@
-# SacredFire — Crash Team Racing: Nitro-Fueled, natively on Linux
+# SacredFire
 
 SacredFire runs *Crash Team Racing: Nitro-Fueled* (PlayStation 4, CUSA13795, update 1.21) as a
 native x86-64 Linux executable. It is built on [bbport](https://github.com/deadinside28/bloodborne_pc)
@@ -8,7 +8,9 @@ small runtime replaces the PS4 system libraries, and a renderer derived from
 Developed and tested on a Steam Deck.
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
-> This project is not affiliated with Sony Interactive Entertainment, Activision or Beenox.
+> This project is not affiliated with or endorsed by Sony Interactive Entertainment, Activision
+> or Beenox. *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their
+> owners, named here only to identify the game this software runs.
 
 **Status: playable.** Menus, arcade and adventure races with sound, controller and saving; split
 screen with a second controller; fur and the sky render correctly. 30 FPS as on the PS4, or the
@@ -94,7 +96,7 @@ patch files go into `patches/` or `BB_PATCHES_DIR`, selected through `patches.js
 
 ## AppImage (Steam Deck)
 
-`packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` (841 MB) with Nix: the
+`packaging/appimage.sh` builds `dist/SacredFire-x86_64.AppImage` (841 MB) with Nix: the
 binaries are built in `nix-shell shell.nix` so the bundle can collect their libraries, then
 `nix bundle` packs them with the GTK launcher, Python and Mesa's Vulkan drivers (the header of
 the script has the exact steps). Running it opens the launcher; `--play` starts the game. Data
@@ -165,9 +167,10 @@ issues or pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## History
 
 SacredFire started from bbport on 2026-10-09. The Bloodborne profile, its patches, launcher and
-FSR 4 tooling were removed the same day (git tag `bloodborne-support` is the last tree with
-them; [docs/sacredfire/09-bloodborne-strip.md](docs/sacredfire/09-bloodborne-strip.md)).
-bbport's temporal upscalers, motion vectors and libGnm hooks remain in `gpu/`, off.
+FSR 4 tooling were removed the same day
+([docs/sacredfire/09-bloodborne-strip.md](docs/sacredfire/09-bloodborne-strip.md)). bbport's
+temporal upscalers and motion vectors remain in `gpu/`, off; its libGnm hook code remains without
+a function table (the table was generated from Bloodborne's executable and is not distributed).
 
 ## Credits and licenses
 

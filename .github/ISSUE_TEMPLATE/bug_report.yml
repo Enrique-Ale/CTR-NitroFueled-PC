@@ -12,7 +12,7 @@ body:
     attributes:
       label: SacredFire version
       description: Release name, AppImage file name, or `git rev-parse --short HEAD` for a checkout.
-      placeholder: 0.1 / SacredFire-CTR-x86_64.AppImage / 4c5f8cf
+      placeholder: v0.1 / SacredFire-x86_64.AppImage (title bar shows the version) / 4c5f8cf
     validations:
       required: true
   - type: dropdown
