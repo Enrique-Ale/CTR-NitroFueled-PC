@@ -50,3 +50,18 @@ The minimal form of the upstream change (image type Dim2D with height 1, coordin
 derivative padding, size queries, e2D views and images) compiles and runs without the RADV crash
 seen with the full #5133 backport; the interim "keep 1D images apart" rule is reverted. It fixed
 the adventure hub sky (a colour LUT built from height-1 render targets).
+
+## Root cause of the cache breakage (2026-10-09)
+
+`HwGeometryRuntimeInfo::operator==` (shader_recompiler/runtime_info.h) compared the geometry
+stage's outputs, invocations, output vertices, input primitive, output primitives and the copy
+shader hash, but not `in_vertex_data_size` (the ESGS ring item size), `out_vertex_data_size` or
+`mode`; it also tested `num_invocations && other.num_invocations` instead of comparing them. The
+ring-read fold above uses `in_vertex_data_size` to decide which input vertex a ring slot belongs
+to, so the compiled SPIR-V depends on it while the specialization said two such shaders were the
+same. Within a session, whichever item size compiled first served every later draw of that program
+(fur right or wrong depending on draw order: "ok wtf now crash's fur is broken again" / "ok now
+its fine again"); with the on-disk cache the preloaded module decided it for the whole session.
+The comparison now covers every field the recompiler reads; the compute stage's `shared_memory_size`
+(read by the shared-memory passes) joins its comparison for the same reason. Cache versions bumped
+(binary 8: the fold and the 1D lowering changed codegen without a bump; meta 8, pipeline key 6).
