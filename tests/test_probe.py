@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-EXE = ROOT / 'out/bb-probe'
+EXE = ROOT / 'out/sacredfire'
 
 
 def package(code, relocs=(), names=(), capabilities=None):

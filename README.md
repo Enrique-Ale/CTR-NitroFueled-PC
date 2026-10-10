@@ -166,7 +166,7 @@ neither has nor includes.
 
 ```bash
 git clone --recursive https://github.com/deadinside28/bloodborne_pc.git bbport && cd bbport
-bash build.sh                        # builds out/bb-probe and out/gpu/libbbgpu.so
+bash build.sh                        # builds out/sacredfire and out/gpu/libbbgpu.so
 BB_GAME_DIR=/path/to/CUSA03173 bash run.sh
 ```
 

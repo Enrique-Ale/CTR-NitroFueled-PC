@@ -9,7 +9,7 @@ TroyWarez): "60 FPS Unlock", "Disable Motion Blur", "Resolution Patch (1080p for
   menu offers "Apply and restart game" when a choice differs from the one the game started with.
 - At start run.sh (ctr profile) runs `scripts/patches.py --external-only --patches-dir patches
   --title-id CUSA13795 --app-version 01.21 --settings bbport.ini`, which compiles the selected
-  patches (plus any `patches.json` selection) into `out/patches.bin`; bb-probe applies the writes
+  patches (plus any `patches.json` selection) into `out/patches.bin`; the executable applies the writes
   to the image after relocation (`--patches`). bbport's own Bloodborne patch logic (frame rate, resolution, effects) was removed afterwards (09-bloodborne-strip.md).
 - `BB_PATCHES_DIR` points at another folder of shadPS4-format XML files for this title.
 - The 1080p Pro patch only makes sense with `BB_NEO=1`.

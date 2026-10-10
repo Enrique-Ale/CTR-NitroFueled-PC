@@ -24,7 +24,7 @@ bash run.sh
 Game patches (60 FPS, no motion blur, Pro 1080p) are switched in the in-game menu (08-patches.md).
 `BB_NEO=1 bash run.sh` runs the game in PS4 Pro mode (Neo: 7-CPU mode and the Pro's 5568 MiB direct
 memory budget). run.sh checks the game (`scripts/game_check.py orig/CUSA13795` prints `ctr`), links
-libSceNpToolkit2.prx, compiles the chosen game patches and starts bb-probe. By hand:
+libSceNpToolkit2.prx, compiles the chosen game patches and starts out/sacredfire (the game executable, bbport's bb-probe renamed). By hand:
 
 ```bash
 python3 scripts/prepare.py orig/CUSA13795 --out out
@@ -32,11 +32,11 @@ python3 scripts/link_modules.py orig/CUSA13795 --out out --modules libc.prx libS
 python3 tools/gen_import_names.py --out out
 python3 scripts/content_profile.py orig/CUSA13795 --out out
 bash build.sh
-out/bb-probe out/boot-linked.bin --import-names out/import_names.txt --content-profile out/content.bin \
+out/sacredfire out/boot-linked.bin --import-names out/import_names.txt --content-profile out/content.bin \
     --app0 orig/CUSA13795 --user user --timeout 0
 ```
 
-`out/bb-probe out/boot-linked.bin --list-imports --import-names out/import_names.txt` prints how every
+`out/sacredfire out/boot-linked.bin --list-imports --import-names out/import_names.txt` prints how every
 import binds without running the game (GPU imports show as unresolved there: they bind at GPU init).
 
 ## Current blocker
@@ -50,7 +50,7 @@ have not been reached yet).
 RSS about 1.1 GB, VRAM about 1 GB, Vulkan allocations 1.6 GB; the Steam Deck's 14 GiB are enough
 with the desktop apps closed.
 
-## Measured at the milestones (run 29, 2026-10-09; `free -g` total/used/free/shared/cache/available, bb-probe RSS)
+## Measured at the milestones (run 29, 2026-10-09; `free -g` total/used/free/shared/cache/available, game process RSS)
 
 | milestone | time | free -g | RSS |
 |---|---|---|---|
@@ -105,3 +105,16 @@ with the desktop apps closed.
   BB_GPU_USER_DIR and creates the user directory before the game starts (the GPU library builds
   its path table when it loads and fell back to ~/.local/share/shadPS4 on a first launch, which the
   per-launch shader cache clearing would have missed). Steps in packaging/appimage.sh's header.
+
+## 2026-10-09, later: shader cache kept, executable renamed, game icon
+
+- The shader/pipeline cache is kept across launches (two fixes in 06-fur.md: the geometry
+  specialization comparison and the preload fetch shader). `BB_CLEAR_SHADER_CACHE=1` or the
+  launcher's "Clear the shader cache at start" deletes it. User-confirmed: fur right on a fresh
+  cache and on the next launch with the cache preloaded.
+- The game executable is `out/sacredfire` (bbport's `bb-probe`; the packaged programs are
+  `sacredfire`, `sacredfire-game`). `BB_PROBE` still names a wrapper around it.
+- The window icon is the game's own `sce_sys/icon0.png`, read from the game folder at start
+  (gpu/shim/window.cpp decodes the PNG with miniz; nothing from the dump enters the repository).
+  launcher/install-desktop.sh and the launcher copy it into the user's icon theme as
+  io.github.sacredfire.Launcher for the menu entry and the launcher window.

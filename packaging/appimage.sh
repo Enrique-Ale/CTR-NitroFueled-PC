@@ -15,12 +15,12 @@
 # that go into the package, remove ~/.cache/nix/fetcher-cache-v*.sqlite* so the source is re-read.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
-[[ -f out/bb-probe && -f out/gpu/libbbgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/sacredfire && -f out/gpu/libbbgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 root=$PWD
 # The libraries' store paths (RUNPATH entries and their closures come along).
 {
     echo '['
-    for elf in out/bb-probe out/gpu/libbbgpu.so; do
+    for elf in out/sacredfire out/gpu/libbbgpu.so; do
         readelf -d "$elf" | sed -n 's/.*\[\(.*\)\]/\1/p' | tr ':' '\n'
     done | grep -o '^/nix/store/[^/]*' | sort -u | grep -v -- '-nix-shell$' | sed 's/.*/  "&"/'
     echo ']'
@@ -30,7 +30,7 @@ trap 'rm -rf "$work"' EXIT
 (cd "$work" && nix bundle --impure --bundler github:ralismark/nix-appimage \
     --expr "import $root/packaging {}")
 mkdir -p dist
-# The bundler names its output after the package's main program (bbport.AppImage).
+# The bundler names its output after the package's main program (sacredfire.AppImage).
 built=$(ls "$work"/*.AppImage | head -1)
 install -m755 "$built" dist/SacredFire-CTR-x86_64.AppImage
 ls -lh dist/SacredFire-CTR-x86_64.AppImage

@@ -10,7 +10,7 @@ tables (`RUNTIME_LOOKUP`) use `out/import_names.txt`, generated from shadPS4's a
 and loaded with `--import-names`; the compiled `src/import_names.inc` (bbport's table, from Bloodborne's imports) is the fallback.
 Imports from libc/libSceLibcInternal are never served by the runtime: they bind to libc.prx.
 
-`out/bb-probe out/boot-linked.bin --list-imports --import-names out/import_names.txt`: before the
+`out/sacredfire out/boot-linked.bin --list-imports --import-names out/import_names.txt`: before the
 CTR-specific work, 281 resolved in the runtime, 171 natively, 350 unresolved (100 of those are GPU
 imports that bind at GPU init). The unresolved set that remains to be reached (not yet hit at
 run time): libSceFont 41, the NpToolkit2 module's own Np* imports (NpTus 41, NpMatching2 35, NpWebApi

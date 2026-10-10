@@ -4,7 +4,7 @@
 Reads out/link.json (unresolved_imports: "NID#library" after link_modules.py) and shadPS4's
 aerolib.inl (STUB("NID", name) lines, GPL-2.0-or-later; fetched once into out/aerolib.inl unless
 --aerolib points at a copy) and writes out/import_names.txt: one "NID library symbol" line per
-import, symbol "?" when nothing names the NID. bb-probe loads it with --import-names so the
+import, symbol "?" when nothing names the NID. the game executable (out/sacredfire) loads it with --import-names so the
 runtime's symbol-keyed tables bind, and STOP messages show the symbol.
 """
 import argparse

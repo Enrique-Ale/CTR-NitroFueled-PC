@@ -12,7 +12,7 @@ let
   assetDirs = [ "scripts" "patches" "launcher" ];
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so"
+    "run.sh" "out" "out/sacredfire" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so"
     "tools" "tools/gen_import_names.py"
   ] ++ assetDirs;
   src = builtins.path {
@@ -66,33 +66,33 @@ pkgs.stdenv.mkDerivation {
   dontConfigure = true;
   # The binaries live under share/ (next to the scripts run.sh expects): strip them too, which
   # also drops the compiler and header paths their debug info would keep in the closure.
-  stripDebugList = [ "share/bbport/bin/gpu" ];
+  stripDebugList = [ "share/sacredfire/bin/gpu" ];
   # patchelf (RPATH shrinking) corrupts the non-PIE game binary's symbol versions; it finds
   # its library through $ORIGIN/gpu and its other libraries through the build's RUNPATH.
   dontPatchELF = true;
   dontWrapGApps = true; # wrapped once below, together with the launcher's own variables
   installPhase = ''
     runHook preInstall
-    d=$out/share/bbport
+    d=$out/share/sacredfire
     mkdir -p $d/bin $out/bin
     cp run.sh $d/
     cp -r scripts patches launcher $d/
     # run.sh generates the eboot's import names with it (shadPS4's aerolib list, fetched once).
     install -Dm755 tools/gen_import_names.py $d/tools/gen_import_names.py
-    install -m755 out/bb-probe $d/bin/bb-probe
+    install -m755 out/sacredfire $d/bin/sacredfire
     install -m755 out/bb-gpu-capabilities $d/bin/bb-gpu-capabilities
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
     runHook postInstall
   '';
   postFixup = ''
-    # bin/bbport is a static program (bbport-entry.c) that clears the host's LD_PRELOAD (Steam's
+    # bin/sacredfire is a static program (bbport-entry.c) that clears the host's LD_PRELOAD (Steam's
     # overlay) and similar before the wrapper's own dynamic programs start.
     mkdir -p $out/libexec
-    gcc -O2 -Wall -Werror -static -L${pkgs.glibc.static}/lib -DTARGET="\"$out/libexec/bbport\"" \
-      ${./bbport-entry.c} -o $out/bin/bbport
-    makeShellWrapper ${python}/bin/python3 $out/libexec/bbport \
+    gcc -O2 -Wall -Werror -static -L${pkgs.glibc.static}/lib -DTARGET="\"$out/libexec/sacredfire\"" \
+      ${./bbport-entry.c} -o $out/bin/sacredfire
+    makeShellWrapper ${python}/bin/python3 $out/libexec/sacredfire \
       "''${gappsWrapperArgs[@]}" \
-      ${common}      --add-flags "$out/share/bbport/launcher/bbport_vulkan.py ${python}/bin/python3 $out/share/bbport/launcher/sacredfire_launcher.py" \
+      ${common}      --add-flags "$out/share/sacredfire/launcher/bbport_vulkan.py ${python}/bin/python3 $out/share/sacredfire/launcher/sacredfire_launcher.py" \
       --set BB_PREBUILT 1 \
       --set PYTHON ${pkgs.python3}/bin/python3 \
       --set BB_BUNDLED_VK_DRIVER_FILES ${icds} \
@@ -100,13 +100,13 @@ pkgs.stdenv.mkDerivation {
                                           pkgs.gawk pkgs.gnused pkgs.gnugrep ]} \
       --run 'export BB_DATA_DIR=''${BB_DATA_DIR:-''${XDG_DATA_HOME:-$HOME/.local/share}/sacredfire}; mkdir -p "$BB_DATA_DIR"'
     # The game alone, without the launcher (settings from the data directory's bbport.ini).
-    makeShellWrapper ${pkgs.python3}/bin/python3 $out/bin/bbport-game \
-      ${common}      --add-flags "$out/share/bbport/launcher/bbport_vulkan.py ${pkgs.bash}/bin/bash $out/share/bbport/run.sh" \
+    makeShellWrapper ${pkgs.python3}/bin/python3 $out/bin/sacredfire-game \
+      ${common}      --add-flags "$out/share/sacredfire/launcher/bbport_vulkan.py ${pkgs.bash}/bin/bash $out/share/sacredfire/run.sh" \
       --set BB_PREBUILT 1 \
       --set PYTHON ${pkgs.python3}/bin/python3 \
       --set BB_BUNDLED_VK_DRIVER_FILES ${icds} \
       --prefix PATH : ${lib.makeBinPath [ pkgs.bash pkgs.coreutils pkgs.procps ]} \
       --run 'export BB_DATA_DIR=''${BB_DATA_DIR:-''${XDG_DATA_HOME:-$HOME/.local/share}/sacredfire}; mkdir -p "$BB_DATA_DIR"'
   '';
-  meta.mainProgram = "bbport";
+  meta.mainProgram = "sacredfire";
 }

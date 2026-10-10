@@ -1,7 +1,11 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11 or Wayland).
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <SDL3/SDL.h>
+#include <fstream>
+#include <vector>
+#include <miniz.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
@@ -47,6 +51,114 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     width = w;
     height = h;
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
+}
+
+// sacredfire: a small PNG reader for the window icon (8-bit RGB or RGBA, no interlace; the PS4's
+// icon0.png is 512x512 RGB). The game's files never enter the repository, so the icon is read from
+// the game folder at start. Anything unexpected leaves the default icon.
+static bool ReadPngRgba(const char* path, std::vector<u8>& rgba, int& width, int& height) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return false;
+    }
+    std::vector<u8> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    static constexpr u8 signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+    if (data.size() < 8 + 25 || std::memcmp(data.data(), signature, 8) != 0) {
+        return false;
+    }
+    const auto be32 = [&](size_t at) {
+        return u32(data[at]) << 24 | u32(data[at + 1]) << 16 | u32(data[at + 2]) << 8 | data[at + 3];
+    };
+    std::vector<u8> idat;
+    u32 w = 0, h = 0;
+    u8 depth = 0, color = 0, interlace = 0;
+    for (size_t pos = 8; pos + 12 <= data.size();) {
+        const u32 length = be32(pos);
+        if (length > data.size() - pos - 12) {
+            return false;
+        }
+        const char* type = reinterpret_cast<const char*>(&data[pos + 4]);
+        const u8* body = &data[pos + 8];
+        if (std::memcmp(type, "IHDR", 4) == 0 && length == 13) {
+            w = be32(pos + 8);
+            h = be32(pos + 12);
+            depth = body[8];
+            color = body[9];
+            interlace = body[12];
+        } else if (std::memcmp(type, "IDAT", 4) == 0) {
+            idat.insert(idat.end(), body, body + length);
+        } else if (std::memcmp(type, "IEND", 4) == 0) {
+            break;
+        }
+        pos += 12 + length;
+    }
+    if (w == 0 || h == 0 || w > 4096 || h > 4096 || depth != 8 || interlace != 0 ||
+        (color != 2 && color != 6) || idat.empty()) {
+        return false;
+    }
+    const u32 channels = color == 6 ? 4 : 3;
+    const size_t stride = size_t(w) * channels;
+    std::vector<u8> raw((stride + 1) * h);
+    mz_ulong out_len = raw.size();
+    if (mz_uncompress(raw.data(), &out_len, idat.data(), idat.size()) != MZ_OK || out_len != raw.size()) {
+        return false;
+    }
+    // Undo the per-row filters (PNG filter types 0..4) in place.
+    std::vector<u8> prev(stride, 0), cur(stride);
+    rgba.resize(size_t(w) * h * 4);
+    for (u32 y = 0; y < h; ++y) {
+        const u8 filter = raw[y * (stride + 1)];
+        const u8* src = &raw[y * (stride + 1) + 1];
+        for (size_t i = 0; i < stride; ++i) {
+            const int a = i >= channels ? cur[i - channels] : 0;
+            const int b = prev[i];
+            const int c = i >= channels ? prev[i - channels] : 0;
+            int predictor = 0;
+            switch (filter) {
+            case 1: predictor = a; break;
+            case 2: predictor = b; break;
+            case 3: predictor = (a + b) / 2; break;
+            case 4: {
+                const int p = a + b - c;
+                const int pa = std::abs(p - a), pb = std::abs(p - b), pc = std::abs(p - c);
+                predictor = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+                break;
+            }
+            default: break;
+            }
+            cur[i] = u8(src[i] + predictor);
+        }
+        for (u32 x = 0; x < w; ++x) {
+            u8* out = &rgba[(size_t(y) * w + x) * 4];
+            out[0] = cur[x * channels];
+            out[1] = cur[x * channels + 1];
+            out[2] = cur[x * channels + 2];
+            out[3] = channels == 4 ? cur[x * channels + 3] : 255;
+        }
+        std::swap(prev, cur);
+    }
+    width = int(w);
+    height = int(h);
+    return true;
+}
+
+void WindowSDL::SetIcon(const char* png_path) {
+    std::vector<u8> rgba;
+    int w = 0, h = 0;
+    if (!ReadPngRgba(png_path, rgba, w, h)) {
+        LOG_INFO(Frontend, "Window icon: {} not usable, keeping the default", png_path);
+        return;
+    }
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, rgba.data(), w * 4);
+    if (!surface) {
+        LOG_WARNING(Frontend, "Window icon: {}", SDL_GetError());
+        return;
+    }
+    if (!SDL_SetWindowIcon(window, surface)) {
+        LOG_WARNING(Frontend, "Window icon: {}", SDL_GetError());
+    }
+    SDL_DestroySurface(surface);
+    LOG_INFO(Frontend, "Window icon: {} ({}x{})", png_path, w, h);
 }
 
 WindowSDL::~WindowSDL() {

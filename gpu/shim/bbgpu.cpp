@@ -267,9 +267,13 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     Core::Emulator::FillElfInfo(*config);
     const std::string title = config->title ? config->title : "SacredFire";
     const s32 width = config->width, height = config->height;
-    g_window_thread = std::thread([title, width, height] {
+    const std::string icon = config->icon ? config->icon : "";
+    g_window_thread = std::thread([title, width, height, icon] {
         Common::SetCurrentThreadName("bb:window");
         auto* window = new Frontend::WindowSDL(width, height, title.c_str());
+        if (!icon.empty()) {
+            window->SetIcon(icon.c_str());
+        }
         {
             std::scoped_lock lock{g_window_mutex};
             g_window = window;

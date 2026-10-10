@@ -10,7 +10,7 @@ status=alive
 while ((SECONDS < end)); do
     tools/press.sh "ly=0" 3; tools/press.sh "rx=40" 1.5; tools/press.sh "ly=0" 3
     tools/press.sh "ly=255" 3; tools/press.sh "rx=215" 1.5; sleep 1
-    if ! pgrep -x bb-probe > /dev/null; then status="DIED after $SECONDS s"; break; fi
+    if ! pgrep -x sacredfire > /dev/null; then status="DIED after $SECONDS s"; break; fi
 done
 tools/stop_own.sh
 log=out/soak_walk_$(date +%m%d_%H%M%S).log
