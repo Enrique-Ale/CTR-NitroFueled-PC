@@ -204,6 +204,11 @@ void Menu() {
     ImGui::Text(BbSettings::MenuText("%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f мс)"),
                 frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg);
 
+    // sacredfire: bbport's temporal upscalers, reactive mask and output scaling read the scene of
+    // the game bbport was built for and stay off here (bbport_settings.cpp); their sections show
+    // only with BB_UPSCALER_MENU=1, for experiments.
+    static const bool upscaler_menu = std::getenv("BB_UPSCALER_MENU") != nullptr;
+    if (upscaler_menu) {
     ImGui::SeparatorText(BbSettings::MenuText("Temporal upscaler", "Временной апскейлер"));
     const char* upscalers[] = {
         BbSettings::MenuText("Off", "Выкл"), "FSR 3.1", "FSR 4 (INT8)", "FSR 4.1.1 (INT8)",
@@ -467,6 +472,7 @@ void Menu() {
         "остаётся в 1080p — на Steam Deck и старых видеокартах это заметно медленнее. "
         "Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает "
         "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
+    }
     // Game patches (patches/CrashTeamRacing.xml): bbport's own game-effect patches went with its
     // Bloodborne profile (git tag bloodborne-support).
     ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
