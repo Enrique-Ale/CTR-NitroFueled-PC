@@ -9,20 +9,32 @@ runtime's symbol-keyed tables bind, and STOP messages show the symbol.
 """
 import argparse
 import json
+import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
-AEROLIB_URL = 'https://raw.githubusercontent.com/shadps4-emu/shadPS4/main/src/core/aerolib/aerolib.inl'
+AEROLIB_URL = os.environ.get('BB_AEROLIB_URL',
+                             'https://raw.githubusercontent.com/shadps4-emu/shadPS4/main/src/core/aerolib/aerolib.inl')
 
 
 def aerolib_names(path, url=AEROLIB_URL):
+    """NID -> symbol from aerolib.inl, fetched once. Without network (a first start offline) the
+    table is empty: every import is written as "?" and the runtime falls back to its compiled
+    name table, so the game still starts; the next start with network fetches the list."""
     if not path.exists():
         print(f'Fetching {url} -> {path}', file=sys.stderr)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url, timeout=60) as response:
-            path.write_bytes(response.read())
+        try:
+            with urllib.request.urlopen(url, timeout=60) as response:
+                data = response.read()
+        except (urllib.error.URLError, OSError, ValueError) as error:
+            print(f'Import names: could not fetch aerolib.inl ({error}); starting without symbol names '
+                  f'(the runtime uses its compiled table). It is fetched again at the next start.', file=sys.stderr)
+            return {}
+        path.write_bytes(data)
     return dict(re.findall(r'STUB\("([^"]+)",\s*([^)\s]+)\s*\)', path.read_text(errors='replace')))
 
 
