@@ -10,7 +10,7 @@ TroyWarez): "60 FPS Unlock", "Disable Motion Blur", "Resolution Patch (1080p for
 - At start run.sh (ctr profile) runs `scripts/patches.py --external-only --patches-dir patches
   --title-id CUSA13795 --app-version 01.21 --settings bbport.ini`, which compiles the selected
   patches (plus any `patches.json` selection) into `out/patches.bin`; bb-probe applies the writes
-  to the image after relocation (`--patches`). Bloodborne's built-in patch logic is untouched.
+  to the image after relocation (`--patches`). bbport's own Bloodborne patch logic (frame rate, resolution, effects) was removed afterwards (09-bloodborne-strip.md).
 - `BB_PATCHES_DIR` points at another folder of shadPS4-format XML files for this title.
 - The 1080p Pro patch only makes sense with `BB_NEO=1`.
 
@@ -26,3 +26,18 @@ TroyWarez): "60 FPS Unlock", "Disable Motion Blur", "Resolution Patch (1080p for
   which on the Deck's shared 16 GB pushed 15 GB into swap; the game then waited 18.5 ms per frame
   for the previous frame. Not usable here without a bounded GTT budget.
 - Threads during a race (old model): no single thread saturated; machine ~80% busy on 8 threads.
+
+## Pro 1080p patch: off-by-one in the published file (2026-10-09)
+
+With only `patch_pro_1080p=1` the game faulted at boot at guest offset 0x13a9db3 (signal 11,
+address 0x803b8815f), the patch address itself. Disassembly of out/eboot.elf around it:
+
+```
+0x17a9dac  cmpb $0x0, 0x17440f5(%rip)   ; the "is PS4 Pro" flag
+0x17a9db3  0f 85 8f 08 00 00  jne +0x88f ; original
+0x17a9db3  84 85 8f 08 00 00  test %al, 0x88f(%rbp)  ; with 0x84 written at 0x17a9db3
+```
+
+The patch means to turn the `jne` into a `je` (0F 85 to 0F 84), so the byte belongs at
+0x17a9db4. patches/CrashTeamRacing.xml now uses that address; the upstream file
+(illusionyy/PS-Game-Patch) still has 0x017a9db3 and would fault the same way in shadPS4.

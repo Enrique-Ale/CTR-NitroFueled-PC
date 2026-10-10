@@ -1,3 +1,6 @@
+> SacredFire (Crash Team Racing: Nitro-Fueled) — см. README.md. Ниже — README исходного проекта bbport
+> (Bloodborne); его профиль, патчи, лаунчер и инструменты FSR 4 из этого дерева удалены (git tag `bloodborne-support`).
+
 ДАННЫЙ ПРОЕКТ НЕ ИМЕЕТ ОТНОШЕНИЯ К SHADPS4. ВСЕ ВОПРОСЫ, СВЯЗАННЫЕ С ЭТИМ ПРОЕКТОМ - ПИШИТЕ НА ДИСКОРД СЕРВЕР https://discord.gg/KYZRKk9CB, А НЕ НА СЕРВЕР SHADPS4
 
 # bbport — нативный порт Bloodborne для Linux

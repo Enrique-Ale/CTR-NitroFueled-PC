@@ -8,8 +8,8 @@ counter), starts and stops the game and shows its output. Launcher settings live
 ~/.config/sacredfire-launcher/settings.json. `--play` starts the game with the saved settings
 without a window (Steam Deck game mode).
 
-Derived from bbport's launcher (launcher/bbport_launcher.py, Bloodborne), which stays for that
-profile; this one knows only the CTR profile.
+Derived from bbport's Bloodborne launcher (git tag bloodborne-support has it); this one knows
+only the CTR profile.
 """
 
 import json
@@ -45,7 +45,7 @@ LANGUAGES = [("English", "1"), ("French", "2"), ("Spanish", "3"), ("German", "4"
              ("Italian", "5"), ("Japanese", "0"), ("Russian", "8")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
-# Game patches (patches/CrashTeamRacing.xml, scripts/patches.py --external-only): bbport.ini key,
+# Game patches (patches/CrashTeamRacing.xml, scripts/patches.py): bbport.ini key,
 # label, note. The in-game menu edits the same keys.
 PATCHES = [
     ("patch_60fps", "60 FPS unlock", "By illusion. 60 in menus, 40-45 in races on a Steam Deck"),

@@ -272,7 +272,7 @@ static const struct { const char *nid, *symbol; } import_names[]={
 #include "import_names.inc"
 };
 /* SacredFire: names generated for the eboot being run (--import-names), searched before the
- * compiled Bloodborne table. Both are matched on the bare NID: a NID is a hash of the symbol name. */
+ * compiled fallback table (src/import_names.inc). Both are matched on the bare NID: a NID is a hash of the symbol name. */
 static struct { char nid[12]; char *symbol; } *loaded_names;
 static size_t loaded_count;
 static size_t nid_length(const char *name) { const char *h=strchr(name,'#'); return h ? (size_t)(h-name) : strlen(name); }

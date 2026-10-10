@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Starts the SacredFire launcher (Crash Team Racing: Nitro-Fueled, GTK4). With Python, PyGObject,
 # GTK 4 and libadwaita installed it runs directly; otherwise through nix-shell (launcher/shell.nix).
-# BB_LAUNCHER=bloodborne starts bbport's Bloodborne launcher instead.
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 script=sacredfire_launcher.py
-[[ ${BB_LAUNCHER:-} == bloodborne ]] && script=bbport_launcher.py
 if python3 -c 'import gi; gi.require_version("Gtk", "4.0"); gi.require_version("Adw", "1")' 2>/dev/null; then
     exec python3 "$here/$script" "$@"
 fi

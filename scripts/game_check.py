@@ -1,32 +1,29 @@
 #!/usr/bin/env python3
 """The game files this port runs, keyed on the executable's loaded image.
 
-Profiles: Bloodborne CUSA03173 with the 1.09 update merged in (hooks and patches use that
-executable's addresses) and, for SacredFire, Crash Team Racing Nitro-Fueled CUSA13795 with the 1.21
-update merged in. Other versions start and then fail inside the game's code (Bloodborne 1.00 faults
-at guest offset 0x20348b8). The check compares the loaded executable image, whose hash is the same
-whatever tool dumped it (the SELF headers around it differ). BB_SKIP_GAME_CHECK=1 skips it.
+Profile: Crash Team Racing Nitro-Fueled CUSA13795 with the 1.21 update merged in (the patches in
+patches/CrashTeamRacing.xml use that executable's addresses). The check compares the loaded
+executable image, whose hash is the same whatever tool dumped it (the SELF headers around it
+differ). BB_SKIP_GAME_CHECK=1 skips it. bbport's Bloodborne profile was removed; git tag
+bloodborne-support is the last tree that has it.
 """
 import hashlib
 import os
 import sys
 from pathlib import Path
 
-# image sha256 -> profile. `name` is what run.sh and the runtime branch on; `modules` are the
-# sce_module PRXs link_modules.py links natively; `patches` says whether patches.py applies.
+# image sha256 -> profile. `name` is what the runtime and the GPU menu read (BB_GAME_PROFILE);
+# `modules` are the sce_module PRXs link_modules.py links natively; `patches` says whether
+# patches.py has a patch file for it.
 SUPPORTED = {
-    '071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a': dict(
-        name='bloodborne', title='CUSA03173', version='01.09', game='Bloodborne', update='CUSA03173-patch',
-        modules=('libc.prx', 'libSceFios2.prx'), patches=True),
     '2f2115893ac6656925d20a0221f118cff398fbd754cb9c10154451411dbcf8e6': dict(
         name='ctr', title='CUSA13795', version='01.21', game='Crash Team Racing Nitro-Fueled', update='CUSA13795-patch',
-        modules=('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'), patches=False),
+        modules=('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'), patches=True),
 }
 BY_TITLE = {p['title']: p for p in SUPPORTED.values()}
-# Kept for callers that still name the single Bloodborne image.
-SUPPORTED_TITLE = 'CUSA03173'
-SUPPORTED_VERSION = '01.09'
-SUPPORTED_IMAGE = '071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a'
+SUPPORTED_TITLE = 'CUSA13795'
+SUPPORTED_VERSION = '01.21'
+SUPPORTED_IMAGE = '2f2115893ac6656925d20a0221f118cff398fbd754cb9c10154451411dbcf8e6'
 
 
 def image_sha256(game):

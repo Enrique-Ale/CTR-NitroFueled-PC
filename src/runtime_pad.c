@@ -253,28 +253,6 @@ static SDL_Gamepad *current_gamepad(void) {
     if (now-last_presence>1000000) { last_presence=now; update_port_presence(); }
     return gamepad;
 }
-/* bbport (frame stats): the game's libc heap, read every 5 s from a game thread (it reads the pad)
- * with libc.prx's malloc_stats (export stub at libc.prx+0x1f8c0; malloc_stats_fast returns 1 in this libc, the module at image +0x56e0000):
- * in use now and at most, and what it took from the system. A heap that keeps growing is a leak. */
-typedef struct { uint16_t size, version; uint32_t reserved; uint64_t max_system, system, max_in_use, in_use; } MallocManagedSize;
-static void report_guest_heap(void) {
-    static int enabled=-1; static uint64_t last;
-    /* SacredFire: the stub offset belongs to Bloodborne's libc.prx and image layout; other profiles skip it. */
-    if (enabled<0) { const char *profile=getenv("BB_GAME_PROFILE"); enabled=getenv("BB_FRAME_STATS")!=NULL && (!profile || !strcmp(profile,"bloodborne")); }
-    const uint64_t now=now_us();
-    if (!enabled || now-last<5000000) return;
-    last=now;
-    const uint8_t *stub=(const uint8_t *)(0x800000000ull+0x56e0000+0x1f8c0);
-    if (stub[0]!=0xff || stub[1]!=0x25) return; /* another libc */
-    ABI int (*stats)(MallocManagedSize *)=(ABI int (*)(MallocManagedSize *))(uintptr_t)stub;
-    MallocManagedSize m={.size=sizeof(m),.version=1};
-    const int result=stats(&m);
-    if (result!=0) { static int told; if (!told++) printf("Guest heap: malloc_stats returned %#x\n",(unsigned)result); return; }
-    {
-        printf("Guest heap: %.1f MB in use (most %.1f), %.1f MB from the system (most %.1f)\n",
-               m.in_use/1048576.0,m.max_in_use/1048576.0,m.system/1048576.0,m.max_system/1048576.0);
-    }
-}
 /* Controls: what each PS4 input is bound to. Defaults below; bbport.ini (BB_CONFIG) lines
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =
@@ -448,7 +426,6 @@ static void sample_host_from(PadData *d, SDL_Gamepad *g, int keyboard) {
     if (k) apply_keyboard(d,k);
 }
 static void sample_host(PadData *d) {
-    report_guest_heap();
     SDL_Gamepad *g=current_gamepad();
     sample_host_from(d,g,1);
 }

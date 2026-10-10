@@ -15,10 +15,15 @@ Developed and tested on a Steam Deck.
   controller ports for split screen, FPS counter.
 - **Logs and notes**: `docs/sacredfire/` (status, imports implemented, fur and sky
   investigations, controllers, patches).
-- The GTK launcher and the AppImage below are still the Bloodborne ones; CTR support for them
-  is in progress.
+- **Launcher**: `bash launcher/bb-launcher.sh` (GTK4/libadwaita; `--play` starts the game without
+  a window). `packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` (needs Nix).
+- bbport's Bloodborne profile, its patches, launcher and FSR 4 tooling were removed; git tag
+  `bloodborne-support` is the last tree that has them. Its temporal upscalers and motion-vector
+  modules are still in `gpu/` but off (`BB_UPSCALER` / `BB_OBJECT_MOTION` turn them on).
 
-Everything below this line is the upstream bbport README, kept as the base this builds on.
+Everything below this line is the upstream bbport README, kept as a description of the base this
+builds on. Its Bloodborne-specific parts (game check, patches, launcher, FSR 4 assets) no longer
+apply to this tree.
 
 ---
 

@@ -145,13 +145,11 @@ void Load() {
         std::fclose(file);
         std::printf("Settings: %s\n", Path());
     }
-    // SacredFire: the temporal upscalers and the object motion vectors read Bloodborne's scene
-    // (its render targets, constants and vertex streams); any other game profile starts without them.
-    // BB_UPSCALER / BB_OBJECT_MOTION below still override for experiments.
-    if (const char* profile = std::getenv("BB_GAME_PROFILE"); profile && std::strcmp(profile, "bloodborne") != 0) {
-        v.upscaler = UpscalerOff;
-        v.object_motion = false;
-    }
+    // SacredFire: bbport's temporal upscalers and object motion vectors read the scene of the game
+    // bbport was built for (its render targets, constants and vertex streams), not this one; they
+    // stay off. BB_UPSCALER / BB_OBJECT_MOTION below still turn them on for experiments.
+    v.upscaler = UpscalerOff;
+    v.object_motion = false;
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
         v.upscaler = UpscalerOff;

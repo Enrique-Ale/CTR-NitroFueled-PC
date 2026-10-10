@@ -19,10 +19,6 @@ data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
 export BB_CONFIG=${BB_CONFIG:-$data/bbport.ini}
-# FSR 4.1.1 assets (tools/fsr4cap/build_assets.sh): next to run.sh or in the data directory.
-if [[ -z ${BB_FSR411_DIR:-} && ! -d fsr4_411 && -d $data/fsr4_411 ]]; then
-    export BB_FSR411_DIR=$data/fsr4_411
-fi
 if [[ -z ${BB_PREBUILT:-} && -z ${BB_IN_NIX_SHELL:-} ]] && ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3; } && command -v nix-shell >/dev/null; then
     args=''; if (( $# )); then args=$(printf '%q ' "$@"); fi
     exec env BB_IN_NIX_SHELL=1 nix-shell shell.nix --run "bash run.sh $args"
@@ -49,15 +45,15 @@ if [[ -z ${PYTHON:-} ]]; then
     fi
 fi
 if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1; fi
-# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default: orig/CUSA13795 (SacredFire's
-# read-only link tree of the CTR dump) when it exists, else Bloodborne next to this directory.
-if [[ -z ${BB_GAME_DIR:-} && -f orig/CUSA13795/eboot.bin ]]; then game=orig/CUSA13795; else game=${BB_GAME_DIR:-../CUSA03173}; fi
+# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default: orig/CUSA13795, SacredFire's
+# read-only link tree of the merged CTR dump (update 1.21 over the base game).
+game=${BB_GAME_DIR:-orig/CUSA13795}
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
-# SacredFire: the game profile (scripts/game_check.py: bloodborne or ctr) selects the linked modules
-# and skips the Bloodborne-only steps (patches, render scaling, upscaler assets).
+# The game check (scripts/game_check.py) compares the executable image with the supported one
+# (Crash Team Racing Nitro-Fueled CUSA13795 1.21) and names the profile the runtime reads.
 profile=$("$PYTHON" scripts/game_check.py "$game") || { echo "$profile" >&2; exit 2; }
-export BB_GAME_PROFILE=$profile
-echo "Game profile: $profile"
+export BB_GAME_PROFILE=${profile:-ctr}
+echo "Game profile: $BB_GAME_PROFILE"
 original_game=$game
 game=$("$PYTHON" scripts/mods.py "$game" --out "$out" \
     --mods-dir "${BB_MODS_DIR:-$data/mods}" --config "${BB_MODS_CONFIG:-$data/mods.json}" \
@@ -69,87 +65,34 @@ if [[ $game != "$(realpath "$original_game")" ]]; then
 fi
 "$PYTHON" scripts/prepare.py "$game" --out "$out"
 "$PYTHON" scripts/link_libc.py "$game" --out "$out"
-if [[ $profile == ctr ]]; then
-    "$PYTHON" scripts/link_modules.py "$game" --out "$out" --modules libc.prx libSceFios2.prx libSceNpToolkit2.prx
-else
-    "$PYTHON" scripts/link_modules.py "$game" --out "$out"
-fi
+"$PYTHON" scripts/link_modules.py "$game" --out "$out" --modules libc.prx libSceFios2.prx libSceNpToolkit2.prx
 # SacredFire: symbol names for this eboot's host-side imports (shadPS4's aerolib list, fetched once).
 "$PYTHON" tools/gen_import_names.py --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
-if [[ $profile == ctr ]]; then
-    # CTR: the game's own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches come
-    # from patches/CrashTeamRacing.xml, chosen in the in-game menu (bbport.ini patch_* keys).
-    fps=${BB_FPS:-30}
-    "$PYTHON" scripts/patches.py --external-only --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
-        --app-version 01.21 --title-id CUSA13795 --out "$out" --settings "$BB_CONFIG"
-    # BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then
-    # picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
-    export BB_NEO=${BB_NEO:-0}
-    echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
-    # The on-disk shader/pipeline cache reused across launches breaks the fur geometry pipeline
-    # (docs/sacredfire/06-fur.md): a fresh cache compiles it right. Cleared per launch until the
-    # cache's module/permutation matching is fixed (BB_KEEP_SHADER_CACHE=1 keeps it).
-    if [[ ${BB_KEEP_SHADER_CACHE:-0} != 1 ]]; then
-        rm -rf "${BB_USER_DIR:-$data/user}/cache/CUSA13795"
-        echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
-    fi
-    patch_args=(--patches "$out/patches.bin")
-    # With the 60 FPS patch the game's own limiter paces frames; a 60 Hz virtual vblank would
-    # quantize a slightly late frame to 30 FPS (measured: 40-44 FPS alternating 16.7/33 ms).
-    # A 480 Hz vblank lets frames flip as they come (menus 60 FPS instead of 50).
-    if [[ -f $BB_CONFIG ]] && grep -qx 'patch_60fps=1' "$BB_CONFIG"; then
-        export BB_VBLANK_HZ=${BB_VBLANK_HZ:-480}
-        echo "60 FPS patch on: virtual vblank ${BB_VBLANK_HZ} Hz"
-    fi
-else
-    # Sizes chosen below for the previous launch are recomputed after an in-game restart.
-    if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
-        unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES
-    fi
-    # BB_RENDER_RES=WxH explicitly sets the game's render resolution (a patch at start).
-    # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank 480 Hz, frames shown at once),
-    # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
-    fps=${BB_FPS:-uncap}
-    # bbport.ini output_res other than 1080p (720p for the Steam Deck, 1440p, 2160p): the whole game
-    # renders at the preset's size of the output (a patch), the upscaler fills the output, the UI is
-    # drawn at the output size. Preset and output changes need a restart.
-    # Live resolution changes keep the guest at 1920x1080 and scale host targets at run time instead
-    # (output and presets change in the menu without a restart, but post-processing stays at 1080p
-    # and scene targets are copied back: much slower on the Steam Deck and older GPUs). Chosen by
-    # BB_LIVE_RES=0/1, else bbport.ini live_resolution=0/1/auto (auto: the GPU check, strong
-    # discrete GPUs get them); off when unset. 1080p output and TAA always use the live path.
-    if [[ -z ${BB_RENDER_RES:-} ]]; then
-        read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
-    fi
-    live=0
-    if [[ -n ${scaled_output:-} ]]; then
-        live=${BB_LIVE_RES:-}
-        # Bash builtins only: the AppImage's PATH has no sed/grep (a missing one ended run.sh silently).
-        if [[ -z $live && -f $BB_CONFIG ]]; then
-            while IFS= read -r line || [[ -n $line ]]; do
-                [[ $line =~ ^live_resolution=([01]|auto)$ ]] && live=${BASH_REMATCH[1]}
-            done < "$BB_CONFIG"
-        fi
-        if [[ $live == auto ]]; then
-            if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabilities
-            elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
-            else caps=out/bb-gpu-capabilities; fi
-            live=$("$caps" --live-resolution 2> >(while IFS= read -r line; do
-                [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line"; done >&2)) || live=0
-        fi
-        [[ $live == 1 ]] || live=0
-    fi
-    if [[ $live == 1 ]]; then
-        echo "Output ${scaled_output}: live resolution changes (live_resolution=0: startup patch)"
-    elif [[ -n ${scaled_output:-} ]]; then
-        export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output BB_AUTO_RENDER_RES=1
-        export BB_DMEM_MB=${BB_DMEM_MB:-9152}
-        echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB} MiB (live_resolution=1: live changes)"
-    fi
-    "$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
-        --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"
-    patch_args=(--patches "$out/patches.bin")
+# The game runs at its own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches
+# come from patches/CrashTeamRacing.xml, chosen in the in-game menu (bbport.ini patch_* keys) or
+# patches.json; BB_PATCHES_DIR adds a folder of further shadPS4-format XML files.
+fps=${BB_FPS:-30}
+"$PYTHON" scripts/patches.py --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
+    --app-version 01.21 --title-id CUSA13795 --out "$out" --settings "$BB_CONFIG"
+patch_args=(--patches "$out/patches.bin")
+# BB_NEO=1: PS4 Pro mode (sceKernelIsNeoMode, 7-CPU mode, 5568 MiB direct memory); the game then
+# picks its Pro rendering path. Off by default: the Steam Deck is closer to a base PS4.
+export BB_NEO=${BB_NEO:-0}
+echo "PS4 Pro mode: ${BB_NEO} (BB_NEO=1 turns it on)"
+# The on-disk shader/pipeline cache reused across launches breaks the fur geometry pipeline
+# (docs/sacredfire/06-fur.md): a fresh cache compiles it right. Cleared per launch until the
+# cache's module/permutation matching is fixed (BB_KEEP_SHADER_CACHE=1 keeps it).
+if [[ ${BB_KEEP_SHADER_CACHE:-0} != 1 ]]; then
+    rm -rf "${BB_USER_DIR:-$data/user}/cache/CUSA13795"
+    echo "Shader cache: cleared for this launch (BB_KEEP_SHADER_CACHE=1 keeps it)"
+fi
+# With the 60 FPS patch the game's own limiter paces frames; a 60 Hz virtual vblank would
+# quantize a slightly late frame to 30 FPS (measured: 40-44 FPS alternating 16.7/33 ms).
+# A 480 Hz vblank lets frames flip as they come (menus 60 FPS instead of 50).
+if [[ -f $BB_CONFIG ]] && grep -qx 'patch_60fps=1' "$BB_CONFIG"; then
+    export BB_VBLANK_HZ=${BB_VBLANK_HZ:-480}
+    echo "60 FPS patch on: virtual vblank ${BB_VBLANK_HZ} Hz"
 fi
 # Background upload of the game's GPU memory into VRAM ahead of use (BufferCache::Preupload):
 # 1 = only memory already in VRAM that the game rewrote (no new VRAM), 2 = all of it (~3 GB more
@@ -201,10 +144,6 @@ export BB_COPY_GPU_BUFFERS=${BB_COPY_GPU_BUFFERS:-1}
 export BB_GPU_WRITE_TWINS=${BB_GPU_WRITE_TWINS:-1} BB_GPU_WRITE_TWINS_MAX=${BB_GPU_WRITE_TWINS_MAX:-65536}
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=480 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
-fi
-# FSR 4: faster post passes next to the downloaded ones (incremental; tools/fsr4_optimize.sh).
-if [[ $profile != ctr && -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
-    bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
 fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
     probe=${BB_PROBE:-bin/bb-probe}

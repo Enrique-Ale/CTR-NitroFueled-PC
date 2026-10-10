@@ -54,11 +54,8 @@ void runtime_services_user_change(int user,int login) {
     pthread_mutex_unlock(&lock);
     printf("Runtime: user %d %s (controller port %d)\n",user,login ? "logged in" : "logged out",user);
 }
-/* The local user's name: BB_USER_NAME, else per game profile ("Hunter" is Bloodborne's). */
-static const char *default_user_name(void) {
-    const char *profile=getenv("BB_GAME_PROFILE");
-    return profile && !strcmp(profile,"bloodborne") ? "Hunter" : "Player 1";
-}
+/* The local user's name: BB_USER_NAME, else "Player 1". */
+static const char *default_user_name(void) { return "Player 1"; }
 static ABI int32_t user_initialize(const void *params) { (void)params; note("UserService initialized (user 1 logged in)"); return 0; }
 static ABI int32_t user_terminate(void) { return 0; }
 static ABI int32_t user_initial(int32_t *id) { if (!id) return USER_INVALID_ARGUMENT; *id=USER_ID; return 0; }

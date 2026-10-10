@@ -23,8 +23,8 @@ bash run.sh
 ```
 Game patches (60 FPS, no motion blur, Pro 1080p) are switched in the in-game menu (08-patches.md).
 `BB_NEO=1 bash run.sh` runs the game in PS4 Pro mode (Neo: 7-CPU mode and the Pro's 5568 MiB direct
-memory budget). run.sh detects the profile (`scripts/game_check.py orig/CUSA13795` prints `ctr`), links
-libSceNpToolkit2.prx, skips the Bloodborne patch/resolution steps and starts bb-probe. By hand:
+memory budget). run.sh checks the game (`scripts/game_check.py orig/CUSA13795` prints `ctr`), links
+libSceNpToolkit2.prx, compiles the chosen game patches and starts bb-probe. By hand:
 
 ```bash
 python3 scripts/prepare.py orig/CUSA13795 --out out

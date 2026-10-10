@@ -1,5 +1,8 @@
 # Bloodborne-specific code and how it is gated for CTR
 
+> Historical (2026-10-08). The Bloodborne profile and the pieces marked *removed* below were
+> taken out on 2026-10-09 (09-bloodborne-strip.md); git tag `bloodborne-support` has them.
+
 | piece | where | state for the ctr profile |
 |---|---|---|
 | game check (image hash, 1.09 messages) | scripts/game_check.py | profile table: bloodborne and ctr |

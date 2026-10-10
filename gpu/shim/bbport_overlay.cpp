@@ -175,13 +175,9 @@ void Menu() {
     ImGui::SetNextWindowSize(ImVec2(620.0f * base_scale, 0.0f), ImGuiCond_Appearing);
     bool keep_open = true;
     // SacredFire: the menu title names the game profile.
-    const char* title_profile = std::getenv("BB_GAME_PROFILE");
-    const bool title_ctr = title_profile && std::strcmp(title_profile, "ctr") == 0;
     if (!ImGui::Begin(
-            title_ctr ? BbSettings::MenuText("SacredFire - Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings",
-                                             "SacredFire — Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings")
-                      : BbSettings::MenuText("Bloodborne - Graphics  (Insert / L3+R3)###bbport_settings",
-                                             "Bloodborne — настройки  (Insert / L3+R3)###bbport_settings"),
+            BbSettings::MenuText("SacredFire - Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings",
+                                 "SacredFire — Crash Team Racing: Nitro-Fueled  (Insert / L3+R3)###bbport_settings"),
             &keep_open, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         return;
@@ -471,57 +467,16 @@ void Menu() {
         "остаётся в 1080p — на Steam Deck и старых видеокартах это заметно медленнее. "
         "Выключена: всё рисуется в разрешении пресета, смена — через перезапуск. Авто включает "
         "её на мощных дискретных видеокартах. Применяется после перезапуска игры."));
-    // SacredFire: the CTR profile has its own patch list instead of Bloodborne's effects.
-    const char* game_profile = std::getenv("BB_GAME_PROFILE");
-    const bool ctr_profile = game_profile && std::strcmp(game_profile, "ctr") == 0;
-    if (ctr_profile) {
-        ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
-                                                  "Патчи игры (после перезапуска)"));
-        for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
-            const auto& patch = BbSettings::GamePatches[g];
-            Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
-        }
-        Hint(BbSettings::MenuText("From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied to the executable at start.",
-                                  "Из patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), применяются к исполняемому файлу при запуске."));
+    // Game patches (patches/CrashTeamRacing.xml): bbport's own game-effect patches went with its
+    // Bloodborne profile (git tag bloodborne-support).
+    ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
+                                              "Патчи игры (после перезапуска)"));
+    for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
+        const auto& patch = BbSettings::GamePatches[g];
+        Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
     }
-    if (!ctr_profile) {
-    ImGui::SeparatorText(BbSettings::MenuText("Game effects (restart required)",
-                                              "Эффекты игры (после перезапуска)"));
-    const char* lods[] = {BbSettings::MenuText("Highest (-2)", "Максимальная (-2)"),
-                          BbSettings::MenuText("Game default", "Как в игре"),
-                          BbSettings::MenuText("Lower (1)", "Ниже (1)"),
-                          BbSettings::MenuText("Lowest (2)", "Минимальная (2)")};
-    static constexpr int lod_values[] = {-2, 0, 1, 2};
-    int lod_index = 1;
-    for (int i = 0; i < 4; ++i) {
-        if (lod_values[i] == s.model_lod) lod_index = i;
-    }
-    if (ImGui::BeginCombo(BbSettings::MenuText("Model detail", "Детализация моделей"),
-                          lods[lod_index])) {
-        for (int i = 0; i < 4; ++i) {
-            if (ImGui::Selectable(lods[i], i == lod_index)) {
-                Store(s.model_lod, lod_values[i], true);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    for (int e = 0; e < BbSettings::EffectCount; ++e) {
-        const auto& effect = BbSettings::Effects[e];
-        Checkbox(BbSettings::MenuText(effect.label, effect.label_ru), s.effects[e]);
-    }
-    Hint(BbSettings::MenuText(
-        "Effects are enabled and disabled by game patches at startup (patches/Bloodborne.xml). "
-        "Motion blur and shadows from dynamic lights place a significant load on the GPU.",
-        "Эффекты включаются и выключаются патчами игры при запуске (patches/Bloodborne.xml). "
-        "Размытие в движении и тени от динамических источников заметно нагружают GPU."));
-    Hint(BbSettings::MenuText(
-        "Free camera: hold Cross and press L3 (keyboard: Space + Z). "
-        "Debug menu: left touchpad / Tab. Requires DbgFont14h.ccm and DbgFont14h.tpf "
-        "in dvdroot_ps4/font from Nexus mod #253. Right touchpad: Backspace.",
-        "Свободная камера: удерживайте Cross и нажимайте L3 (клавиатура: Space + Z). "
-        "Debug menu: левый touchpad / Tab. Нужны DbgFont14h.ccm и DbgFont14h.tpf "
-        "в dvdroot_ps4/font из мода Nexus #253. Правый touchpad: Backspace."));
-    }
+    Hint(BbSettings::MenuText("From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied to the executable at start.",
+                              "Из patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), применяются к исполняемому файлу при запуске."));
 
     bool restart =
         s.object_motion != s.startup_object_motion || s.model_lod != s.startup_model_lod ||

@@ -7,7 +7,7 @@ bindings; 730 imports left to the host runtime (618 from the eboot, the rest fro
 Resolution (src/runtime.c): every import is named `NID#library` by link_modules.py. Patterns in the
 runtime name a library (`#libc`, `#libkernel`) or match any library (pthread_* names). Symbol-keyed
 tables (`RUNTIME_LOOKUP`) use `out/import_names.txt`, generated from shadPS4's aerolib for this eboot
-and loaded with `--import-names`; the compiled Bloodborne `src/import_names.inc` is the fallback.
+and loaded with `--import-names`; the compiled `src/import_names.inc` (bbport's table, from Bloodborne's imports) is the fallback.
 Imports from libc/libSceLibcInternal are never served by the runtime: they bind to libc.prx.
 
 `out/bb-probe out/boot-linked.bin --list-imports --import-names out/import_names.txt`: before the

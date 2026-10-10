@@ -3,15 +3,12 @@ __pycache__/
 user/
 *.mp4
 bbport.ini
-fsr4_shaders/
 pgo/
 *.png
 last_run.log
 dist/
 packaging/runtime-paths.nix
-fsr4_411/
 vkd3d-proton.cache
-tools/fsr4cap/*.exe
 perf.data
 # Local leftovers: patch backups, generated SPIR-V, analysis outputs, test saves and routes
 *.orig
@@ -20,7 +17,6 @@ perf.data
 /docs/savedata_route/
 /docs/route*.txt
 /docs/route_run.log
-/bloodborne_upscalers_*.md
 mods.json
 patches.json
 # Local: game logs, messages and archives from users, internal plans
@@ -28,8 +24,6 @@ patches.json
 /message*.txt
 /*.zip
 /docs/ISSUE_ACTION_PLAN_*.md
-# AMD FidelityFX DLLs (FSR 4.1.1 is built from the user's own): never in the repository
-*.dll
 
 # SacredFire: game files and generated output, never committed
 orig/
