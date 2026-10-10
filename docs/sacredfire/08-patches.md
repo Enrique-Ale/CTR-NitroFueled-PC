@@ -41,3 +41,12 @@ address 0x803b8815f), the patch address itself. Disassembly of out/eboot.elf aro
 The patch means to turn the `jne` into a `je` (0F 85 to 0F 84), so the byte belongs at
 0x17a9db4. patches/CrashTeamRacing.xml now uses that address; the upstream file
 (illusionyy/PS-Game-Patch) still has 0x017a9db3 and would fault the same way in shadPS4.
+
+With the corrected patch and PS4 Pro mode (`BB_NEO=1`, the launcher's switch) the game renders
+at 1920x1080 and the GPU library asserted in `TextureCache::ResolveOverlap` ("Unresolvable
+image overlap with equal memory address"): the same RGBA8 render target was sized 0x7f8000
+bytes from a texture descriptor (1920x1088, 8-row alignment) and 0x870000 from the colour
+buffer's slice register (64-row macro-tile alignment). Heights that are not a multiple of 64
+hit this, and 1080 is the first one CTR uses. The resolver's padding-only rule (formerly for a
+differing pow2 flag only) now also covers identical metadata with a different padded size and
+reuses the cached image. Pro mode + 1080p patch then runs at 30 FPS (logs/run39-play.log).

@@ -350,17 +350,24 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
 
-        const bool pow2_padding_only =
-            image_info.props.is_pow2 != cache_image.info.props.is_pow2 &&
+        // The same single-level, single-layer image whose guest size differs only in the
+        // tiler's padding: a pow2 flag that differs, or (SacredFire) the same metadata sized once
+        // by the tiler from a texture descriptor (1920x1080 RGBA8 -> 0x7f8000, rows aligned to 8)
+        // and once from the colour buffer's slice register (0x870000, macro-tile alignment of 64
+        // rows). The two differ only for heights such as 1080 that are not a multiple of 64 (CTR
+        // in PS4 Pro mode with the 1080p patch); the cached image is the same surface.
+        const bool padding_only =
             image_info.tile_mode == cache_image.info.tile_mode &&
             image_info.size == cache_image.info.size &&
             image_info.pitch == cache_image.info.pitch && image_info.resources.levels == 1 &&
             cache_image.info.resources.levels == 1 && image_info.resources.layers == 1 &&
-            cache_image.info.resources.layers == 1;
+            cache_image.info.resources.layers == 1 &&
+            (image_info.props.is_pow2 != cache_image.info.props.is_pow2 ||
+             image_info.type == cache_image.info.type);
 
         // Size and resources are less than or equal, use image view.
         if (image_info.pixel_format != cache_image.info.pixel_format ||
-            image_info.guest_size <= cache_image.info.guest_size || pow2_padding_only) {
+            image_info.guest_size <= cache_image.info.guest_size || padding_only) {
             auto result_id = merged_image_id ? merged_image_id : cache_image_id;
             const auto& result_image = slot_images[result_id];
             const bool is_compatible =

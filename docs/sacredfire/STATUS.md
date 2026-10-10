@@ -88,3 +88,14 @@ with the desktop apps closed.
 - Memory: the Steam Deck has 14 GiB; close other applications before running.
 - Upstream Python tests `test_run_settings.*` call run.sh, which builds: never run the full
   `unittest discover` while a build is in progress.
+
+## Launcher and packaging (2026-10-09)
+
+- `bash launcher/bb-launcher.sh` starts the GTK4 launcher (tested in the container after a full
+  package upgrade repaired PyGObject); `python3 launcher/sacredfire_launcher.py --play` starts
+  the game with the saved settings (tested: PS4 Pro mode on, Pro 1080p patch, two controller
+  ports, 30 FPS).
+- `packaging/appimage.sh` builds `dist/SacredFire-CTR-x86_64.AppImage` with `nix bundle`. It
+  needs Nix and binaries built inside `nix-shell shell.nix` (their RUNPATHs name the store paths
+  the bundle collects); the archbuild container has no Nix and its binaries link the system
+  libraries, so the AppImage has to be built on a machine with Nix. Untested in this tree.
