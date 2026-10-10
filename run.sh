@@ -70,8 +70,9 @@ fi
 "$PYTHON" tools/gen_import_names.py --out "$out"
 "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
 # The game runs at its own 30 FPS against a 60 Hz vblank unless the 60 FPS patch is on. Patches
-# come from patches/CrashTeamRacing.xml, chosen in the in-game menu (bbport.ini patch_* keys) or
-# patches.json; BB_PATCHES_DIR adds a folder of further shadPS4-format XML files.
+# come from patches/CrashTeamRacing.xml (community patches by illusion and TroyWarez, from
+# https://github.com/illusionyy/PS-Game-Patch), chosen in the in-game menu (bbport.ini patch_*
+# keys) or patches.json; BB_PATCHES_DIR adds a folder of further shadPS4-format XML files.
 fps=${BB_FPS:-30}
 "$PYTHON" scripts/patches.py --patches-dir "${BB_PATCHES_DIR:-patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}" \
     --app-version 01.21 --title-id CUSA13795 --out "$out" --settings "$BB_CONFIG"

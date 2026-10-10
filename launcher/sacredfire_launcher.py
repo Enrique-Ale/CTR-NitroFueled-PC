@@ -45,7 +45,8 @@ LANGUAGES = [("English", "1"), ("French", "2"), ("Spanish", "3"), ("German", "4"
              ("Italian", "5"), ("Japanese", "0"), ("Russian", "8")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
-# Game patches (patches/CrashTeamRacing.xml, scripts/patches.py): bbport.ini key,
+# Game patches (patches/CrashTeamRacing.xml, scripts/patches.py; community patches by illusion and
+# TroyWarez from https://github.com/illusionyy/PS-Game-Patch): bbport.ini key,
 # label, note. The in-game menu edits the same keys.
 PATCHES = [
     ("patch_60fps", "60 FPS unlock", "By illusion. 60 in menus, 40-45 in races on a Steam Deck"),

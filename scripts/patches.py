@@ -19,7 +19,9 @@ from pathlib import Path
 EBOOT_BASE=0x400000
 TITLE_ID='CUSA13795'
 APP_VERSION='01.21'
-# bbport.ini keys (the in-game menu, the launcher) -> "<file>/<patch name>".
+# bbport.ini keys (the in-game menu, the launcher) -> "<file>/<patch name>". The patches are
+# community work from illusionyy/PS-Game-Patch (https://github.com/illusionyy/PS-Game-Patch):
+# 60 FPS Unlock and Disable Motion Blur by illusion, the 1080p Pro resolution patch by TroyWarez.
 GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
                  'patch_no_motion_blur':'CrashTeamRacing.xml/Disable Motion Blur',
                  'patch_pro_1080p':'CrashTeamRacing.xml/Resolution Patch (1080p for PS4 Pro)'}

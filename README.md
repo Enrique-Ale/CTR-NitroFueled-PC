@@ -149,6 +149,12 @@ than the Steam Deck has). bbport's temporal upscalers (`BB_UPSCALER`, `BB_OBJECT
 Tests: `bash build.sh --test`, `python3 -m unittest discover -s tests`, and
 `ninja -C out/gpu motion-history-test ui-composition-test scene-resolution-test motion-shader-test settings-test`.
 
+## Reporting problems and contributing
+
+Use the bug report template; the log (launcher *Log* tab or `run.sh` output, with
+`BB_FRAME_STATS=1` for rendering and performance issues) is what matters. **No game files** in
+issues or pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Known limitations
 
 - Races with the 60 FPS patch reach 37–45 FPS on the Steam Deck: the port's GPU command thread

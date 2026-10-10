@@ -42,8 +42,12 @@ inline constexpr Effect Effects[] = {
     {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
-/// SacredFire: game patches for the CTR profile (patches/CrashTeamRacing.xml, selected by these
-/// bbport.ini keys, compiled at start by scripts/patches.py in external-only mode; restart required).
+/// SacredFire: game patches (patches/CrashTeamRacing.xml), selected by these bbport.ini keys and
+/// compiled into the executable at start by scripts/patches.py; a restart applies a change.
+/// The patches are community work from illusionyy/PS-Game-Patch
+/// (https://github.com/illusionyy/PS-Game-Patch, patches/xml/CrashTeamRacingUS-Orbis.xml):
+/// "60 FPS Unlock" and "Disable Motion Blur" by illusion, "Resolution Patch (1080p for PS4 Pro)"
+/// by TroyWarez. SacredFire only corrected the last one's address (docs/sacredfire/08-patches.md).
 inline constexpr Effect GamePatches[] = {
     {"patch_60fps", "60 FPS unlock (illusion)", "60 FPS (illusion)", false},
     {"patch_no_motion_blur", "Disable motion blur (illusion)", "Без размытия в движении (illusion)", false},
