@@ -113,7 +113,7 @@ Steam runs games without FUSE, set the launch options to
 TMPDIR=$HOME/.cache APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 %command%
 ```
 
-The AppImage then unpacks itself (~1.1 GB, `~/.cache/appimage_extracted_*`) on the first start
+The AppImage then unpacks itself (~1.2 GB, `~/.cache/appimage_extracted_*`) on the first start
 and reuses that copy; `TMPDIR` keeps that out of a RAM-backed `/tmp`. Add ` --play` after
 `%command%` to skip the launcher. **NVIDIA:** startup discovers the host's 64-bit NVIDIA Vulkan
 ICD and exposes its libraries next to the bundled AMD/Intel drivers (`BB_NVIDIA_LIB_DIR` when
