@@ -105,27 +105,42 @@ the general hunks.
   console streams replace characters they cannot encode (the title's ™ on CJK Windows locales,
   upstream issue 55). `tests/test_prepare.py` passes.
 
-## Left for a hand merge (our files diverged)
+## Hand merges (second pass, 2026-10-11)
 
-- Atomic save writes (src/runtime_file.c, runtime_savedata.c; upstream issue 64): a save file
-  opened for writing goes to `<name>.<n>.bbtmp`, is fsynced and renamed into place on close, so a
-  crash mid-save leaves the old file. The same diff adds a case-insensitive fallback for game
-  files not found, `BB_SAVE_TRACE=1` and `BB_FILE_TRACE=1`. CTR writes SYS-DATA.sav the same way.
-- Stick dead zone and calibration (src/runtime_pad.c; upstream PR 71): `BB_PAD_DEADZONE` (5 of
-  127), `BB_PAD_DEADZONE_OUTER`, neutral position measured for Switch Pro clones whose axes rest
-  off centre. Our runtime_pad.c changed a lot for the controller work (07-controllers.md).
-- AppImage size (packaging/default.nix): only RADV (without LLVM) and ANV instead of all of Mesa,
-  `bb-probe` stripped of debug info, MangoHud without its 32-bit half and xdg-utils, libdecor
-  without the GTK 3 plugin, GTK4 without GStreamer, printing and tracker. Upstream went from 925
-  to 399 MB; ours is 841 MB with the same contents.
-- build.sh (upstream issue 124): the FSR-Vulkan submodule is reset and patched again when the
-  previous version's patch is still applied. run.sh: `RADV_DEBUG=nohiz` set automatically on
-  Polaris and Vega (`BB_AUTO_NOHIZ=0` keeps it off); larger driver shader caches
-  (`MESA_SHADER_CACHE_MAX_SIZE`, `__GL_SHADER_DISK_CACHE_*`).
-- Overlay: a "Quit the game" button (press twice) for pad-only sessions (upstream issues 74,
-  116); `BB_DISPLAY` monitor selection in window.cpp (upstream issue 69). Both files diverged
-  here (our patches menu, the window icon).
-- Launcher: *Copy* and *Export log…* on the log page (upstream PR 78).
+Taken after the clean set, each merged by hand into our diverged files:
+
+- **Atomic save writes** (src/runtime_file.c, runtime_savedata.c; upstream issue 64). A save
+  file opened for writing goes to `<name>.<n>.bbtmp` next to it, is fsynced and renamed into
+  place on close, so a crash or kill mid-save leaves the old file; path operations on an open
+  file (`stat`, `access`, `truncate`, reopening) see the copy; leftover copies are removed when
+  the save directory is mounted; `param.bin` and `icon0.png` are written the same way. The same
+  diff brings the case-insensitive fallback for game files not found (only on a miss),
+  `BB_SAVE_TRACE=1` and `BB_FILE_TRACE=1`. Our first-write log line per save file is kept.
+- **Stick neutral, travel and dead zone** (src/runtime_pad.c; upstream PR 71). Clones that
+  report a biased neutral on all four axes get it measured from a quiet window after the pad
+  opens and are scaled by their own travel; every pad gets shadPS4's inner/outer dead zone
+  (`BB_PAD_DEADZONE` 5 of 127, `BB_PAD_DEADZONE_OUTER` 127); `BB_PAD_CENTER=lx,ly,rx,ry` and
+  `BB_PAD_CENTER_CAL=0` by hand. Upstream keeps one calibration; ours is per controller port
+  (`cals[PORTS]`) because of split screen, reset when a port's pad opens. tests/test_pad.c
+  covers a genuine pad and a biased clone. Mouse look (0.51) was left out: it maps the mouse to
+  Bloodborne's camera stick and takes the mouse on a click.
+- **AppImage size** (packaging/default.nix). Only RADV (built without LLVM) and ANV instead of
+  all of Mesa, the game binary stripped of debug info, MangoHud without its 32-bit half and
+  xdg-utils, libdecor without the GTK 3 plugin, the launcher's GTK4 without GStreamer, printing
+  and the indexer. Upstream's FSR 4.1.1 tools, DLSS and online-module files are not packaged.
+  Expected to bring the 841 MB AppImage down to roughly 400 MB; to be measured at the next
+  packaging run (needs the nix-shell build, see packaging/appimage.sh).
+- **build.sh** (upstream issue 124): the FSR-Vulkan submodule is reset and patched again when
+  an earlier version's patch is still applied. **run.sh**: `RADV_DEBUG=nohiz` on GCN 3-5 under
+  RADV (Tonga to Renoir; `BB_AUTO_NOHIZ=0` keeps it off), found through `bb-gpu-capabilities
+  --device`; larger driver shader caches (`MESA_SHADER_CACHE_MAX_SIZE=4G`, NVIDIA's cache
+  without cleanup). tools/gpu_capabilities.c gained `--device` and `--displays`.
+- **Overlay**: a "Quit game" button next to Close (press twice) for pad-only sessions
+  (upstream issues 74, 116). **Window**: `BB_DISPLAY` picks the monitor by number or name part;
+  the monitors are listed in the log (upstream issue 69).
+
+Not taken from this group: the launcher's *Copy* and *Export log…* buttons (our launcher is a
+separate fork; a small feature to add on its own) and Simplified Chinese strings.
 
 ## Not applicable
 

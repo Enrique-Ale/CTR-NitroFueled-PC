@@ -117,6 +117,34 @@ if [[ ${BB_AS_0_3:-0} == 1 ]]; then
     export BB_GUEST_IN_PLACE=0 BB_HOST_COPY_WAITS=all BB_PRODUCER_CHECK=1
 fi
 export BB_GUEST_IN_PLACE=${BB_GUEST_IN_PLACE:-${BB_PC_MODEL:-0}}
+# The game's GPU (vendor ID and name) for the driver workarounds below (bb-gpu-capabilities
+# --device, bbport 0.5).
+if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabilities
+elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
+else caps=out/bb-gpu-capabilities; fi
+gpu_vendor= gpu_name=
+if [[ ${BB_AUTO_NOHIZ:-1} != 0 && -z ${RADV_DEBUG:-} && -x $caps ]]; then
+    IFS=$'\t' read -r gpu_vendor gpu_name < <("$caps" --device 2> /dev/null) || true
+fi
+# GCN 3-5 under RADV (Polaris, Vega and their APUs): with HiZ, depth compression showed black
+# halos and missing geometry (bbport issues #54, #99); RADV_DEBUG=nohiz fixed it at some cost. Set
+# unless RADV_DEBUG is the user's, BB_AUTO_NOHIZ=0: off.
+if [[ ${BB_AUTO_NOHIZ:-1} != 0 && -z ${RADV_DEBUG:-} && $gpu_name == *"(RADV "* ]]; then
+    for chip in TONGA ICELAND CARRIZO FIJI STONEY POLARIS VEGA RAVEN RENOIR; do
+        if [[ $gpu_name == *"(RADV $chip"* ]]; then
+            export RADV_DEBUG=nohiz
+            echo "RADV: $gpu_name: RADV_DEBUG=nohiz (depth compression artifacts on GCN 3-5; BB_AUTO_NOHIZ=0: off)"
+            break
+        fi
+    done
+fi
+# The drivers' own shader caches keep compiled pipelines between sessions (the port's cache gives
+# them the shaders again at startup): NVIDIA's without its cleanup and with room for the game's
+# pipelines (as Steam sets it), Mesa's with more room than its default (bbport 0.5).
+export __GL_SHADER_DISK_CACHE=${__GL_SHADER_DISK_CACHE:-1}
+export __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=${__GL_SHADER_DISK_CACHE_SKIP_CLEANUP:-1}
+export __GL_SHADER_DISK_CACHE_SIZE=${__GL_SHADER_DISK_CACHE_SIZE:-10737418240}
+export MESA_SHADER_CACHE_MAX_SIZE=${MESA_SHADER_CACHE_MAX_SIZE:-4G}
 # MangoHud (launcher switch: MANGOHUD=1) must be drawn once. Two overlays on top of each other
 # showed doubled, offset text: the Steam Deck's performance overlay (mangoapp, game mode) plus the
 # in-game layer, or the AppImage's bundled layer plus a system MangoHud (the layer names differ,

@@ -100,5 +100,26 @@ int main(void) {
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls");
+    /* Stick calibration (bbport 0.5, PR 71; per port here): a genuine pad reads straight through
+     * the 5/127 dead zone; a clone biased to +16380 on all four axes gets that as its neutral and
+     * its half-span as the travel, so a full push still reaches full deflection. */
+    {
+        PadCal c; cal_reset(&c);
+        assert(c.have_center==0 && cal_enabled==1 && pad_deadzone==5 && pad_deadzone_outer==127);
+        int16_t zero[4]={0,0,0,0};
+        for (int i=0;i<PAD_CAL_QUIET_SAMPLES+1;++i) cal_sample(&c,zero);
+        assert(!c.have_center); /* SDL's pre-report zeros are not a neutral yet */
+        c.since-=PAD_CAL_TIMEOUT_US+1;
+        for (int i=0;i<PAD_CAL_QUIET_SAMPLES;++i) cal_sample(&c,zero);
+        assert(c.have_center && c.center[0]==0 && c.base[0]==0);
+        assert(stick_axis(&c,0,0)==128 && stick_axis(&c,0,32767)==255 && stick_axis(&c,0,-32768)==0);
+        assert(stick_axis(&c,0,600)==128);                /* inside the dead zone */
+        assert(stick_axis(&c,0,16384)>128+50 && stick_axis(&c,0,16384)<128+70);
+        PadCal clone; cal_reset(&clone);
+        int16_t biased[4]={16380,16380,16380,16380};
+        for (int i=0;i<PAD_CAL_QUIET_SAMPLES;++i) cal_sample(&clone,biased);
+        assert(clone.have_center && clone.center[0]==16380 && clone.base[0]==16380);
+        assert(stick_axis(&clone,0,16380)==128 && stick_axis(&clone,0,32760)==255 && stick_axis(&clone,0,0)==0);
+    }
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch coordinates, overlay capture, controls, stick calibration");
 }

@@ -38,11 +38,21 @@ mkdir -p pgo
 if [[ ! -f gpu/third_party/fsr-vulkan/CMakeLists.txt || ! -f gpu/third_party/imgui/imgui.h ]]; then
     git submodule update --init --recursive
 fi
-for patch in gpu/patches/fsr-vulkan/*.patch; do
-    if ! git -C gpu/third_party/fsr-vulkan apply --reverse --check "$PWD/$patch" 2>/dev/null; then
-        git -C gpu/third_party/fsr-vulkan apply "$PWD/$patch"
-    fi
-done
+# bbport 0.51 (issue 124): a checkout updated from an earlier version keeps that version's patch
+# applied, and the new one applies neither way ("patch does not apply"): the submodule's tree
+# holds nothing but these patches, so it is reset and they are applied again.
+fsr_patches_apply() {
+    for patch in gpu/patches/fsr-vulkan/*.patch; do
+        if ! git -C gpu/third_party/fsr-vulkan apply --reverse --check "$PWD/$patch" 2>/dev/null; then
+            git -C gpu/third_party/fsr-vulkan apply "$@" "$PWD/$patch" || return 1
+        fi
+    done
+}
+if ! fsr_patches_apply --check 2>/dev/null; then
+    echo 'FSR-Vulkan: an earlier version of the port changed it; resetting it and patching again'
+    git -C gpu/third_party/fsr-vulkan checkout -- .
+fi
+fsr_patches_apply
 cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
     -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" >/dev/null
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
