@@ -73,6 +73,12 @@ with the desktop apps closed.
   was). Dropping the rest of the buffer froze the game on the fence behind it; the decoder now
   resumes at the next packet header. Who writes the 1 is still unknown (BB_WRITE_LOG=1 lists
   writes into the range).
+  2026-10-11: the 1 also lands on register payloads. With upstream 0.5's background pipeline
+  compilation active (branch backport-0.51), two of three cold starts ended in a GPU-thread
+  segfault reading a shader at an address whose pgm_hi register was 1 (`0x110073e6200`), once
+  after three clobbered headers in the same buffer; runs without it stayed clean. The feature is
+  therefore opt-in (`BB_ASYNC_PIPELINES=1`), and the clobber is the next bug to chase
+  (11-upstream-backports.md has the run table).
 
 - **Fur/hair characters** (fixed 2026-10-09, see 06-fur.md): previously missing (driver select, run 12): bodies drawn with the fur material
   are missing; rigid parts (eyes, teeth, hats, kart) draw. The only GPU errors in the run are
