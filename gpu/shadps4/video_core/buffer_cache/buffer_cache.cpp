@@ -13,6 +13,7 @@
 #include "bbport_toggles.h"
 #include "bbport_sections.h"
 #include "bbport_free_check.h"
+#include "bbport_clobber.h"
 #include "bbport_guest_memory.h"
 #include "bbport_guest_hooks.h"
 #include "common/alignment.h"
@@ -694,6 +695,10 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     }
     const auto write_range = [&](VAddr guest, const u8* src, u64 bytes) {
         BbFreeCheck::Check(guest, bytes, src, BbFreeCheck::BufferDownload);
+        u32 first = 0;
+        std::memcpy(&first, src, std::min<u64>(bytes, sizeof(first)));
+        BbClobber::NoteWrite(guest, first, u32(std::min<u64>(bytes, 0xffffffffu)),
+                             BbClobber::BufferDownload);
         memory->TryWriteBacking(std::bit_cast<u8*>(guest), src, bytes);
     };
     const auto write_back = [&](const u8* data, u64 data_offset) {

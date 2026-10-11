@@ -5,6 +5,7 @@
 
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
+#include "bbport_clobber.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -156,6 +157,8 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
         download.Invalidate();
         BbFreeCheck::Check(image.info.guest_address, download_size, download.mapped,
                            BbFreeCheck::ImageDownload);
+        BbClobber::NoteWrite(image.info.guest_address, 0, u32(download_size),
+                             BbClobber::ImageDownload);
         Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(image.info.guest_address),
                                                   download.mapped, download_size);
         if (!WriteTracking()) {
@@ -167,6 +170,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
                 download.Invalidate();
                 BbFreeCheck::Check(device_addr, download_size, download.mapped,
                                    BbFreeCheck::ImageDownload);
+                BbClobber::NoteWrite(device_addr, 0, u32(download_size), BbClobber::ImageDownload);
                 Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(device_addr),
                                                           download.mapped, download_size);
                 if (!WriteTracking()) {

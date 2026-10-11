@@ -22,6 +22,7 @@
 #include "common/slot_vector.h"
 #include "common/types.h"
 #include "common/unique_function.h"
+#include "bbport_clobber.h"
 #include "video_core/amdgpu/cb_db_extent.h"
 #include "video_core/amdgpu/regs.h"
 
@@ -238,13 +239,35 @@ private:
     /// bbport: a submission's command buffers copied when the guest submits them
     /// (BB_COPY_GPU_BUFFERS): the guest reused their memory before the GPU thread decoded
     /// them ("PM4 type 0" from zeros or the next frame's commands, while an area loads).
+    /// SacredFire issue #2: the copy's storage comes from BbClobber (whole, page-aligned pages
+    /// with BB_COPY_PROTECT=1, so that the copy can be read-only while it is decoded).
+    template <typename T>
+    struct CopyAllocator {
+        using value_type = T;
+        CopyAllocator() = default;
+        template <typename U>
+        CopyAllocator(const CopyAllocator<U>&) {}
+        T* allocate(std::size_t n) {
+            return static_cast<T*>(BbClobber::AllocCopy(n * sizeof(T)));
+        }
+        void deallocate(T* p, std::size_t n) noexcept {
+            BbClobber::FreeCopy(p, n * sizeof(T));
+        }
+        bool operator==(const CopyAllocator&) const {
+            return true;
+        }
+    };
     struct SubmittedCopy {
-        std::vector<u32> data; ///< dcb, then ccb
+        std::vector<u32, CopyAllocator<u32>> data; ///< dcb, then ccb
         const u32* guest_dcb{};
         std::size_t dcb_dwords{};
         const u32* guest_ccb{};
         std::size_t ccb_dwords{};
         std::chrono::steady_clock::time_point submitted;
+        /// issue #2: dword offset of the first non-packet dword of the dcb (-1: none) right after
+        /// the copy was made, and again when the GPU thread starts decoding it.
+        s64 bad_at_submit = -1;
+        s64 bad_at_decode = -1;
     };
     Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq,
                          std::shared_ptr<SubmittedCopy> copy = {});

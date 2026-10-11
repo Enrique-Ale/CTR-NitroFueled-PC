@@ -31,6 +31,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "bbport_write_log.h"
 #include "bbport_free_check.h"
+#include "bbport_clobber.h"
 #include "video_core/amdgpu/pm4_cmds.h"
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -411,6 +412,7 @@ void SignalEop(const PM4CmdEventWriteEop& eop, u64 seq) {
                                seq);
             BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(address));
             BbWriteLog::Note(reinterpret_cast<u64>(address), &data, num_bytes, BbWriteLog::Fence);
+            BbClobber::NoteWrite(reinterpret_cast<u64>(address), data, num_bytes, BbClobber::Eop);
             const auto write_start = std::chrono::steady_clock::now();
             if (!memory->TryWriteBacking(address, &data, num_bytes)) {
                 StoreLabel(address, data, num_bytes);
@@ -544,6 +546,8 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
                        write_data->data, BbFreeCheck::WriteData);
     BbWriteLog::Note(write_data->Address<u64>(), write_data->data,
                      (header->type3.count.Value() - 2) * sizeof(u32), BbWriteLog::WriteData);
+    BbClobber::NoteWrite(write_data->Address<u64>(), write_data->data[0],
+                         (header->type3.count.Value() - 2) * sizeof(u32), BbClobber::WriteData);
     std::memcpy(write_data->Address<u64*>(), write_data->data,
                 (header->type3.count.Value() - 2) * sizeof(u32));
     rasterizer.NoteCommandWrite(write_data->Address<VAddr>(), write_data->data,
@@ -555,6 +559,7 @@ void WriteEosLabel(void* address, u64 value, u32 num_bytes) {
     BbFreeCheck::Check(reinterpret_cast<u64>(address), num_bytes, &value, BbFreeCheck::Eos);
     BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(address));
     BbWriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, BbWriteLog::Fence);
+    BbClobber::NoteWrite(reinterpret_cast<u64>(address), value, num_bytes, BbClobber::Eos);
     if (!memory->TryWriteBacking(address, &value, num_bytes)) {
         StoreLabel(address, value, num_bytes);
     }
@@ -588,6 +593,8 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
         BbFreeCheck::Check(reinterpret_cast<u64>(event_eos.Address()), sizeof(u32), &value,
                            BbFreeCheck::EosGds);
         BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(event_eos.Address()));
+        BbClobber::NoteWrite(reinterpret_cast<u64>(event_eos.Address()), value, sizeof(u32),
+                             BbClobber::EosGds);
         *event_eos.Address() = value;
         BbFreeCheck::NoteFenceWritten(reinterpret_cast<u64>(event_eos.Address()));
     }
@@ -971,7 +978,9 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
 }
 // bbport: an invalid packet header (Steam Deck: "PM4 type 0" with dword 0, 8 or 0x10, mid-game): where
 // in which buffer, what surrounds it, and which logged writes of ours landed in the buffer.
-void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth) {
+template <typename Copy> // Liverpool::SubmittedCopy (private; deduced)
+void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq, int depth,
+                     const Copy* copy) {
     const uintptr_t address = reinterpret_cast<uintptr_t>(at);
     int prot = 0, type = -1;
     uintptr_t end = 0;
@@ -992,6 +1001,47 @@ void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
         std::fprintf(stderr, "\n");
     }
     BbWriteLog::DumpRange(base, dwords * 4);
+    // SacredFire issue #2: the three readings. The buffer decoded here is the host copy made at
+    // submit; the guest dword at the same offset is read as it is now (fault-safe: the game may
+    // have unmapped it), and the walks over the copy at submit and at decode start say whether
+    // the copy already had a bad header then.
+    if (copy && base == reinterpret_cast<uintptr_t>(copy->data.data()) &&
+        std::size_t(at - copy->data.data()) < copy->dcb_dwords) {
+        const std::size_t offset = at - copy->data.data();
+        const u32* guest = copy->guest_dcb + offset;
+        u32 guest_now = 0;
+        iovec local{&guest_now, sizeof(guest_now)}, remote{const_cast<u32*>(guest), sizeof(u32)};
+        const bool readable =
+            process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == ssize_t(sizeof(u32));
+        char at_submit[32], at_decode[32], guest_str[16];
+        if (copy->bad_at_submit < 0) {
+            std::snprintf(at_submit, sizeof(at_submit), "none");
+        } else {
+            std::snprintf(at_submit, sizeof(at_submit), "+%#llx",
+                          (unsigned long long)copy->bad_at_submit * 4);
+        }
+        if (copy->bad_at_decode < 0) {
+            std::snprintf(at_decode, sizeof(at_decode), "none");
+        } else {
+            std::snprintf(at_decode, sizeof(at_decode), "+%#llx",
+                          (unsigned long long)copy->bad_at_decode * 4);
+        }
+        if (readable) {
+            std::snprintf(guest_str, sizeof(guest_str), "%08x", guest_now);
+        } else {
+            std::snprintf(guest_str, sizeof(guest_str), "unreadable");
+        }
+        const double ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - copy->submitted)
+                              .count();
+        std::fprintf(stderr,
+                     "  issue #2: copy now %08x; guest dword at %p (dcb at %p +%#llx) now %s; first "
+                     "non-packet dword of the copy at submit: %s, at decode start: %s; decoded "
+                     "%.2f ms after submit\n",
+                     *at, static_cast<const void*>(guest), static_cast<const void*>(copy->guest_dcb),
+                     (unsigned long long)(offset * 4), guest_str, at_submit, at_decode, ms);
+        BbClobber::DumpWritesInto(reinterpret_cast<u64>(guest), sizeof(u32));
+    }
     std::fflush(stderr);
 }
 } // namespace
@@ -1009,6 +1059,29 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     const int dcb_depth = g_dcb_depth;
     if (dcb_stats) {
         ScanDcb(dcb, dcb_depth);
+    }
+    // SacredFire issue #2: the copy's headers walked again when its decoding starts (SubmitGfx
+    // walked them right after the memcpy).
+    if (copy && dcb_depth == 0) {
+        BbClobber::NoteDecoding(seq);
+        copy->bad_at_decode = BbClobber::FirstBadHeader(dcb.data(), dcb.size());
+        if (copy->bad_at_decode != copy->bad_at_submit) {
+            const double ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - copy->submitted)
+                                  .count();
+            std::fprintf(stderr,
+                         "Command buffer check: submission %llu's copy changed between submit and "
+                         "decode start (%.2f ms): first non-packet dword at +%#llx (%08x), at submit "
+                         "%s%#llx; copy at %p, guest dcb at %p, %#llx bytes\n",
+                         (unsigned long long)seq, ms,
+                         (unsigned long long)std::max<s64>(copy->bad_at_decode, 0) * 4,
+                         copy->bad_at_decode >= 0 ? dcb[copy->bad_at_decode] : 0u,
+                         copy->bad_at_submit < 0 ? "none " : "+",
+                         (unsigned long long)std::max<s64>(copy->bad_at_submit, 0) * 4,
+                         static_cast<const void*>(dcb.data()),
+                         static_cast<const void*>(copy->guest_dcb),
+                         (unsigned long long)(copy->dcb_dwords * 4));
+        }
     }
 
     cblock.Reset();
@@ -1033,7 +1106,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
 
         switch (type) {
         default:
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
+            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth, copy.get());
             UNREACHABLE_MSG("Wrong PM4 type {}", type);
             break;
         case 0: {
@@ -1042,7 +1115,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             // rest of the buffer deadlocked the game on the fence that followed; instead the
             // decoder resumes at the next dword that looks like a type-3 header (or type-2
             // padding), losing only the clobbered packet.
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth);
+            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth, copy.get());
             std::size_t skip = 1;
             while (skip < dcb.size() && skip < 64) {
                 const u32 word = dcb[skip];
@@ -1528,6 +1601,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 } else {
                     BbFreeCheck::Check(write_data->Address<u64>(), (count - 2) * 4, write_data->data,
                                        BbFreeCheck::WriteData);
+                    BbClobber::NoteWrite(write_data->Address<u64>(), write_data->data[0],
+                                         (count - 2) * 4, BbClobber::WriteData);
                     std::memcpy(write_data->Address<u64*>(), write_data->data, (count - 2) * 4);
                 }
                 break;
@@ -1931,6 +2006,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             if (!write_data->wr_one_addr.Value()) {
                 BbFreeCheck::Check(write_data->Address<u64>(), data_size, write_data->data,
                                    BbFreeCheck::ComputeWriteData);
+                BbClobber::NoteWrite(write_data->Address<u64>(), write_data->data[0], data_size,
+                                     BbClobber::ComputeWriteData);
                 std::memcpy(write_data->Address<void*>(), write_data->data, data_size);
                 if (rasterizer) {
                     rasterizer->NoteCommandWrite(write_data->Address<VAddr>(), write_data->data,
@@ -1978,6 +2055,12 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 const bool writes = release.data_sel.Value() != DataSelect::None;
                 rasterizer->SignalAfterGpu(
                     [release, pipe_id] {
+                        if (const auto sel = release.data_sel.Value();
+                            sel != DataSelect::None && sel != DataSelect::GdsMemStore) {
+                            BbClobber::NoteWrite(release.Address<u64>(), release.DataQWord(),
+                                                 sel == DataSelect::Data32Low ? 4 : 8,
+                                                 BbClobber::ReleaseMem);
+                        }
                         release.SignalFence(
                             [pipe_id] {
                                 Platform::IrqC::Instance()->Signal(
@@ -2001,6 +2084,8 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
                 BbFreeCheck::Check(release_mem->Address<u64>(),
                                    sel == DataSelect::Data32Low ? 4 : 8, &value,
                                    BbFreeCheck::ReleaseMem);
+                BbClobber::NoteWrite(release_mem->Address<u64>(), value,
+                                     sel == DataSelect::Data32Low ? 4 : 8, BbClobber::ReleaseMem);
             }
             if (rasterizer) {
                 rasterizer->ProcessDownloadImages();
@@ -2083,6 +2168,9 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
         copy->guest_ccb = ccb.data();
         copy->ccb_dwords = ccb.size();
         copy->submitted = std::chrono::steady_clock::now();
+        // SacredFire issue #2: the headers walked right after the memcpy (= the guest buffer
+        // as submitted). The seq is known under the lock below, where this is reported.
+        copy->bad_at_submit = BbClobber::FirstBadHeader(copy->data.data(), copy->dcb_dwords);
         dcb = std::span<const u32>{copy->data.data(), copy->dcb_dwords};
         ccb = std::span<const u32>{copy->data.data() + copy->dcb_dwords, copy->ccb_dwords};
     }
@@ -2100,6 +2188,25 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
             draw_prep->Enqueue(seq, std::move(prep_submission));
         }
         BbFreeCheck::NoteSubmit(seq, copy ? copy->guest_dcb : dcb.data(), dcb.size_bytes());
+        BbClobber::NoteSubmit(seq, copy ? copy->guest_dcb : dcb.data(), dcb.size_bytes());
+        if (copy) {
+            if (copy->bad_at_submit >= 0) {
+                const u32* guest = copy->guest_dcb + copy->bad_at_submit;
+                std::fprintf(stderr,
+                             "Command buffer check: submission %llu's dcb already holds a non-packet "
+                             "dword when the game submits it: %08x at +%#llx (guest %p; dcb at %p, "
+                             "%#llx bytes; submitting thread %u)\n",
+                             (unsigned long long)seq, copy->data[copy->bad_at_submit],
+                             (unsigned long long)copy->bad_at_submit * 4,
+                             static_cast<const void*>(guest),
+                             static_cast<const void*>(copy->guest_dcb),
+                             (unsigned long long)(copy->dcb_dwords * 4), unsigned(gettid()));
+                BbClobber::DumpWritesInto(reinterpret_cast<u64>(guest), sizeof(u32));
+                std::fflush(stderr);
+            }
+            // BB_COPY_PROTECT=1: read-only from here until it is freed.
+            BbClobber::ProtectCopy(seq, copy->data.data(), copy->data.size() * sizeof(u32));
+        }
         auto task = ProcessGraphics(dcb, ccb, seq, std::move(copy));
         queue.submits.emplace(task.handle);
     }

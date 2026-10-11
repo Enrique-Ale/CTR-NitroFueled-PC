@@ -6,6 +6,7 @@
 #include "bbport_copy.h"
 #include <sys/resource.h>
 #include "bbport_free_check.h"
+#include "bbport_clobber.h"
 #include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
@@ -319,6 +320,11 @@ extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {
 }
 
 extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
+    // SacredFire issue #2, BB_COPY_PROTECT=1: a write into the read-only copy of a submitted
+    // command buffer. Reported here; fatal, so that the runtime prints the writer's call chain.
+    if (BbClobber::OnFault(ucontext, reinterpret_cast<std::uint64_t>(address))) {
+        return 0;
+    }
     // BB_LABEL_TRAP (diagnostic): its read-only label pages first. Not passed on to GPU page
     // tracking (a write fault drains the draw pipe: thousands a second would change the timing
     // under test); label pages are not expected to be GPU-tracked.

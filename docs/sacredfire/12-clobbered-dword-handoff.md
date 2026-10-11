@@ -68,3 +68,54 @@ With `BB_WRITE_LOG=1` the one run did not reproduce (timing). Logs of the earlie
 - `kill -ALRM $(pgrep -x sacredfire)` dumps every thread's stack on a hang and exits.
 - The clobber bug is independent of the backports: it was first seen on 2026-10-09 on the
   pre-backport tree. v0.2 shipped with background compilation opt-in because of it.
+
+## 2026-10-11, later session: the instrumentation (branch `issue-2`)
+
+### A pattern in the run-7 log
+
+In run 7 (logs/backport-smoke-7-default.log) the clobbered dword is `0x13890` bytes into the
+buffer, and the packet right after it is an `EVENT_WRITE_EOS` that writes the value 1 to the label
+`0x10f6113890`, followed by a `WAIT_REG_MEM` for 1 at the same label. The low 16 bits of the
+offset and of the label match. If the game's buffer started at `0x10f6100000` (a 1 MiB-aligned
+allocation is plausible), the label *is* the clobbered header: a CPU-side label write of 1, made
+by the port on the game's behalf, landing inside a submitted command buffer, before the memcpy in
+`SubmitGfx` copied it. That is the "fence or label write landing in reused memory" candidate from
+the issue, and it predicts case 1 (bad already at submit). The instrumentation below tests it
+directly, and still covers case 2.
+
+All four clobbers seen so far replaced a type-3 header (`c0016900`, `c0047600`) with
+`00000001`; the payload dwords after it were intact.
+
+### What the build on `issue-2` adds (always on, cheap)
+
+New module `gpu/shim/bbport_clobber.{h,cpp}`; hooks in liverpool.cpp, bbgpu.cpp,
+vk_rasterizer.cpp, buffer_cache.cpp, texture_cache.cpp.
+
+1. **Three readings per clobber.** `SubmitGfx` walks the copy's headers right after the memcpy
+   (`SubmittedCopy::bad_at_submit`); `ProcessGraphics` walks them again when the GPU thread
+   starts decoding the copy (`bad_at_decode`); `ReportBadPacket` prints both, the guest dword at
+   the same offset as it is now, and the time since submit:
+   - `Command buffer check: submission N's dcb already holds a non-packet dword when the game
+     submits it: 00000001 at +0x... (guest 0x...)` — case 1, the guest buffer was bad at submit.
+   - `Command buffer check: submission N's copy changed between submit and decode start` — case
+     2, a host-side write into the copy while it waited in the queue.
+   - `  issue #2: copy now 00000001; guest dword at ... now ...; first non-packet dword of the
+     copy at submit: none|+0x..., at decode start: none|+0x...` under every `Bad PM4 packet`.
+2. **Guest write check.** Every write the port makes into guest memory on the game's behalf
+   (EOP/EOS/RELEASE_MEM labels, WRITE_DATA, DMA fill/copy, buffer and image downloads) goes into a
+   ring of the last 16384 writes, and is reported immediately when it lands inside one of the last
+   256 submitted command buffers (`Guest write check: EOS fence of 4 bytes, value 0x1, to 0x...
+   lands inside submission N's command buffer at +0x... (<where>; decoding submission D; submitted
+   T ms ago; thread ...)`). `<where>` is "the buffer being decoded" (a label the game placed inside
+   its own buffer: legal on the hardware, which has parsed past it), "a buffer submitted after the
+   one being decoded, not decoded yet" (the clobber scenario: the game already reused the memory),
+   or "an older buffer, not resubmitted since". The two checks above also list the remembered
+   writes into the clobbered dword (`  port write into it: ...`).
+3. **`BB_COPY_PROTECT=1`** (opt-in): the copies are allocated in whole pages and made read-only
+   after the walk at submit until they are freed. A host-side write into one faults; the fault
+   handler prints `Clobber trap: a write to the read-only copy of submission N at +0x... from RIP
+   ...` and lets the runtime print the writer's call chain (`Host fault (signal 11) ... #2 ...`) and
+   exit. Use it when the readings say case 2.
+
+The decoder, the draw-preparation workers (they take their own copy in `DrawPreparation::Build`)
+and `CheckSubmittedCopy` only read the copy, so the read-only mode has no legitimate faulter.
