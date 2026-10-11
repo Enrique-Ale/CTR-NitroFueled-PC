@@ -89,6 +89,13 @@ std::int64_t FirstBadHeader(const std::uint32_t* words, std::uint64_t dwords) {
 void NoteSubmit(std::uint64_t seq, const void* guest_dcb, std::uint64_t bytes) {
     ranges[ranges_head.fetch_add(1, std::memory_order_relaxed) % ranges.size()] =
         Range{seq, reinterpret_cast<std::uint64_t>(guest_dcb), bytes, NowNs()};
+    static const bool test = [] {
+        const char* env = std::getenv("BB_ISSUE2_TEST");
+        return env && env[0] == '1';
+    }();
+    if (test) {
+        AskForReport();
+    }
 }
 
 void NoteDecoding(std::uint64_t seq) {
@@ -126,6 +133,7 @@ void NoteWrite(std::uint64_t address, std::uint64_t value, std::uint32_t bytes, 
                         : hit->seq > decoding_now
                             ? "a buffer submitted after the one being decoded, not decoded yet"
                             : "an older buffer, not resubmitted since";
+    const bool late = hit->seq > decoding_now;
     char thread[32] = "?";
     pthread_getname_np(pthread_self(), thread, sizeof(thread));
     std::fprintf(stderr,
@@ -136,6 +144,9 @@ void NoteWrite(std::uint64_t address, std::uint64_t value, std::uint32_t bytes, 
                  (unsigned long long)hit->seq, (unsigned long long)(address - hit->base), where,
                  (unsigned long long)decoding_now, (now - hit->ns) / 1e6, thread,
                  (unsigned long long)n);
+    if (late) {
+        AskForReport();
+    }
 }
 
 void DumpWritesInto(std::uint64_t address, std::uint64_t bytes) {
@@ -159,6 +170,21 @@ void DumpWritesInto(std::uint64_t address, std::uint64_t bytes) {
         std::fprintf(stderr, "  no remembered port write into it (%llu writes remembered)\n",
                      (unsigned long long)count);
     }
+}
+
+void AskForReport() {
+    static std::atomic<bool> asked{false};
+    if (asked.exchange(true)) {
+        return;
+    }
+    std::fflush(stdout);
+    std::fprintf(stderr,
+                 "\nSacredFire issue #2: the known \"clobbered dword\" bug just happened (a dword of a "
+                 "submitted command buffer turned into 1); the lines above are its diagnostics.\n"
+                 "SacredFire issue #2: please attach this whole log to "
+                 "https://github.com/T3CHNOLOG1C/SacredFire/issues/2 (launcher: Log page, \"Export "
+                 "log...\") so that the writer can be found and fixed.\n\n");
+    std::fflush(stderr);
 }
 
 bool ProtectCopies() {
@@ -233,6 +259,7 @@ bool OnFault(void* ucontext, std::uint64_t address) {
                 const ssize_t written = write(2, line, std::min<std::size_t>(n, sizeof(line) - 1));
                 (void)written;
             }
+            AskForReport();
             return true;
         }
     }

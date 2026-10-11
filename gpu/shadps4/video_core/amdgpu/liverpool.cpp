@@ -1082,6 +1082,7 @@ void ReportBadPacket(uintptr_t base, std::size_t dwords, const u32* at, u64 seq,
         BbClobber::DumpWritesInto(reinterpret_cast<u64>(guest), sizeof(u32));
     }
     std::fflush(stderr);
+    BbClobber::AskForReport();
 }
 } // namespace
 
@@ -1120,6 +1121,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                          static_cast<const void*>(dcb.data()),
                          static_cast<const void*>(copy->guest_dcb),
                          (unsigned long long)(copy->dcb_dwords * 4));
+            BbClobber::AskForReport();
         }
     }
 
@@ -2242,6 +2244,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
                              (unsigned long long)(copy->dcb_dwords * 4), unsigned(gettid()));
                 BbClobber::DumpWritesInto(reinterpret_cast<u64>(guest), sizeof(u32));
                 std::fflush(stderr);
+                BbClobber::AskForReport();
             }
             // BB_COPY_PROTECT=1: read-only from here until it is freed.
             BbClobber::ProtectCopy(seq, copy->data.data(), copy->data.size() * sizeof(u32));

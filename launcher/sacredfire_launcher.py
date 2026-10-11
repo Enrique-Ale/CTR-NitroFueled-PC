@@ -210,6 +210,10 @@ def combo_value(row):
 
 
 APP_ID = "io.github.sacredfire.Launcher"
+# The game's log names this when the known clobbered-dword bug shows itself (gpu/shim/
+# bbport_clobber.cpp AskForReport); the log page then asks for the log to be attached to the issue.
+ISSUE2_MARKER = "SacredFire issue #2"
+ISSUE2_URL = "https://github.com/T3CHNOLOG1C/SacredFire/issues/2"
 
 
 def install_game_icon(game_dir):
@@ -455,6 +459,21 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     def build_log_page(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # Shown when the game's log reports the known clobbered-dword bug (issue #2): the log
+        # holds the diagnostics that can find its writer, so ask for it.
+        self.issue_notice = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                                    margin_top=8, margin_bottom=2, margin_start=8, margin_end=8,
+                                    visible=False)
+        self.issue_notice.add_css_class("card")
+        issue_label = Gtk.Label(
+            label=tr("The game hit the known \"clobbered command buffer\" bug (issue #2). "
+                     "Please export this log and attach it to the issue so the cause can be fixed."),
+            wrap=True, xalign=0, hexpand=True, margin_top=6, margin_bottom=6, margin_start=6)
+        self.issue_notice.append(issue_label)
+        issue_button = Gtk.Button(label=tr("Open issue #2"), valign=Gtk.Align.CENTER, margin_end=6)
+        issue_button.connect("clicked", self.on_open_issue)
+        self.issue_notice.append(issue_button)
+        box.append(self.issue_notice)
         self.log_view = Gtk.TextView(editable=False, monospace=True, cursor_visible=False,
                                      wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self.log_view.set_top_margin(8)
@@ -485,6 +504,17 @@ class LauncherWindow(Adw.ApplicationWindow):
     def log_text(self):
         buffer = self.log_view.get_buffer()
         return buffer.get_text(*buffer.get_bounds(), False)
+
+    def on_open_issue(self, _button):
+        Gio.AppInfo.launch_default_for_uri(ISSUE2_URL, None)
+
+    def note_issue_line(self, line):
+        """A line of the game's log: the notice appears at the first mention of the bug."""
+        if ISSUE2_MARKER in line and not self.issue_notice.get_visible():
+            self.issue_notice.set_visible(True)
+            self.toasts.add_toast(Adw.Toast(
+                title=tr("Known bug (issue #2) hit: please export the log and attach it to the issue"),
+                timeout=10))
 
     def on_copy_log(self, _button):
         self.get_clipboard().set(self.log_text())
@@ -552,6 +582,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             return
         self.store()
         self.log_view.get_buffer().set_text("")
+        self.issue_notice.set_visible(False)
         launcher = Gio.SubprocessLauncher.new(
             Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_MERGE)
         launcher.set_environ([f"{k}={v}" for k, v in self.environment().items()])
@@ -578,6 +609,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         if line is None:
             return
         self.append_log(line + "\n")
+        self.note_issue_line(line)
         self.read_line()
 
     def stop_game(self):

@@ -58,4 +58,10 @@ void ProtectCopy(std::uint64_t seq, const void* storage, std::size_t bytes);
 /// At a SIGSEGV: true when `address` is inside a protected copy (the write is reported; the
 /// caller lets the fault be fatal so that the writer's call chain is printed).
 bool OnFault(void* ucontext, std::uint64_t address);
+
+/// The bug just showed itself (a bad header, a changed copy, a late label, a trap): once per
+/// run, a message on stderr that names GitHub issue #2 and asks for the log to be attached
+/// to it. The launcher watches for the words "SacredFire issue #2" and shows a notice.
+/// BB_ISSUE2_TEST=1 prints it at the first submission (to try the launcher's notice).
+void AskForReport();
 } // namespace BbClobber

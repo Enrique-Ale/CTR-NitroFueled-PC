@@ -158,6 +158,13 @@ save). Build v0.2-4-g41a3e71 (PGO off, LTO on).
 
 ### What to do when it fires again
 
+The game's log now says so itself: at the first sign of the bug (any of the lines below) the GPU
+library prints, once, two lines starting with `SacredFire issue #2:` that name the issue and ask
+for the whole log to be attached to it; the launcher's Log page watches for that text and shows a
+notice with an *Open issue #2* button and a toast (`BB_ISSUE2_TEST=1` prints the lines at the
+first submission, to try the notice). Users who hit the bug can thus report it with the log that
+holds the diagnostics; the lines to read in such a log, in order:
+
 The instrumentation is always on (branch `issue-2`), so any play session that hits the bug
 leaves the answer in the log. Look for, in this order:
 

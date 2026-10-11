@@ -155,8 +155,12 @@ Tests: `bash build.sh --test`, `python3 -m unittest discover -s tests`, and
 ## Reporting problems and contributing
 
 Use the bug report template; the log (launcher *Log* tab or `run.sh` output, with
-`BB_FRAME_STATS=1` for rendering and performance issues) is what matters. **No game files** in
-issues or pull requests. See [CONTRIBUTING.md](CONTRIBUTING.md).
+`BB_FRAME_STATS=1` for rendering and performance issues) is what matters. If the log says
+`SacredFire issue #2` (the launcher shows a notice with an *Open issue #2* button), the game hit
+the known clobbered command buffer bug: please attach that whole log to
+[issue #2](https://github.com/T3CHNOLOG1C/SacredFire/issues/2), it carries the diagnostics that
+can find the cause. **No game files** in issues or pull requests. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Known limitations
 

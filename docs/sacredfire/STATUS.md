@@ -88,6 +88,8 @@ with the desktop apps closed.
   buffer. Nine instrumented runs (cold driver cache, race loads, 80 ms and 1.5 s forced label
   holds) stayed clean and no guest event wait timed out: the writer is still not caught; the next
   clobber in any session leaves the answer in the log (the hand-off note says what to look for).
+  When it fires, the log says `SacredFire issue #2: ...` and asks for itself to be attached to
+  the issue; the launcher's Log page shows a notice with an *Open issue #2* button.
 
 - **Texture with no Vulkan format** (fixed 2026-10-11, branch backport-0.51): in some races the
   game binds a texture descriptor with data_format 6 and num_format 0 (10_11_11 Unorm), which the
