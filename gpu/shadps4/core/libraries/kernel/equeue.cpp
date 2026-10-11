@@ -469,6 +469,7 @@ namespace {
 struct EqueueWaitStat {
     std::string name;
     u64 waits = 0, ns = 0, events = 0;
+    u64 timeouts = 0, timeout_us_max = 0; ///< SacredFire issue #2: waits that ran out
 };
 std::mutex equeue_wait_mutex;
 std::vector<EqueueWaitStat> equeue_wait_stats;
@@ -486,6 +487,10 @@ void ReportEqueueWaits(double frames) {
         const auto& s = equeue_wait_stats[i];
         std::printf("%s %s %.1f waits %.2f ms %.1f events", i ? ";" : "", s.name.c_str(),
                     s.waits / frames, s.ns / (frames * 1e6), s.events / frames);
+        if (s.timeouts) {
+            std::printf(" (%llu timed out, longest timeout %llu us)",
+                        (unsigned long long)s.timeouts, (unsigned long long)s.timeout_us_max);
+        }
     }
     std::printf("\n");
     equeue_wait_stats.clear();
@@ -528,6 +533,23 @@ int PS4_SYSV_ABI sceKernelWaitEqueue(OrbisKernelEqueue eq, OrbisKernelEvent* ev,
         ++it->waits;
         it->ns += ns;
         it->events += u64(*out);
+        if (*out == 0) {
+            // SacredFire issue #2: a game thread gave up waiting (its own timeout); if it then
+            // reuses memory whose fences the port has not written yet, a late label lands there.
+            ++it->timeouts;
+            if (timo) {
+                it->timeout_us_max = std::max<u64>(it->timeout_us_max, u64(*timo));
+            }
+            static std::atomic<u64> reported{0};
+            const u64 n = reported.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (n <= 16 || n % 1000 == 0) {
+                std::printf("Guest event wait timed out: queue %s, %d events asked, timeout %llu us "
+                            "(waited %.2f ms); %llu so far\n",
+                            equeue->GetName().data(), num,
+                            timo ? (unsigned long long)*timo : 0ull, ns / 1e6,
+                            (unsigned long long)n);
+            }
+        }
     }
 
     if (*out == 0) {
