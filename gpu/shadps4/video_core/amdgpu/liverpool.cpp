@@ -395,19 +395,51 @@ void StoreLabel(void* address, u64 value, u32 num_bytes) {
     }
 }
 
+// bbport: BB_FENCE_DELAY_TEST=1 (experiment) holds every 200th EOP fence back 80 ms: if the
+// guest frees label objects after a timeout, late labels corrupt its heap. SacredFire issue #2:
+// BB_EOS_DELAY_TEST does the same for EOS labels, and both take "<ms>[,<every>]" (a hold of ms
+// milliseconds for every <every>th label; "1" is the old 80 ms, 200): a hold longer than a
+// game-side timeout shows whether the game rebuilds a command buffer before its labels are
+// written.
+struct LabelDelayTest {
+    u32 ms = 0, every = 200;
+    std::atomic<u64> count{0};
+    explicit LabelDelayTest(const char* name) {
+        if (const char* env = std::getenv(name); env && env[0]) {
+            if (env[0] == '1' && env[1] == '\0') {
+                ms = 80;
+            } else {
+                char* end = nullptr;
+                ms = u32(std::strtoul(env, &end, 10));
+                if (end && *end == ',') {
+                    every = std::max<u32>(1, u32(std::strtoul(end + 1, nullptr, 10)));
+                }
+            }
+            if (ms) {
+                std::printf("%s: every %uth label held back %u ms (experiment)\n", name, every, ms);
+            }
+        }
+    }
+    void Apply() {
+        if (ms && count.fetch_add(1, std::memory_order_relaxed) % every == every - 1) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        }
+    }
+};
+LabelDelayTest& EopDelayTest() {
+    static LabelDelayTest test{"BB_FENCE_DELAY_TEST"};
+    return test;
+}
+LabelDelayTest& EosDelayTest() {
+    static LabelDelayTest test{"BB_EOS_DELAY_TEST"};
+    return test;
+}
+
 void SignalEop(const PM4CmdEventWriteEop& eop, u64 seq) {
     eop.SignalFence(
         [seq](void* address, u64 data, u32 num_bytes) {
             auto* memory = Core::Memory::Instance();
-            // bbport: BB_FENCE_DELAY_TEST=1 (experiment) holds every 200th fence back 80 ms: if
-            // the guest frees label objects after a timeout, late labels corrupt its heap.
-            static const bool delay_test = [] {
-                const char* env = std::getenv("BB_FENCE_DELAY_TEST");
-                return env && env[0] == '1';
-            }();
-            if (delay_test && seq != 0 && seq % 200 == 0) { // seq: BB_FREE_CHECK=1
-                std::this_thread::sleep_for(std::chrono::milliseconds(80));
-            }
+            EopDelayTest().Apply();
             BbFreeCheck::Check(reinterpret_cast<u64>(address), num_bytes, &data, BbFreeCheck::Eop,
                                seq);
             BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(address));
@@ -556,19 +588,7 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void WriteEosLabel(void* address, u64 value, u32 num_bytes) {
     auto* memory = Core::Memory::Instance();
-    // SacredFire issue #2, BB_EOS_DELAY_TEST=1 (experiment, like BB_FENCE_DELAY_TEST for EOP):
-    // every 200th EOS label is held back 80 ms on the thread that writes it. If the game may
-    // rebuild a command buffer before its labels are written, this makes it happen.
-    static const bool delay_test = [] {
-        const char* env = std::getenv("BB_EOS_DELAY_TEST");
-        return env && env[0] == '1';
-    }();
-    if (delay_test) {
-        static std::atomic<u64> count{0};
-        if (count.fetch_add(1, std::memory_order_relaxed) % 200 == 199) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(80));
-        }
-    }
+    EosDelayTest().Apply(); // BB_EOS_DELAY_TEST (experiment, see LabelDelayTest)
     BbFreeCheck::Check(reinterpret_cast<u64>(address), num_bytes, &value, BbFreeCheck::Eos);
     BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(address));
     BbWriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, BbWriteLog::Fence);
