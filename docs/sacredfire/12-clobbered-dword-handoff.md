@@ -133,6 +133,7 @@ save). Build v0.2-4-g41a3e71 (PGO off, LTO on).
 | 4 | `BB_COPY_PROTECT=1`, empty `MESA_SHADER_CACHE_DIR` | clean 5 min; 693 compiles, 4.0 s (7 ms each, like the morning); 30 stalls, the longest 534 ms |
 | 5 | same | clean 5 min; 248 compiles |
 | 6 | `BB_COPY_PROTECT=1 BB_FREE_CHECK=1 BB_FENCE_DELAY_TEST=1` (every 200th EOP label held 80 ms) | clean 5 min; the free check saw the held fences (80 ms late) and nothing else |
+| 7 | as 6 plus `BB_EOS_DELAY_TEST=1` (every 200th EOS label held 80 ms) | clean 5 min; 496 stalls from the holds, no clobber |
 
 The user pressed through the start screen and loaded races in some of these runs (runs 2, 3, 4 and 6
 loaded Crash Cove or September Spyro), so the race-load trigger of the morning's run 7 was tried
