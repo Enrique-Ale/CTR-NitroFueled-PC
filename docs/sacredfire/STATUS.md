@@ -146,6 +146,14 @@ with the desktop apps closed.
   file, the settings table, the patch compiler, run.sh, the launcher, the README and here.
 - A first start without network no longer aborts (import names fall back to the compiled table).
 
+## AppImage rebuilt (2026-10-11)
+
+- `backport-0.51` merged into main (fast-forward to 33847e1). `dist/SacredFire-x86_64.AppImage`
+  rebuilt from it with the nix-shell build: 429 MB (was 841 MB) after the packaging cuts from
+  bbport 0.51 (RADV and ANV only, no LLVM, stripped game binary, MangoHud 64-bit, GTK4 without
+  GStreamer). Booted with `--appimage-extract-and-run --play` to the intro videos on the bundled
+  RADV. Not tagged: the build reads v0.1-4-g33847e1; tag before publishing a release.
+
 ## Launcher and controllers (2026-10-11, branch backport-0.51)
 
 - Launcher, log page: *Copy* (clipboard) and *Export log…* (a file dialog; `sacredfire-<date>.log`),

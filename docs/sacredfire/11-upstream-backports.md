@@ -128,8 +128,8 @@ Taken after the clean set, each merged by hand into our diverged files:
   all of Mesa, the game binary stripped of debug info, MangoHud without its 32-bit half and
   xdg-utils, libdecor without the GTK 3 plugin, the launcher's GTK4 without GStreamer, printing
   and the indexer. Upstream's FSR 4.1.1 tools, DLSS and online-module files are not packaged.
-  Expected to bring the 841 MB AppImage down to roughly 400 MB; to be measured at the next
-  packaging run (needs the nix-shell build, see packaging/appimage.sh).
+  Measured on 2026-10-11: the AppImage went from 841 to 429 MB (commit 33847e1; the bundled
+  RADV without LLVM boots the game, `radv 26.2.4 (Mesa 26.2.4)` in its log).
 - **build.sh** (upstream issue 124): the FSR-Vulkan submodule is reset and patched again when
   an earlier version's patch is still applied. **run.sh**: `RADV_DEBUG=nohiz` on GCN 3-5 under
   RADV (Tonga to Renoir; `BB_AUTO_NOHIZ=0` keeps it off), found through `bb-gpu-capabilities
