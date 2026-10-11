@@ -119,3 +119,42 @@ vk_rasterizer.cpp, buffer_cache.cpp, texture_cache.cpp.
 
 The decoder, the draw-preparation workers (they take their own copy in `DrawPreparation::Build`)
 and `CheckSubmittedCopy` only read the copy, so the read-only mode has no legitimate faulter.
+
+### Runs with the instrumentation (2026-10-11, evening; logs/issue2-run*.log)
+
+Reproduction command as above, `timeout -s INT 300`, unattended (the license is accepted in the
+save). Build v0.2-4-g41a3e71 (PGO off, LTO on).
+
+| run | extra | result |
+|---|---|---|
+| 1 | | clean 5 min; 30 FPS; 248 compiles, 0.5 s in total |
+| 2 | | clean 5 min; 296 compiles, 0.5 s; 15 stalls, the longest 700 ms |
+| 3 | `BB_COPY_PROTECT=1` | (below) |
+
+What the guest write check established without a clobber:
+
+- **The game keeps its fence labels inside the command buffers it submits.** Every EOS/EOP label
+  write of value 1 (thousands a minute, `hit 149500` after five minutes) lands inside "the buffer
+  being decoded": the game allocates the label from the command buffer itself (a NOP packet's
+  payload, Gnm's `allocateFromCommandBuffer`). The two command buffers alternate between
+  `0x10f6100000` and `0x10f6900000` (8 MiB apart), one per frame, so the game rebuilds a buffer two
+  frames after submitting it. This confirms the run-7 reading: label `0x10f6113890` was the
+  clobbered dword at `+0x13890` of the buffer at `0x10f6100000`.
+- The labels are written by the port 20 to 33 ms after the submit (the game's frame time at 30
+  FPS), up to 80 ms during stalls. The write of 1 to such a label is a write into the submitted
+  command buffer, legal on the hardware (the CP has fetched past it) and harmless here while the
+  game has not reused the buffer. A clobbered header is therefore a label write that arrived after
+  the game rebuilt the buffer: the label's slot became a packet header in the new frame.
+- In the default mode (no honest labels) the GPU thread drains the recording thread and the
+  deferred fences before it signals GPU idle (`Process`, `work_retired`), and the game's next
+  submission waits for that (`WaitGpuIdle`), so a label of frame F should be written before the
+  game builds frame F+2 into the same buffer. Which path lets one through is what a reproduction
+  with the instrumentation will show (`port write into it: EOS fence ... while decoding submission
+  S`).
+
+Why the runs stay clean now: the runs that fired on the morning of 2026-10-11 did 666 to 908
+pipeline compiles costing 3.4 to 8.3 s in total (5 to 9 ms each, 119 stalls, the longest 1633 ms,
+right before the clobber in run 4); the evening runs did 250 to 300 compiles at 2 ms each. The
+port's cache is cleared each time (`user/cache/CUSA13795` is written and removed as expected), so
+the difference is RADV's own on-disk cache (`~/.cache/mesa_shader_cache`), cold in the morning,
+warm now. Run 4 points `MESA_SHADER_CACHE_DIR` at an empty directory to bring the long stalls back.
