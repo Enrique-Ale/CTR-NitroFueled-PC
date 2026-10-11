@@ -96,7 +96,7 @@ patch files go into `patches/` or `BB_PATCHES_DIR`, selected through `patches.js
 
 ## AppImage (Steam Deck)
 
-`packaging/appimage.sh` builds `dist/SacredFire-x86_64.AppImage` (841 MB) with Nix: the
+`packaging/appimage.sh` builds `dist/SacredFire-x86_64.AppImage` (about 430 MB) with Nix: the
 binaries are built in `nix-shell shell.nix` so the bundle can collect their libraries, then
 `nix bundle` packs them with the GTK launcher, Python and Mesa's Vulkan drivers (the header of
 the script has the exact steps). Running it opens the launcher; `--play` starts the game. Data
@@ -104,15 +104,16 @@ lives in `~/.local/share/sacredfire`, launcher settings in `~/.config/sacredfire
 Without a game folder chosen, the launcher shows the Game row as *not chosen* with Play disabled
 until a folder passes the game check.
 
-**Adding the AppImage to Steam** (*Add a Non-Steam Game*) needs no options; the compatibility
-tool does not matter. Steam's overlay is removed before the port's own programs start. Where
+**Adding the AppImage to Steam**: the launcher's *Settings → Steam → Add to Steam* writes the
+shortcut (with `--play`, for the Steam Deck's game mode) while Steam is closed; by hand, *Add a
+Non-Steam Game* needs no options. The compatibility tool does not matter. Steam's overlay is removed before the port's own programs start. Where
 Steam runs games without FUSE, set the launch options to
 
 ```
 TMPDIR=$HOME/.cache APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 %command%
 ```
 
-The AppImage then unpacks itself (~2.8 GB, `~/.cache/appimage_extracted_*`) on the first start
+The AppImage then unpacks itself (~1.1 GB, `~/.cache/appimage_extracted_*`) on the first start
 and reuses that copy; `TMPDIR` keeps that out of a RAM-backed `/tmp`. Add ` --play` after
 `%command%` to skip the launcher. **NVIDIA:** startup discovers the host's 64-bit NVIDIA Vulkan
 ICD and exposes its libraries next to the bundled AMD/Intel drivers (`BB_NVIDIA_LIB_DIR` when
