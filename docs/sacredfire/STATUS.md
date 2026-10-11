@@ -80,6 +80,12 @@ with the desktop apps closed.
   therefore opt-in (`BB_ASYNC_PIPELINES=1`), and the clobber is the next bug to chase
   (11-upstream-backports.md has the run table).
 
+- **Texture with no Vulkan format** (fixed 2026-10-11, branch backport-0.51): in some races the
+  game binds a texture descriptor with data_format 6 and num_format 0 (10_11_11 Unorm), which the
+  format table has no entry for; `SurfaceFormat` asserted and the game stopped with exit code 23
+  (logs/run18.log on 2026-10-09, logs/hang-repro-1-assert.log). Such a descriptor is now bound as
+  a null descriptor, as invalid ones are (vk_rasterizer.cpp `IsBindableFormat`).
+
 - **Fur/hair characters** (fixed 2026-10-09, see 06-fur.md): previously missing (driver select, run 12): bodies drawn with the fur material
   are missing; rigid parts (eyes, teeth, hats, kart) draw. The only GPU errors in the run are
   "image view type Color1D is incompatible with image type Color2D" (4 images) and one

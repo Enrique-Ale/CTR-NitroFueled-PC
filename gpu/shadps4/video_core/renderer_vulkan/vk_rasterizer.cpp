@@ -407,6 +407,26 @@ bool IsKnownFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
     const u32 d = static_cast<u32>(data_fmt), n = static_cast<u32>(num_fmt);
     return d < 256 && n < 256 && tables.first[d] && tables.second[n];
 }
+
+/// SacredFire: a T# whose format pair has no Vulkan format (CTR binds data_format 6 with
+/// num_format 0, 10_11_11 Unorm, in some races) is bound as a null descriptor instead of stopping
+/// the game in SurfaceFormat's assertion (image_info.cpp). IsKnownFormat first: the table lookup
+/// needs valid enum values.
+bool IsBindableFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
+    if (!IsKnownFormat(data_fmt, num_fmt)) {
+        return false;
+    }
+    if (LiverpoolToVK::TrySurfaceFormat(data_fmt, num_fmt) != vk::Format::eUndefined) {
+        return true;
+    }
+    static std::atomic<u32> printed{0};
+    if (printed.fetch_add(1) < 8) {
+        std::printf("GPU: texture with no Vulkan format (data_format %u, num_format %u) bound as "
+                    "a null descriptor\n",
+                    static_cast<u32>(data_fmt), static_cast<u32>(num_fmt));
+    }
+    return false;
+}
 } // namespace
 
 bool Rasterizer::FilterDraw() {
@@ -2003,7 +2023,7 @@ bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
         const auto num_fmt = tsharp.GetNumberFmt();
         if (tsharp.Address() == 0 || data_fmt == AmdGpu::DataFormat::FormatInvalid ||
             !memory->IsValidGpuMapping(tsharp.Address(), 0) ||
-            !IsKnownFormat(data_fmt, num_fmt)) {
+            !IsBindableFormat(data_fmt, num_fmt)) {
             continue; // null descriptor
         }
         const auto& entry =
@@ -2865,7 +2885,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         }
 
         if (!memory->IsValidGpuMapping(tsharp.Address(), 0) ||
-            !IsKnownFormat(data_fmt, num_fmt)) {
+            !IsBindableFormat(data_fmt, num_fmt)) {
             LOG_WARNING(Render_Vulkan,
                         "Rejecting invalid T# address={:#x}, pitch={}, width={}, "
                         "data_format={}, num_format={}",

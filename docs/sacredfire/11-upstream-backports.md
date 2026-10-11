@@ -49,6 +49,15 @@ the general hunks.
   exits); `kill -USR2` dumps only the thread that receives it. The pre-backport build is
   `dist/SacredFire-x86_64.AppImage` (v0.1) for an A/B of the same scenario.
 
+  Two further sessions played by the user on the default build without an outer timeout
+  (`logs/hang-repro*.log`): the first stopped after ~5 minutes on `SurfaceFormat: Unknown
+  data_format=6 and num_format=0` (a texture descriptor with 10_11_11 Unorm, which has no Vulkan
+  format), the same assertion as in `logs/run18.log` from 2026-10-09, before any backport; the
+  second ran 7 minutes to a normal exit with no clobber. The assertion is now avoided: the two
+  texture binding paths in vk_rasterizer.cpp bind a descriptor whose format pair has no Vulkan
+  format as a null descriptor (`IsBindableFormat`, a log line for the first 8), as they already
+  did for invalid ones. Colour-buffer formats still assert.
+
   Both segfaults are the GPU thread in `RefreshGraphicsStages` reading a shader at an address
   whose high register is 1 (`0x110073e6200`, `0x11107768700`: pgm_hi 1, pgm_lo a plausible
   direct-memory address): the clobbered-dword bug of STATUS.md, which until now had only been
