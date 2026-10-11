@@ -78,7 +78,8 @@ with the desktop apps closed.
   segfault reading a shader at an address whose pgm_hi register was 1 (`0x110073e6200`), once
   after three clobbered headers in the same buffer; runs without it stayed clean. The feature is
   therefore opt-in (`BB_ASYNC_PIPELINES=1`), and the clobber is the next bug to chase
-  (11-upstream-backports.md has the run table).
+  (11-upstream-backports.md has the run table; GitHub issue #2 sums up the evidence and the
+  candidate writers).
 
 - **Texture with no Vulkan format** (fixed 2026-10-11, branch backport-0.51): in some races the
   game binds a texture descriptor with data_format 6 and num_format 0 (10_11_11 Unorm), which the
