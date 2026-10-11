@@ -129,7 +129,18 @@ save). Build v0.2-4-g41a3e71 (PGO off, LTO on).
 |---|---|---|
 | 1 | | clean 5 min; 30 FPS; 248 compiles, 0.5 s in total |
 | 2 | | clean 5 min; 296 compiles, 0.5 s; 15 stalls, the longest 700 ms |
-| 3 | `BB_COPY_PROTECT=1` | (below) |
+| 3 | `BB_COPY_PROTECT=1` | clean 5 min; 602 compiles; no fault, so nothing legitimate writes the copies |
+| 4 | `BB_COPY_PROTECT=1`, empty `MESA_SHADER_CACHE_DIR` | clean 5 min; 693 compiles, 4.0 s (7 ms each, like the morning); 30 stalls, the longest 534 ms |
+| 5 | same | clean 5 min; 248 compiles |
+| 6 | `BB_COPY_PROTECT=1 BB_FREE_CHECK=1 BB_FENCE_DELAY_TEST=1` (every 200th EOP label held 80 ms) | clean 5 min; the free check saw the held fences (80 ms late) and nothing else |
+
+The user pressed through the start screen and loaded races in some of these runs (runs 2, 3, 4 and 6
+loaded Crash Cove or September Spyro), so the race-load trigger of the morning's run 7 was tried
+four times without a clobber. The forced-delay runs test the gating directly: if the game could
+rebuild a command buffer before its labels are written, holding labels back makes it happen; 80 ms
+did not. Run 7 holds EOS labels too (`BB_EOS_DELAY_TEST`, commit 99aceb7; both switches then
+took `"<ms>[,<every>]"`), run 8 holds every 300th EOP and every 2000th EOS label for 1.5 s, longer
+than a plausible game-side wait timeout (the morning's clobber followed a 1633 ms stall).
 
 What the guest write check established without a clobber:
 
