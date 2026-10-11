@@ -556,6 +556,19 @@ void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
 
 void WriteEosLabel(void* address, u64 value, u32 num_bytes) {
     auto* memory = Core::Memory::Instance();
+    // SacredFire issue #2, BB_EOS_DELAY_TEST=1 (experiment, like BB_FENCE_DELAY_TEST for EOP):
+    // every 200th EOS label is held back 80 ms on the thread that writes it. If the game may
+    // rebuild a command buffer before its labels are written, this makes it happen.
+    static const bool delay_test = [] {
+        const char* env = std::getenv("BB_EOS_DELAY_TEST");
+        return env && env[0] == '1';
+    }();
+    if (delay_test) {
+        static std::atomic<u64> count{0};
+        if (count.fetch_add(1, std::memory_order_relaxed) % 200 == 199) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        }
+    }
     BbFreeCheck::Check(reinterpret_cast<u64>(address), num_bytes, &value, BbFreeCheck::Eos);
     BbFreeCheck::NoteFenceWriting(reinterpret_cast<u64>(address));
     BbWriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, BbWriteLog::Fence);
