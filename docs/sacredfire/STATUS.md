@@ -80,6 +80,14 @@ with the desktop apps closed.
   therefore opt-in (`BB_ASYNC_PIPELINES=1`), and the clobber is the next bug to chase
   (11-upstream-backports.md has the run table; GitHub issue #2 sums up the evidence and the
   candidate writers).
+  2026-10-11, evening (branch issue-2, 12-clobbered-dword-handoff.md): always-on instrumentation
+  gives three readings per clobber (guest at submit, copy at decode, guest at decode), a ring of
+  the port's guest writes checked against the submitted buffers, and `BB_COPY_PROTECT=1`
+  (read-only copies, a host writer faults). Found: the game keeps its fence labels inside its two
+  alternating command buffers, so a clobber is a label write arriving after the game rebuilt the
+  buffer. Nine instrumented runs (cold driver cache, race loads, 80 ms and 1.5 s forced label
+  holds) stayed clean and no guest event wait timed out: the writer is still not caught; the next
+  clobber in any session leaves the answer in the log (the hand-off note says what to look for).
 
 - **Texture with no Vulkan format** (fixed 2026-10-11, branch backport-0.51): in some races the
   game binds a texture descriptor with data_format 6 and num_format 0 (10_11_11 Unorm), which the

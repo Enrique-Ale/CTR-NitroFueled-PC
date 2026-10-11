@@ -31,6 +31,7 @@ enum Source : std::uint32_t {
     DmaCopy,
     BufferDownload,
     ImageDownload,
+    ConstRam,
 };
 
 /// Dword offset of the first dword that is neither a type-3 packet header nor type-2 padding

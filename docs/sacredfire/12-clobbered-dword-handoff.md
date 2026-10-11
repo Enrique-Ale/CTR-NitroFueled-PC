@@ -134,6 +134,52 @@ save). Build v0.2-4-g41a3e71 (PGO off, LTO on).
 | 5 | same | clean 5 min; 248 compiles |
 | 6 | `BB_COPY_PROTECT=1 BB_FREE_CHECK=1 BB_FENCE_DELAY_TEST=1` (every 200th EOP label held 80 ms) | clean 5 min; the free check saw the held fences (80 ms late) and nothing else |
 | 7 | as 6 plus `BB_EOS_DELAY_TEST=1` (every 200th EOS label held 80 ms) | clean 5 min; 496 stalls from the holds, no clobber |
+| 8 | `BB_COPY_PROTECT=1 BB_FENCE_DELAY_TEST=1500,300 BB_EOS_DELAY_TEST=1500,2000` (1.5 s holds) | clean 5 min; 60 stalls of 1.5 s; **no guest event wait timed out** (new report, commit 16c3e85) |
+| 9 | `BB_COPY_PROTECT=1`, empty Mesa cache | clean 5 min (start screen only) |
+
+### Where this leaves the bug (2026-10-11, end of the session)
+
+- Nine runs with the instrumentation, zero clobbers (the morning: 3 events in 7 runs on the
+  uncommitted tree that became 4a91d4e; the two play sessions after that commit were clean too).
+  Nothing in gpu/ changed between that commit and the instrumentation except 381cb24 (texture
+  format fallback) and 15b0cdd (overlay, saves, controllers), so the difference is timing, not a
+  fix; treat the bug as latent.
+- The game's fence labels live inside its two alternating command buffers, written by the port
+  20 to 80 ms after submit. A clobber is such a write arriving after the game rebuilt the buffer.
+- The port's gating against exactly that (GPU idle only after the recording thread and the
+  deferred fences are done; the game's next submission waits for it) held under every forced
+  delay: 80 ms and 1.5 s holds of EOP and EOS labels produced no clobber and no game-side event
+  wait timed out. So the label that clobbers reaches the buffer by a path these holds do not
+  cover, or the writer is not a label at all (the game itself, or a port write not in the ring).
+- Every port write into guest memory that the ring knows (EOP, EOS, RELEASE_MEM, WRITE_DATA,
+  DMA fill and copy, buffer and image downloads, DUMP_CONST_RAM) landed in "the buffer being
+  decoded" in all nine runs; a write classified "a buffer submitted after the one being decoded,
+  not decoded yet" would be the clobber in the making and has not been seen.
+
+### What to do when it fires again
+
+The instrumentation is always on (branch `issue-2`), so any play session that hits the bug
+leaves the answer in the log. Look for, in this order:
+
+1. `Command buffer check: submission N's dcb already holds a non-packet dword when the game
+   submits it` — case 1 (the guest buffer was bad at submit). Right under it, `port write into
+   it: <source> ... while decoding submission S` names the port write that landed there and how
+   long before; `no remembered port write into it` means the game itself (or a write the ring
+   does not know) put it there.
+2. `Command buffer check: submission N's copy changed between submit and decode start` — case 2,
+   a host-side write into the copy. Reproduce with `BB_COPY_PROTECT=1`: the writer faults with
+   `Clobber trap: ...` and its call chain.
+3. Under every `Bad PM4 packet`: `issue #2: copy now ...; guest dword ... now ...; first
+   non-packet dword of the copy at submit: ..., at decode start: ...` (the three readings).
+4. `Guest write check: ... lands inside submission N's command buffer at +... (a buffer submitted
+   after the one being decoded, not decoded yet ...)` — a late label caught in the act, before
+   the decoder meets it.
+
+Experiments available without a rebuild: `BB_FENCE_DELAY_TEST=<ms>[,<every>]` and
+`BB_EOS_DELAY_TEST=<ms>[,<every>]` (hold labels back), `BB_COPY_PROTECT=1` (read-only copies),
+`MESA_SHADER_CACHE_DIR=<empty dir>` (cold driver cache: 7 ms pipeline compiles, as in the morning
+runs), `BB_FREE_CHECK=1` (late-fence report). Guest event waits that time out are always reported
+(`Guest event wait timed out: queue ...`).
 
 The user pressed through the start screen and loaded races in some of these runs (runs 2, 3, 4 and 6
 loaded Crash Cove or September Spyro), so the race-load trigger of the morning's run 7 was tried

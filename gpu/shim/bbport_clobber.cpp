@@ -35,6 +35,7 @@ const char* SourceName(std::uint32_t source) {
     case DmaCopy: return "DMA copy";
     case BufferDownload: return "buffer download";
     case ImageDownload: return "image download";
+    case ConstRam: return "DUMP_CONST_RAM";
     default: return "?";
     }
 }

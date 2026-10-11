@@ -730,6 +730,12 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
             BbFreeCheck::Check(dump_const->Address<u64>(), dump_const->Size(),
                                cblock.constants_heap.data() + dump_const->Offset(),
                                BbFreeCheck::ConstRam);
+            if (dump_const->Size() >= sizeof(u32)) {
+                u32 first = 0;
+                std::memcpy(&first, cblock.constants_heap.data() + dump_const->Offset(), sizeof(first));
+                BbClobber::NoteWrite(dump_const->Address<u64>(), first, dump_const->Size(),
+                                     BbClobber::ConstRam);
+            }
             memcpy(dump_const->Address<void*>(),
                    cblock.constants_heap.data() + dump_const->Offset(), dump_const->Size());
             // bbport: no write tracking (BB_GUEST_IN_PLACE): the caches hear of it (in order, on the
