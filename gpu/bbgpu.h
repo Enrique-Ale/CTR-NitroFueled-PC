@@ -31,6 +31,9 @@ int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* SacredFire: 1 once after the in-game menu's "Rescan controllers" button (runtime_pad.c restarts
+ * SDL's gamepad subsystem and enumerates devices afresh); cleared by the call. */
+int bbgpu_pad_rescan_take(void);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
 /* Number of symbols registered by the vendored libraries (diagnostics). */

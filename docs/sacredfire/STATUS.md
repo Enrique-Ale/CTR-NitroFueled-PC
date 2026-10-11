@@ -146,6 +146,23 @@ with the desktop apps closed.
   file, the settings table, the patch compiler, run.sh, the launcher, the README and here.
 - A first start without network no longer aborts (import names fall back to the compiled table).
 
+## Launcher and controllers (2026-10-11, branch backport-0.51)
+
+- Launcher, log page: *Copy* (clipboard) and *Export log…* (a file dialog; `sacredfire-<date>.log`),
+  from bbport PR 78, for bug reports.
+- Launcher, settings page: *Steam → Add to Steam* writes a non-Steam shortcut named SacredFire into
+  every Steam user's `userdata/<id>/config/shortcuts.vdf` (launcher/steam_shortcuts.py: the binary
+  VDF read and written in place, Steam's CRC32 app id, an existing entry replaced). The shortcut
+  runs the AppImage (or launcher/bb-launcher.sh from a checkout) with `--play`, so the game starts
+  without the launcher window in the Steam Deck's game mode. Steam rewrites that file when it
+  exits, so the button refuses while Steam runs. tests/test_steam_shortcuts.py.
+- Controllers: the Steam Deck sometimes shows a controller connected after launch only to a fresh
+  enumeration. The in-game menu (Insert / L3+R3, section *Other*) has *Rescan controllers*, which
+  restarts SDL's gamepad subsystem on the next input sample. The runtime also rescans by itself
+  every 5 s while port 1 has no pad at all or a port 2..4 with a controller bound to it lacks it
+  (unbound ports are not looked for); after 6 misses in a row the bound controller counts as
+  disconnected and the rescans stop until the button, a binding change or a connected pad.
+
 ## Before publication (2026-10-10, later)
 
 - `gpu/shim/bbport_gnm_table.inc` and `tools/re/gnm_names.txt` deleted: 500 function offsets

@@ -42,6 +42,7 @@ namespace {
 std::mutex imgui_mutex; // the ImGui context: window thread (input) and present thread
 bool initialized = false;
 std::atomic<bool> menu_open{false};
+std::atomic<bool> pad_rescan_requested{false}; // SacredFire: the menu's "Rescan controllers"
 bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
 float base_scale = 1.0f;
@@ -556,6 +557,13 @@ void Menu() {
 
     ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
     Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
+    // SacredFire: the Steam Deck sometimes shows a controller connected after launch only to a
+    // fresh enumeration; the runtime restarts SDL's gamepad subsystem on the next input sample.
+    if (ImGui::Button(BbSettings::MenuText("Rescan controllers", "Переопознать контроллеры"))) {
+        pad_rescan_requested.store(true, std::memory_order_relaxed);
+    }
+    Hint(BbSettings::MenuText("For a controller connected after the game started and not seen by it.",
+                              "Для контроллера, подключённого после запуска игры и не замеченного ею."));
 
     ImGui::Spacing();
     if (ImGui::Button(BbSettings::MenuText("Close", "Закрыть"))) {
@@ -814,6 +822,10 @@ bool Visible() {
 
 bool MenuOpen() {
     return menu_open;
+}
+
+bool TakePadRescan() {
+    return pad_rescan_requested.exchange(false, std::memory_order_relaxed);
 }
 
 bool CapturesInput() {

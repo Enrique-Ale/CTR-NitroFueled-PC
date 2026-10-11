@@ -17,6 +17,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from bbport_i18n import language, set_language, tr
@@ -30,6 +31,7 @@ from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 PORT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / "scripts"))
 import game_check  # noqa: E402
+import steam_shortcuts  # noqa: E402
 
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
 
@@ -347,6 +349,17 @@ class LauncherWindow(Adw.ApplicationWindow):
                                          UI_LANGUAGES, self.settings["ui_language"])
         dev.add(self.ui_language_row)
         page.add(dev)
+
+        steam = Adw.PreferencesGroup(title=tr("Steam"))
+        exe, _start, _options = steam_shortcuts.launcher_command()
+        steam_row = Adw.ActionRow(title=tr("Add to Steam"),
+                                  subtitle=tr("A non-Steam shortcut that starts the game with these settings (Steam Deck game mode). Close Steam before adding."))
+        steam_row.set_tooltip_text(exe)
+        add_button = Gtk.Button(label=tr("Add"), valign=Gtk.Align.CENTER)
+        add_button.connect("clicked", self.on_add_to_steam)
+        steam_row.add_suffix(add_button)
+        steam.add(steam_row)
+        page.add(steam)
         self.update_user_status()
         return page
 
@@ -449,7 +462,80 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.log_view.set_right_margin(8)
         self.log_scroller = Gtk.ScrolledWindow(vexpand=True, child=self.log_view)
         box.append(self.log_scroller)
+        # bbport 0.5 (PR 78): the log to the clipboard or to a file, for bug reports.
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, margin_top=6,
+                      margin_bottom=6, margin_start=8, margin_end=8)
+        self.export_log_button = Gtk.Button(label=tr("Export log…"))
+        self.export_log_button.connect("clicked", self.on_export_log)
+        bar.append(self.export_log_button)
+        self.copy_log_button = Gtk.Button(label=tr("Copy"))
+        self.copy_log_button.connect("clicked", self.on_copy_log)
+        bar.append(self.copy_log_button)
+        box.append(bar)
+        buffer = self.log_view.get_buffer()
+        buffer.connect("changed", self.on_log_changed)
+        self.on_log_changed(buffer)
         return box
+
+    def on_log_changed(self, buffer):
+        has_text = buffer.get_char_count() > 0
+        self.copy_log_button.set_sensitive(has_text)
+        self.export_log_button.set_sensitive(has_text)
+
+    def log_text(self):
+        buffer = self.log_view.get_buffer()
+        return buffer.get_text(*buffer.get_bounds(), False)
+
+    def on_copy_log(self, _button):
+        self.get_clipboard().set(self.log_text())
+        self.toasts.add_toast(Adw.Toast(title=tr("Log copied to the clipboard")))
+
+    def on_export_log(self, _button):
+        text = self.log_text()
+        dialog = Gtk.FileDialog(title=tr("Export log"))
+        dialog.set_initial_name(f"sacredfire-{time.strftime('%Y%m%d_%H%M%S')}.log")
+
+        def finish(dialog, result):
+            try:
+                chosen = dialog.save_finish(result)
+            except GLib.Error:
+                return  # cancelled
+            try:
+                Path(chosen.get_path()).write_text(text, encoding="utf-8")
+                self.toasts.add_toast(Adw.Toast(title=tr("Log saved to {}").format(chosen.get_path())))
+            except OSError as error:
+                self.toasts.add_toast(Adw.Toast(title=tr("Could not save the log: {}").format(error)))
+        dialog.save(self, None, finish)
+
+    # --- Steam ---------------------------------------------------------------------------
+
+    def on_add_to_steam(self, _button):
+        """A non-Steam shortcut that starts the game directly (--play: no launcher window, so
+        it works in the Steam Deck's game mode). Steam rewrites shortcuts.vdf when it exits, so
+        it has to be closed while the entry is written."""
+        if steam_shortcuts.steam_running():
+            self.toasts.add_toast(Adw.Toast(title=tr("Close Steam first: it overwrites its shortcuts when it exits"),
+                                            timeout=6))
+            return
+        files = steam_shortcuts.shortcut_files()
+        if not files:
+            self.toasts.add_toast(Adw.Toast(title=tr("No Steam user folder found (userdata)"), timeout=6))
+            return
+        exe, start_dir, options = steam_shortcuts.launcher_command()
+        entry = steam_shortcuts.make_entry(exe, start_dir, launch_options=options)
+        added = replaced = 0
+        for path in files:
+            try:
+                if steam_shortcuts.add_shortcut(path, entry):
+                    added += 1
+                else:
+                    replaced += 1
+            except (OSError, ValueError) as error:
+                self.toasts.add_toast(Adw.Toast(title=tr("Could not write {}: {}").format(path, error), timeout=8))
+                return
+        self.toasts.add_toast(Adw.Toast(
+            title=tr("Added to Steam as \"{}\" ({} added, {} updated); start Steam to see it").format(
+                steam_shortcuts.NAME, added, replaced), timeout=8))
 
     def append_log(self, text):
         buffer = self.log_view.get_buffer()

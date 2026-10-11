@@ -74,6 +74,7 @@ static SDL_Gamepad *gamepad;
 #define PORTS 4
 typedef struct { char want[64]; SDL_Gamepad *pad; int opened, present; } Port;
 static Port ports[PORTS]; /* ports[0].want overrides BB_GAMEPAD for port 1 */
+static unsigned pad_rescan_attempts; /* misses in a row looking for a bound controller (current_gamepad) */
 static struct timespec config_mtime; static uint64_t config_checked;
 static void load_ports(void) {
     const char *path=getenv("BB_CONFIG");
@@ -91,6 +92,7 @@ static void load_ports(void) {
     }
     for (int p=0;p<PORTS;++p) {
         if (strcmp(fresh[p],ports[p].want)) {
+            pad_rescan_attempts=0; /* a new binding is looked for afresh */
             snprintf(ports[p].want,sizeof ports[p].want,"%.63s",fresh[p]);
             if (p && ports[p].pad) { SDL_CloseGamepad(ports[p].pad); ports[p].pad=NULL; }
             if (p) printf("Runtime: controller port %d -> %s\n",p+1,fresh[p][0] ? fresh[p] : "(none)");
@@ -307,25 +309,48 @@ static SDL_Gamepad *current_gamepad(void) {
     const uint64_t now=now_us();
     refresh_ports(now);
     const char *want=preferred_gamepad();
-    if (!gamepad || (want && !on_preferred && now-last_scan>1000000)) {
+    /* SacredFire: in a container SDL gets no hot-plug notification (no udev), and the Steam Deck
+     * sometimes shows a controller connected after launch only to a fresh enumeration. While the
+     * chosen gamepad is missing, port 1 has no pad at all or a named port 2..4 is unfulfilled, the
+     * gamepad subsystem is restarted every 5 s, which enumerates devices afresh (open handles are
+     * dropped and reopened by the scans below); the in-game menu's "Rescan controllers" button does
+     * it at once. */
+    static uint64_t last_reinit; static unsigned reinits;
+#define attempts pad_rescan_attempts
+    /* Only ports with a controller bound to them are looked for (ports 2..4 without one are not
+     * in use); port 1 always is, so it is looked for while it has no pad at all. After
+     * PAD_RESCAN_ATTEMPTS misses in a row the bound controller counts as disconnected and the
+     * rescans stop until the button, a binding change or a connected pad starts them again. */
+    enum { PAD_RESCAN_ATTEMPTS=6 };
+    int port_missing=0;
+    for (int p=1;p<PORTS;++p) if (ports[p].want[0] && !ports[p].pad) port_missing=1;
+    const int requested=bbgpu_pad_rescan_take();
+    if (requested) attempts=0;
+    const int rescan_due=now-last_reinit>5000000 && attempts<PAD_RESCAN_ATTEMPTS;
+    if (!gamepad || requested || (port_missing && rescan_due) || (want && !on_preferred && now-last_scan>1000000)) {
         last_scan=now;
         int count=0, pick=-1;
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
         for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want) && !claimed_by_other_port(ids[i],0)) pick=i;
-        /* SacredFire: in a container SDL gets no hot-plug notification (no udev); a controller
-         * connected after start never shows up. While the chosen one is missing, the gamepad
-         * subsystem is restarted every 5 s, which enumerates devices afresh; open handles are
-         * dropped and reopened by the scans below. */
-        static uint64_t last_reinit; static unsigned reinits;
-        if (want && pick<0 && now-last_reinit>5000000) {
+        if (requested || (((want ? pick<0 : count==0) || port_missing) && rescan_due)) { /* the plain scan found nothing usable */
             last_reinit=now;
             SDL_free(ids); ids=NULL;
             if (gamepad) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
             SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
             if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) { sdl_ready=-1; return NULL; }
-            if (reinits++<3) printf("Runtime: chosen gamepad \"%s\" not seen; devices re-enumerated\n",want);
             ids=SDL_GetGamepads(&count);
-            for (int i=0; ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want)) pick=i;
+            if (requested) printf("Runtime: controllers re-enumerated on request: %d found\n",count);
+            else if (reinits++<3) printf("Runtime: %s; devices re-enumerated: %d found\n",want && pick<0 ? "chosen gamepad not seen" : "no gamepad or a port's controller missing",count);
+            for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want)) pick=i;
+            /* Found what was missing: attempts start over; else one more miss, the last one reported. */
+            int still_missing=(want ? pick<0 : count==0);
+            for (int p=1;p<PORTS && !still_missing;++p) if (ports[p].want[0] && !ports[p].pad) {
+                still_missing=1;
+                for (int i=0; ids && i<count; ++i) if (is_preferred(ids[i],ports[p].want)) still_missing=0;
+            }
+            if (!still_missing) attempts=0;
+            else if (++attempts==PAD_RESCAN_ATTEMPTS)
+                printf("Runtime: a bound controller was not found in %d rescans: treated as disconnected (the in-game menu's Rescan controllers tries again)\n",PAD_RESCAN_ATTEMPTS);
         }
         if (pick<0 && !gamepad && ids) for (int i=0;i<count && pick<0;++i) if (!claimed_by_other_port(ids[i],0)) pick=i;
         if (pick>=0 && (!gamepad || SDL_GetGamepadID(gamepad)!=ids[pick])) {
@@ -378,6 +403,7 @@ static SDL_Gamepad *current_gamepad(void) {
     if (now-last_presence>1000000) { last_presence=now; update_port_presence(); }
     return gamepad;
 }
+#undef attempts
 /* Controls: what each PS4 input is bound to. Defaults below; bbport.ini (BB_CONFIG) lines
  * key.<input>=<SDL key names> and pad.<input>=<SDL gamepad button names>, comma-separated,
  * replace an input's binding (empty: unbound). Inputs: the buttons (cross ... right, touchpad =

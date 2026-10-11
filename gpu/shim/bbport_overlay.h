@@ -34,6 +34,8 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();
+/// SacredFire: true once after the menu's "Rescan controllers" button (bbgpu_pad_rescan_take).
+bool TakePadRescan();
 
 /// The settings menu is open: the window shows the system cursor over it.
 bool MenuOpen();
