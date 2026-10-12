@@ -1,0 +1,55 @@
+CTR Nitro-Fueled PC - portable para Windows 10 (1903+) / 11 de 64 bits
+=====================================================================
+Port nativo de Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21).
+El codigo del juego corre directamente en tu CPU y el video va por Vulkan.
+
+REQUISITOS (no incluidos, los pones tu)
+----------------------------------------
+1. Tu dump del juego base (carpeta CUSA13795) y de la actualizacion 1.21
+   (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
+2. GPU con Vulkan 1.3 y sus drivers al dia.
+3. Python 3 (https://www.python.org, marca "Add python.exe to PATH"
+   al instalar). Comprueba con:  py --version
+4. Internet solo el primer arranque (descarga una lista de nombres del
+   motor; sin red tambien arranca, la descarga el siguiente inicio).
+
+PUESTA EN MARCHA (una vez)
+---------------------------
+1. Copia tus carpetas CUSA13795 y CUSA13795-patch junto a este archivo.
+2. Doble clic en "1-Mergear actualizacion.bat".
+   Crea CUSA13795-1.21 con enlaces duros (no ocupa el doble).
+3. Doble clic en "Jugar CTR Nitro-Fueled.bat".
+   El primer arranque tarda (compila shaders; se guarda cache en user\
+   y los siguientes son rapidos).
+
+Si ya tienes CUSA13795-1.21 mergeada, ponla junto al .bat y ve al paso 3.
+Para usar una ruta distinta: set BB_GAME_DIR=D:\ruta\CUSA13795-1.21
+
+CONTROLES
+---------
+Mando Xbox / SDL (recomendado) y teclado al mismo tiempo:
+  WASD = stick izquierdo, flechas = stick derecho, Espacio = X,
+  LShift = circulo, E = cuadrado, Q = triangulo, 1/3 = L1/R1,
+  R/F = L2/R2, Z/C = L3/R3, Enter = Options, IJKL = cruceta.
+Menu del port (parches 60 FPS, sin motion blur, 1080p Pro, limite FPS hasta 240,
+pantalla completa, FPS, idioma): tecla Insert o L3+R3. "Apply and restart" reinicia solo.
+
+ARCHIVOS QUE GENERA
+-------------------
+user\            saves, cache de shaders y bbport.ini (tus ajustes)
+out\            imagen preparada del juego (se regenera sola)
+last_run.log    salida del ultimo arranque (para reportar fallos)
+logs\           solo con diagnostico (BB_SAVE_LOG=1)
+
+PROBLEMAS COMUNES
+-----------------
+- "No eboot.bin in ...": falta CUSA13795-1.21 o BB_GAME_DIR mal.
+- "sacredfire.exe not found": el .bat debe estar junto a bin\.
+- Tirones la primera vez en cada pista: normal, son shaders nuevos.
+- Pantalla negra con sonido: actualiza drivers Vulkan de tu GPU.
+- Pantalla completa / 60 FPS / Pro mode: menu Insert o variables
+  BB_FULLSCREEN=1, BB_NEO=1 (ver README del repo).
+
+Proyecto: https://github.com/GetLostIn/CTR-NitroFueled-PC
+Sin afiliacion con Sony, Activision o Beenox. Necesitas tu propia copia
+del juego. Licencia GPL v2 o posterior (ver repo).

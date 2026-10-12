@@ -577,10 +577,10 @@ void Menu() {
     // SacredFire: performance (both apply at once).
     ImGui::SeparatorText(BbSettings::MenuText("Performance", "Производительность"));
     {
-        static constexpr int limits[] = {0, 30, 60, 72, 90, 120, 144};
+        static constexpr int limits[] = {0, 30, 60, 72, 90, 120, 144, 240};
         const char* names[] = {BbSettings::MenuText("No limit", "Без ограничения"), "30", "60",
                                BbSettings::MenuText("72 (half of 144 Hz)", "72 (половина 144 Гц)"),
-                               "90", "120", "144"};
+                               "90", "120", "144", "240"};
         const int current = s.fps_limit;
         int index = -1;
         for (int i = 0; i < int(std::size(limits)); ++i) {
@@ -601,10 +601,11 @@ void Menu() {
         }
         Hint(BbSettings::MenuText(
             "With the 60 FPS patch the game runs as fast as your PC allows. 60 is the pace it was "
-            "made for; on a 144 Hz screen without G-Sync/FreeSync, 72 divides the refresh evenly. "
-            "Applies at once.",
+            "made for; on a 144 Hz screen without G-Sync/FreeSync, 72 divides the refresh evenly "
+            "(240 does the same on a 240 Hz screen). Applies at once.",
             "С патчем 60 FPS игра идёт так быстро, как позволяет ПК. 60 — темп, для которого она "
-            "сделана; на экране 144 Гц без G-Sync/FreeSync 72 делит частоту ровно. Сразу."));
+            "сделана; на экране 144 Гц без G-Sync/FreeSync 72 делит частоту ровно (240 — то же "
+            "на экране 240 Гц). Сразу."));
         Checkbox(BbSettings::MenuText("Compile shaders in the background (experimental)",
                                       "Компилировать шейдеры в фоне (экспериментально)"),
                  s.async_pipelines);
@@ -613,6 +614,15 @@ void Menu() {
             "frame or two late instead. Shaders seen before load at start either way. Experimental.",
             "Новый шейдер больше не останавливает игру: эффект может появиться на кадр-два позже. "
             "Уже виденные шейдеры загружаются при запуске в любом случае. Экспериментально."));
+    }
+
+    ImGui::SeparatorText(BbSettings::MenuText("Display", "Экран"));
+    {
+        Checkbox(BbSettings::MenuText("Fullscreen", "Полный экран"), s.fullscreen);
+        Hint(BbSettings::MenuText("Exclusive fullscreen on the game's display (BB_DISPLAY). "
+                                  "Applies at once; BB_FULLSCREEN=1 at start.",
+                                  "Эксклюзивный полный экран на дисплее игры (BB_DISPLAY). "
+                                  "Сразу; BB_FULLSCREEN=1 при запуске."));
     }
 
     ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));

@@ -11,6 +11,7 @@
 #include "common/logging/log.h"
 #include "sdl_window.h"
 #include "bbport_overlay.h"
+#include "bbport_settings.h"
 
 namespace Frontend {
 
@@ -72,8 +73,12 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
-    const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    const char* fullscreen_env = std::getenv("BB_FULLSCREEN");
+    // SacredFire: the setting already folds BB_FULLSCREEN in (Load runs before the window is
+    // created); the environment is read again here in case it does not.
+    const bool fullscreen = (fullscreen_env && fullscreen_env[0] == '1') ||
+                            BbSettings::Get().fullscreen.load(std::memory_order_relaxed);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen);
     base_title = title;
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
@@ -239,6 +244,14 @@ void WindowSDL::UpdateTextTitle() {
 }
 
 bool WindowSDL::PollEvents() {
+    // SacredFire: the menu's fullscreen switch applies here, on the window thread.
+    {
+        const bool want = BbSettings::Get().fullscreen.load(std::memory_order_relaxed);
+        const bool have = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (want != have && !SDL_SetWindowFullscreen(window, want)) {
+            LOG_ERROR(Frontend, "Failed to set fullscreen {}: {}", want, SDL_GetError());
+        }
+    }
     {
         std::scoped_lock lock{text_mutex};
         if (text_requested) { // SDL text input must be toggled from the window thread

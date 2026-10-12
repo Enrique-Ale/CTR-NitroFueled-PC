@@ -86,6 +86,9 @@ struct Values {
     /// shader no longer stops the game; a pass drawn every frame may miss a frame or two.
     /// Experimental (STATUS.md, issue #2). Applies at once. BB_ASYNC_PIPELINES overrides it.
     std::atomic<bool> async_pipelines{false};
+    /// SacredFire: exclusive fullscreen on the game's display (BB_DISPLAY). Applies at once;
+    /// BB_FULLSCREEN=1 at start. Saved to bbport.ini by the menu.
+    std::atomic<bool> fullscreen{false};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.

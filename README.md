@@ -130,7 +130,7 @@ The menu entry and the launcher use the game's own icon (`sce_sys/icon0.png`), c
 game folder into your icon theme; the game window shows it too.
 
 **In-game menu** (Insert, or L3+R3 on the pad): game patches, controller ports for split
-screen, FPS counter, menu language. It is saved to `bbport.ini`; patches apply after a restart.
+screen, FPS limit, fullscreen, FPS counter, menu language. It is saved to `bbport.ini`; patches apply after a restart.
 
 **Controllers.** SDL3 gamepads; the launcher's *Controller* page or `BB_GAMEPAD=<GUID or part
 of the name>` picks the one for port 1, and the port switches to whichever pad was used last
