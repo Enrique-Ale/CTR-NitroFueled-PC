@@ -61,7 +61,9 @@ def say(message):
 
 
 def run_python(script, *args, capture=False):
-    command = [sys.executable, str(PORT / script), *map(str, args)]
+    # -X utf8: the embeddable Python of the portable package ignores PYTHONUTF8, and the scripts
+    # print the game's title (with its trademark sign) to a pipe.
+    command = [sys.executable, '-X', 'utf8', str(PORT / script), *map(str, args)]
     result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=None if capture else subprocess.STDOUT, text=True,
                             encoding='utf-8', errors='replace', creationflags=no_console())
@@ -89,7 +91,8 @@ def ini_has(path, line):
 
 def pump(stream):
     for raw in iter(stream.readline, b''):
-        emit(raw.decode('utf-8', errors='replace'))
+        # The game writes CRLF; the log is a text file that adds its own CR.
+        emit(raw.decode('utf-8', errors='replace').replace('\r\n', '\n'))
 
 
 def main():
@@ -136,9 +139,9 @@ def main():
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR to your {TITLE_ID} folder).')
     # The game check compares the executable image with the supported one (CTR NF 1.21).
-    check = subprocess.run([sys.executable, str(PORT / 'scripts' / 'game_check.py'), str(game)],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
-                           creationflags=no_console())
+    check = subprocess.run([sys.executable, '-X', 'utf8', str(PORT / 'scripts' / 'game_check.py'), str(game)],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, encoding='utf-8', errors='replace', creationflags=no_console())
     if check.returncode:
         fail(check.stdout.strip() or 'Game check failed.', 2)
     env['BB_GAME_PROFILE'] = check.stdout.strip() or 'ctr'
