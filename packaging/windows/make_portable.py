@@ -124,8 +124,13 @@ def main():
     shutil.copy2(ROOT / 'patches' / 'CrashTeamRacing.xml', folder / 'patches')
     if (ROOT / 'out' / 'aerolib.inl').is_file():
         shutil.copy2(ROOT / 'out' / 'aerolib.inl', folder / 'out')
-    for text in ('bbport.ini', '1-Mergear actualizacion.bat', 'Jugar CTR Nitro-Fueled.bat', 'LEEME.txt'):
-        write_text(folder / text, (PORTABLE / text).read_text(encoding='utf-8'))
+    # bbport.ini is in .gitignore (it is the player's settings file), so the defaults live in
+    # bbport.default.ini and ship under the real name.
+    for source, target in (('bbport.default.ini', 'bbport.ini'),
+                           ('1-Mergear actualizacion.bat', '1-Mergear actualizacion.bat'),
+                           ('Jugar CTR Nitro-Fueled.bat', 'Jugar CTR Nitro-Fueled.bat'),
+                           ('LEEME.txt', 'LEEME.txt')):
+        write_text(folder / target, (PORTABLE / source).read_text(encoding='utf-8'))
     write_text(folder / 'LICENSE', (ROOT / 'LICENSE').read_text(encoding='utf-8'))
     (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls).encode('utf-8'))
 
