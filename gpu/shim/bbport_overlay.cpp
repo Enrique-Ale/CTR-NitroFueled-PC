@@ -574,6 +574,47 @@ void Menu() {
                                                  "Порты 2-4 входят как Player 2-4, пока подключён их геймпад"));
     }
 
+    // SacredFire: performance (both apply at once).
+    ImGui::SeparatorText(BbSettings::MenuText("Performance", "Производительность"));
+    {
+        static constexpr int limits[] = {0, 30, 60, 72, 90, 120, 144};
+        const char* names[] = {BbSettings::MenuText("No limit", "Без ограничения"), "30", "60",
+                               BbSettings::MenuText("72 (half of 144 Hz)", "72 (половина 144 Гц)"),
+                               "90", "120", "144"};
+        const int current = s.fps_limit;
+        int index = -1;
+        for (int i = 0; i < int(std::size(limits)); ++i) {
+            if (limits[i] == current) {
+                index = i;
+            }
+        }
+        char other[32];
+        std::snprintf(other, sizeof(other), "%d", current);
+        if (ImGui::BeginCombo(BbSettings::MenuText("FPS limit", "Ограничение FPS"),
+                              index >= 0 ? names[index] : other)) {
+            for (int i = 0; i < int(std::size(limits)); ++i) {
+                if (ImGui::Selectable(names[i], i == index)) {
+                    Store(s.fps_limit, limits[i], true);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "With the 60 FPS patch the game runs as fast as your PC allows. 60 is the pace it was "
+            "made for; on a 144 Hz screen without G-Sync/FreeSync, 72 divides the refresh evenly. "
+            "Applies at once.",
+            "С патчем 60 FPS игра идёт так быстро, как позволяет ПК. 60 — темп, для которого она "
+            "сделана; на экране 144 Гц без G-Sync/FreeSync 72 делит частоту ровно. Сразу."));
+        Checkbox(BbSettings::MenuText("Compile shaders in the background (experimental)",
+                                      "Компилировать шейдеры в фоне (экспериментально)"),
+                 s.async_pipelines);
+        Hint(BbSettings::MenuText(
+            "A shader seen for the first time no longer pauses the game: an effect may appear a "
+            "frame or two late instead. Shaders seen before load at start either way. Experimental.",
+            "Новый шейдер больше не останавливает игру: эффект может появиться на кадр-два позже. "
+            "Уже виденные шейдеры загружаются при запуске в любом случае. Экспериментально."));
+    }
+
     ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
     Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
     // SacredFire: the Steam Deck sometimes shows a controller connected after launch only to a

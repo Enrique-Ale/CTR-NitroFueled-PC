@@ -164,6 +164,35 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
             c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
     if (gpu_enabled) bbgpu_dump_guest_writes(info);
+    /* SacredFire: the thread's name and its native call chain from the unwind tables (drivers and
+     * system DLLs keep no frame pointers; this names the call into them). Guest frames have no
+     * unwind data: the walk stops there and the rbp chain below continues. */
+    {
+        typedef HRESULT (WINAPI *GetDescription)(HANDLE,PWSTR *);
+        GetDescription get_description=(GetDescription)(void (*)(void))GetProcAddress(GetModuleHandleA("kernel32.dll"),"GetThreadDescription");
+        PWSTR description=NULL;
+        if (get_description && SUCCEEDED(get_description(GetCurrentThread(),&description)) && description && *description)
+            fprintf(stderr,"  thread name: %ls\n",description);
+        if (description) LocalFree(description);
+        CONTEXT walk=*c;
+        for (int depth=0; depth<32 && walk.Rip; ++depth) {
+            describe_address(where,sizeof(where),(uintptr_t)walk.Rip);
+            fprintf(stderr,"  native #%d %s\n",depth,where);
+            DWORD64 module_base=0;
+            PRUNTIME_FUNCTION function=RtlLookupFunctionEntry(walk.Rip,&module_base,NULL);
+            if (!function) {
+                /* A leaf function, or code without unwind data (guest): only the first frame
+                 * can be stepped over, by its return address on the stack. */
+                if (depth) break;
+                DWORD64 ret=0; SIZE_T got=0;
+                if (!ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) || got!=sizeof(ret)) break;
+                walk.Rip=ret; walk.Rsp+=8;
+                continue;
+            }
+            PVOID handler_data=NULL; DWORD64 establisher=0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER,module_base,walk.Rip,function,&walk,&handler_data,&establisher,NULL);
+        }
+    }
     /* rbp chain (guest and host code keep frame pointers). */
     uintptr_t rbp=(uintptr_t)c->Rbp;
     for (int depth=0; depth<24 && rbp; ++depth) {

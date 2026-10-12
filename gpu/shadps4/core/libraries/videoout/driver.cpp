@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include "common/assert.h"
 #include "bbport_toggles.h"
+#include "bbport_settings.h"
 #include "bbport_heap_sites.h"
 #include "bbport_wait_trace.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
@@ -803,6 +804,24 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
     request_cv.notify_one();
 }
 
+namespace {
+/// SacredFire: a flip slot is kept to well under a millisecond. Windows sleeps in steps of the
+/// timer resolution (1 ms at best, SDL's request): the last stretch is waited out in a yield loop.
+void SleepUntilPrecise(std::chrono::steady_clock::time_point deadline) {
+#ifdef _WIN32
+    constexpr auto margin = std::chrono::microseconds(1500);
+    if (deadline - std::chrono::steady_clock::now() > margin) {
+        std::this_thread::sleep_until(deadline - margin);
+    }
+    while (std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+#else
+    std::this_thread::sleep_until(deadline);
+#endif
+}
+} // namespace
+
 void VideoOutDriver::PresentThread(std::stop_token token) {
     const std::chrono::nanoseconds vblank_period(1000000000 /
                                                  EmulatorSettings.GetVblankFrequency());
@@ -814,12 +833,17 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     // bbport: frame limit (see EmulatorSettings::GetFrameLimit). A request waits in the queue
     // until its slot; slots advance by one period (no drift) but never lag behind by more.
-    const u32 frame_limit = EmulatorSettings.GetFrameLimit();
-    const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
-                                          : std::chrono::nanoseconds(0);
+    // SacredFire: BB_FPS_LIMIT when set, else the in-game menu's limit, read every tick.
+    const char* const limit_env = std::getenv("BB_FPS_LIMIT");
+    const auto current_limit = [limit_env]() -> u32 {
+        if (limit_env && *limit_env) {
+            return EmulatorSettings.GetFrameLimit();
+        }
+        return u32(std::max(0, BbSettings::Get().fps_limit.load(std::memory_order_relaxed)));
+    };
     auto next_flip = std::chrono::steady_clock::now();
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
-                EmulatorSettings.GetVblankFrequency(), frame_limit);
+                EmulatorSettings.GetVblankFrequency(), current_limit());
 
     const auto receive_request = [this] -> Request {
         std::scoped_lock lk{mutex};
@@ -831,12 +855,14 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         return {};
     };
 
-    // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon as
-    // it arrives and its slot allows (no limit: at once), between vblanks, instead of on the
-    // next vblank tick.
-    const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
-
     while (!token.stop_requested()) {
+        const u32 frame_limit = current_limit();
+        const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
+                                              : std::chrono::nanoseconds(0);
+        // bbport: with a frame limit or the uncapped presets a queued flip is presented as soon
+        // as it arrives and its slot allows (no limit: at once), between vblanks, instead of on
+        // the next vblank tick.
+        const bool immediate_flips = frame_limit != 0 || EmulatorSettings.IsUncappedVblank();
         timer.Start();
         const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
 
@@ -909,7 +935,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                 if (next_flip >= tick_deadline) {
                     break;
                 }
-                std::this_thread::sleep_until(next_flip);
+                SleepUntilPrecise(next_flip);
             }
             const auto now = std::chrono::steady_clock::now();
             const auto request = receive_request();

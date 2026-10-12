@@ -33,6 +33,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "bbport_toggles.h"
+#include "bbport_settings.h"
 
 namespace Vulkan {
 
@@ -643,10 +644,10 @@ bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indi
     // in the background hit the clobbered-dword bug (STATUS.md: a dword of a submitted command
     // buffer or a shader address register overwritten with 1) within 3-4 minutes in 2 of 3 cold
     // starts; runs without it did not (docs/sacredfire/11-upstream-backports.md).
-    static const bool enabled = [] {
-        const char* env = std::getenv("BB_ASYNC_PIPELINES");
-        return env && env[0] == '1';
-    }();
+    // SacredFire: BB_ASYNC_PIPELINES when set, else the in-game menu's switch (applies at once).
+    static const char* const env = std::getenv("BB_ASYNC_PIPELINES");
+    const bool enabled = env && *env ? env[0] == '1'
+                                     : BbSettings::Get().async_pipelines.load(std::memory_order_relaxed);
     if (!enabled || !instance.IsVertexInputDynamicState() || !selection.regs) {
         return false;
     }

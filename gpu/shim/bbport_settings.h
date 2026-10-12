@@ -78,6 +78,14 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// SacredFire: frames per second the present thread lets through (0: no limit). The 60 FPS
+    /// patch lets the game run as fast as the machine goes; 60 is the pace it was made for.
+    /// Applies at once. BB_FPS_LIMIT overrides it.
+    std::atomic<int> fps_limit{60};
+    /// SacredFire: graphics pipelines compiled on worker threads (BB_ASYNC_PIPELINES): a new
+    /// shader no longer stops the game; a pass drawn every frame may miss a frame or two.
+    /// Experimental (STATUS.md, issue #2). Applies at once. BB_ASYNC_PIPELINES overrides it.
+    std::atomic<bool> async_pipelines{false};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
