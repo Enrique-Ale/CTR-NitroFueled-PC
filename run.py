@@ -5,8 +5,9 @@ sacredfire.exe.
 
 Same environment variables as run.sh (BB_GAME_DIR, BB_DATA_DIR, BB_USER_DIR, BB_CONFIG, BB_NEO,
 BB_FPS, BB_MODS_*, BB_PATCHES_*, BB_CLEAR_SHADER_CACHE, BB_SAVE_LOG, ...). Extra arguments go to
-sacredfire.exe. The in-game restart runs this script again through BB_RESTART_COMMAND;
-`--after PID` waits for the previous game process to end first (its GPU device and memory).
+sacredfire.exe. The in-game restart ends the game with RESTART_CODE and this script starts it
+again (BB_RESTART_EXIT_CODE); `--after PID` (the older BB_RESTART_COMMAND way) waits for the
+previous process to end first.
 Works from the MSYS2 CLANG64 Python or a python.org Python.
 """
 import ctypes
@@ -21,6 +22,7 @@ import time
 PORT = Path(__file__).resolve().parent
 TITLE_ID = 'CUSA13795'
 APP_VERSION = '01.21'
+RESTART_CODE = 75  # the game asks to be started again (in-game "Apply and restart")
 LOG = None  # last_run.log (or BB_SAVE_LOG's file): everything this launch prints
 
 
@@ -156,20 +158,12 @@ def main():
         # Symbol names for the eboot's host-side imports (shadPS4's aerolib list, fetched once).
         run_python('tools/gen_import_names.py', '--out', out)
         run_python('scripts/content_profile.py', game, '--out', out, '--sku', env.get('BB_CONTENT_SKU', 'full'))
-        run_python('scripts/patches.py', '--patches-dir', env.get('BB_PATCHES_DIR', 'patches'),
-                   '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'),
-                   '--app-version', APP_VERSION, '--title-id', TITLE_ID, '--out', out,
-                   '--settings', config)
-
         env.setdefault('BB_NEO', '0')
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
             shutil.rmtree(user_dir / 'cache' / TITLE_ID, ignore_errors=True)
             say('Shader cache: cleared for this launch (BB_CLEAR_SHADER_CACHE=1)')
-        if ini_has(config, 'patch_60fps=1'):
-            env.setdefault('BB_VBLANK_HZ', '480')
-            say(f'60 FPS patch on: virtual vblank {env["BB_VBLANK_HZ"]} Hz')
         env.setdefault('BB_PREUPLOAD', '1')
         # The PC memory model (dma-buf guest memory) is Linux only: the 0.3 model on Windows.
         env['BB_GUEST_IN_PLACE'] = '0'
@@ -178,7 +172,7 @@ def main():
         env.setdefault('BB_GPU_WRITE_TWINS', '1')
         env.setdefault('BB_GPU_WRITE_TWINS_MAX', '65536')
         fps = env.get('BB_FPS', '30')
-        env.setdefault('BB_VBLANK_HZ', {'uncap': '480', '90': '90'}.get(fps, '60'))
+        user_vblank = env.get('BB_VBLANK_HZ')
 
         version = ''
         for candidate in (probe.parent / 'VERSION', PORT / 'VERSION'):
@@ -189,21 +183,38 @@ def main():
         # The GPU library builds its path table when it loads: the user directory must exist.
         user_dir.mkdir(parents=True, exist_ok=True)
         env['BB_GPU_USER_DIR'] = str(user_dir)
-        restart = [sys.executable, str(Path(__file__).resolve()), '--after', str(os.getpid()), *args]
-        env['BB_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
+        # The in-game "Apply and restart" ends the game with RESTART_CODE; it is started again
+        # here, with the patches chosen in the menu, in the same console and log.
+        env['BB_RESTART_EXIT_CODE'] = str(RESTART_CODE)
+        env.pop('BB_RESTART_COMMAND', None)
         command = [str(probe), str(out / 'boot-linked.bin'), '--import-names', str(out / 'import_names.txt'),
                    '--content-profile', str(out / 'content.bin'), '--patches', str(out / 'patches.bin'),
                    '--app0', str(game), '--user', str(user_dir),
                    '--timeout', env.get('BB_TIMEOUT', '0'), *args]
-        # No stdin: an inherited pipe (Git Bash, MSYS2) cost the game its console output.
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                   stderr=subprocess.STDOUT, creationflags=no_console())
-        reader = threading.Thread(target=pump, args=(process.stdout,), daemon=True)
-        reader.start()
-        code = process.wait()
-        reader.join(timeout=5)
-        say(f'--- the game ended with code {code}')
-        return code
+        while True:
+            run_python('scripts/patches.py', '--patches-dir', env.get('BB_PATCHES_DIR', 'patches'),
+                       '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'),
+                       '--app-version', APP_VERSION, '--title-id', TITLE_ID, '--out', out,
+                       '--settings', config)
+            if user_vblank:
+                env['BB_VBLANK_HZ'] = user_vblank
+            elif ini_has(config, 'patch_60fps=1'):
+                # The game's own limiter paces frames; a 60 Hz vblank would quantize late frames.
+                env['BB_VBLANK_HZ'] = '480'
+                say('60 FPS patch on: virtual vblank 480 Hz')
+            else:
+                env['BB_VBLANK_HZ'] = {'uncap': '480', '90': '90'}.get(fps, '60')
+            # No stdin: an inherited pipe (Git Bash, MSYS2) cost the game its console output.
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                       stderr=subprocess.STDOUT, creationflags=no_console())
+            reader = threading.Thread(target=pump, args=(process.stdout,), daemon=True)
+            reader.start()
+            code = process.wait()
+            reader.join(timeout=5)
+            if code != RESTART_CODE:
+                say(f'--- the game ended with code {code}')
+                return code
+            say(f'--- SacredFire launch {time.strftime("%Y-%m-%d %H:%M:%S")} (restart from the menu)')
     finally:
         if mod_view:
             shutil.rmtree(mod_view, ignore_errors=True)

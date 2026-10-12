@@ -47,8 +47,9 @@ C:\msys64\clang64\bin\python.exe run.py
 ```
 
 From a source tree it puts `C:\msys64\clang64\bin` (or `%MSYS2_ROOT%\clang64\bin`) on `PATH`
-for the DLLs. The in-game menu (Insert, or L3+R3) works as on Linux; "restart" from it starts
-`run.py` again through `BB_RESTART_COMMAND` and the new launch waits for the old process.
+for the DLLs. The in-game menu (Insert, or L3+R3) works as on Linux; "Apply and restart" ends
+the game with exit code 75 (`BB_RESTART_EXIT_CODE`) and `run.py` starts it again with the new
+patches, in the same console. Every launch is logged to `last_run.log`.
 Saves, the shader cache and `bbport.ini` go to `user/` and the repository folder (`BB_DATA_DIR`
 moves them).
 
