@@ -41,6 +41,8 @@ full play-through has not been verified, and the Steam Deck (RADV) is the only t
 - Linux x86-64 with a Vulkan 1.3 GPU. Tested: Steam Deck (AMD Van Gogh, Mesa RADV). Geometry
   shaders are required (fur), so macOS/MoltenVK is out; see
   [docs/sacredfire/10-other-platforms.md](docs/sacredfire/10-other-platforms.md).
+- Or Windows 10 (1903+)/11 64-bit with a Vulkan 1.3 GPU, built with MSYS2 CLANG64: see
+  [packaging/windows/README.md](packaging/windows/README.md). Tested: Windows 11, NVIDIA RTX 3070.
 - Your decrypted dump of CUSA13795 with the 1.21 update merged in: copy the dumped update over
   the base game, replacing files (eboot.bin and sce_sys too). The launcher and `run.sh` check
   the executable image and say what is missing (`BB_SKIP_GAME_CHECK=1` skips the check).
@@ -167,7 +169,9 @@ can find the cause. **No game files** in issues or pull requests. See
 - Races with the 60 FPS patch reach 37–45 FPS on the Steam Deck: the port's GPU command thread
   is the limit at ~1400 draws per frame ([docs/sacredfire/08-patches.md](docs/sacredfire/08-patches.md)).
 - Online features are stubbed; the game runs offline.
-- Windows and macOS are not supported ([docs/sacredfire/10-other-platforms.md](docs/sacredfire/10-other-platforms.md)).
+- Windows: native build, from source only for now, without the GTK launcher and without the
+  PC memory model ([packaging/windows/README.md](packaging/windows/README.md)).
+- macOS is not supported ([docs/sacredfire/10-other-platforms.md](docs/sacredfire/10-other-platforms.md)).
 
 ## History
 

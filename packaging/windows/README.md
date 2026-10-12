@@ -1,13 +1,15 @@
-# bbport on Windows
+# SacredFire on Windows
 
-The port builds and runs natively on 64-bit Windows 10 (1903+) / 11 with the same sources as
-on Linux. Players: see `README-Windows.txt` (it ships in the package).
+SacredFire builds and runs natively on 64-bit Windows 10 (1903+) and 11 with the MSYS2 CLANG64
+toolchain, from the same sources as the Linux build. The Windows layer (loader, memory, TLS,
+exceptions, files, timers) comes from Supermedo's Windows port of bbport
+([Supermedo/bloodborne_pc](https://github.com/Supermedo/bloodborne_pc), branch `windows`),
+merged into SacredFire. Tested on Windows 11 24H2 with an NVIDIA RTX 3070.
 
 ## Build
 
-Install [MSYS2](https://www.msys2.org) (`winget install MSYS2.MSYS2`), open the
-**MSYS2 CLANG64** shell and install the toolchain and libraries (the counterpart of
-`shell.nix`):
+Install [MSYS2](https://www.msys2.org) into `C:\msys64`, open the **MSYS2 CLANG64** shell, run
+`pacman -Syu` (twice if it closes the window) and install the toolchain and libraries:
 
 ```bash
 pacman -S --needed git patch \
@@ -18,52 +20,52 @@ pacman -S --needed git patch \
 ```
 
 magic_enum, miniz and xbyak (not packaged by MSYS2) are submodules under `gpu/third_party/`.
-Then, in the repository:
+Then, in the repository (CLANG64 shell):
 
 ```bash
 git submodule update --init --recursive
-bash build.sh                      # out/bb-probe.exe, out/bb-gpu-capabilities.exe
-BB_GAME_DIR=F:/path/to/CUSA03173 python run.py
-python launcher/bbport_launcher_win.py
-bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.exe + DLLs
+bash build.sh                      # out/sacredfire.exe, out/bb-gpu-capabilities.exe
 ```
 
-`run.py` is the Windows `run.sh` (same variables; works from a plain Windows Python too).
-The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
-python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
-scripts (`--script`) and the game without the window (`--play`): players need no Python.
-`Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
-`Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
-game directly with the saved settings.
-`patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
-`run.py` then runs other versions at 30 FPS with live resolution changes.
-From a source tree it adds `C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.
-`bash tools/fetch_fsr4_assets.sh` works in the CLANG64 shell as on Linux.
+## Game files
 
-The launcher texts are written in English with the Russian beside them; the other languages
-are in `launcher/bbport_lang.py` (one list per language in the order of `KEYS`; a missing or
-empty text falls back to English). The icon (`launcher/bloodborne.ico`/`.png`) is drawn by
-`packaging/windows/make_icon.py` and built into `Bloodborne.exe`, `bb-probe.exe` (the game
-window) and `bb-gpu-capabilities.exe`.
+As on Linux: your own dump of CUSA13795 with the 1.21 update merged in. With the base game and
+the update dumped to two folders, `tools/merge_update.py` makes the merged folder out of hard
+links (no copy, the dumps stay untouched; same drive):
+
+```bash
+python tools/merge_update.py <path>/CUSA13795 <path>/CUSA13795-patch <path>/CUSA13795-1.21
+```
+
+## Run
+
+`run.py` is the Windows `run.sh` (same variables; MSYS2's Python or a python.org Python):
+
+```bat
+set BB_GAME_DIR=C:\Games\CUSA13795-1.21
+C:\msys64\clang64\bin\python.exe run.py
+```
+
+From a source tree it puts `C:\msys64\clang64\bin` (or `%MSYS2_ROOT%\clang64\bin`) on `PATH`
+for the DLLs. The in-game menu (Insert, or L3+R3) works as on Linux; "restart" from it starts
+`run.py` again through `BB_RESTART_COMMAND` and the new launch waits for the old process.
+Saves, the shader cache and `bbport.ini` go to `user/` and the repository folder (`BB_DATA_DIR`
+moves them).
 
 ## What is different from Linux
 
 | Linux | Windows |
 |---|---|
-| `mov rax, fs:[0]` rewritten to `gs:[0]`, GS base set with `arch_prctl` | GS is the TEB and cannot move. The loader rewrites the displacement to `gs:[0x1480 + 8*slot]` (the TEB's `TlsSlots[slot]`, same 9-byte instruction) and each guest thread keeps its TCB in that TLS slot. The slot is claimed first thing in `main` (Vulkan drivers take many). |
-| One memfd for direct + flexible memory, `mmap(MAP_FIXED)` views | A pagefile-backed section; the PS4 range 64 GiB–1 TiB is reserved as one placeholder and views replace placeholders (`VirtualAlloc2`/`MapViewOfFile3`, as in shadPS4). Partial unmaps split views and restore page protections (GPU tracking). |
-| `-no-pie`, heap below 1 TiB | `--disable-high-entropy-va`: heaps and thread stacks stay low and out of the PS4 range. |
-| SIGSEGV handler, `sigsetjmp` recovery | Vectored exception handler; `bb_setjmp`/`bb_longjmp` (`src/compat_win.c`) restore all Win64 callee-saved registers without SEH unwinding (guest frames have no unwind data; clang's `__builtin_longjmp` restores a wrong frame pointer on Win64). |
-| Guest thread stacks from `runtime_low_map` | Windows allocates them, fully committed (`pthread_attr_setstacksize`): guest code has no stack probes and would skip the guard page. The main thread stack is 16 MiB committed. |
-| glibc `nanosleep`, monotonic condition variables | High-resolution waitable timers (`compat_sleep_ns`; winpthreads' sleep rounds to 15.6 ms); semaphore deadlines use `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
-| `libbbgpu.so` | `libbbgpu.a`, linked into `bb-probe.exe` by CMake (`gpu/CMakeLists.txt`), with a manifest for UTF-8 paths and long paths. |
-| `execlp bash run.sh` (in-game restart) | `run.py` puts its command line in `BB_RESTART_COMMAND`; the new launch waits for the old process (`--after PID`). The launcher keeps the game in a job object. |
-| Mod overlay with symlinks | Symlinks when allowed (Developer Mode), else junctions for folders and hard links for files. |
+| `fs:` loads rewritten to `gs:[0]`, GS base set with `arch_prctl` | GS is the TEB: the loader rewrites them to `gs:[0x1480 + 8*slot]` (a TEB TLS slot, claimed first thing in `main`). |
+| One memfd, `mmap(MAP_FIXED)` views | A pagefile-backed section; the PS4 range is reserved as a placeholder that views replace (`VirtualAlloc2`/`MapViewOfFile3`, as in shadPS4). |
+| SIGSEGV handler, `sigsetjmp` recovery | Vectored exception handler; `bb_setjmp`/`bb_longjmp` (`src/compat_win.c`). |
+| glibc sleeps, `CLOCK_MONOTONIC` condition variables | High-resolution waitable timers; semaphore and event flag deadlines on `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
+| `libbbgpu.so` | A static `libbbgpu.a` linked into `sacredfire.exe`, with a manifest for UTF-8 and long paths. |
+| `run.sh`, GTK launcher | `run.py`; no launcher window yet (the in-game menu has the game's settings). |
+| Save files replaced with `rename` | `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`; all files opened in binary mode. |
 
-Diagnostics added on the way: `BB_FRAME_DUMP_TRIGGER=<file>` writes the guest display buffer
-and the presented image of the next frame to `BB_DUMP_DIR` (raw 32-bit pixels), which also
-works for menus and movies.
-
-Not ported: the watchdog/`--timeout` thread dumps (Linux signals), userfaultfd tracking
-(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher (`launcher/bbport_launcher_win.py`, Tkinter, replaces it), and
-the `tests/` programs (several use Linux-only APIs).
+Not available on Windows: the PC memory model (`BB_PC_MODEL`/`BB_GUEST_IN_PLACE`, dma-buf guest
+memory), userfaultfd tracking, the watchdog/`--timeout` thread dumps, `BB_SAMPLE_THREAD`,
+`BB_FREE_CHECK`, `BB_WAIT_TRACE`, `BB_COPY_PROTECT`, MangoHud, PGO, the AppImage and the
+`tests/` programs. These are Linux diagnostics or Linux-only mechanisms; the game itself does not
+need them.

@@ -1,5 +1,9 @@
 # Windows and macOS: what a port would need (notes, 2026-10-09)
 
+> 2026-10-12: Windows now builds and runs natively, with the Windows layer of Supermedo's bbport
+> port merged in; see [packaging/windows/README.md](../../packaging/windows/README.md). The notes
+> below are the analysis from before.
+
 SacredFire inherits bbport's design: the game's x86-64 code runs natively, a small C runtime
 (src/) stands in for the PS4 system libraries, and the GPU library (gpu/) translates the PS4
 command stream to Vulkan. Nothing in that design is Linux-only in principle, but the
