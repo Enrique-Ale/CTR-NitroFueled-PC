@@ -108,6 +108,10 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     env.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
     config = env['BB_CONFIG']
+    # A portable package ships bbport.default.ini, so a new version unzipped over an old one keeps
+    # the player's bbport.ini.
+    if not Path(config).exists() and (PORT / 'bbport.default.ini').is_file():
+        shutil.copyfile(PORT / 'bbport.default.ini', config)
 
     probe = Path(env['BB_PROBE']) if env.get('BB_PROBE') else find_executable('sacredfire.exe')
     if not probe or not probe.is_file():

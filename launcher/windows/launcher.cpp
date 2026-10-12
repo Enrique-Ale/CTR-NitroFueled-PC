@@ -2092,6 +2092,10 @@ void LoadState() {
         }
     }
     a.python = FindPython(a.root);
+    // The portable package ships bbport.default.ini (an update unzipped over it keeps bbport.ini).
+    if (!fs::exists(GameIni(), ec) && fs::is_regular_file(a.root / L"bbport.default.ini", ec)) {
+        fs::copy_file(a.root / L"bbport.default.ini", GameIni(), ec);
+    }
     a.launcher.Load(LauncherIni());
     a.game.Load(GameIni());
     const std::string lang = a.launcher.Get("ui_language");

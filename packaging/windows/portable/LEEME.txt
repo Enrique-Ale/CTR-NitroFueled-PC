@@ -43,7 +43,10 @@ Por defecto arranca en ventana y a 60 FPS; la pantalla completa y el limite de F
 ARCHIVOS QUE GENERA
 -------------------
 user\           partidas guardadas y cache de shaders
-bbport.ini      ajustes del juego (los mismos que el menu Insert)
+bbport.ini      ajustes del juego (los mismos que el menu Insert); se crea
+                desde bbport.default.ini la primera vez
+ACTUALIZAR: descomprime la version nueva encima de esta carpeta; tus
+ajustes, partidas, DLC y la carpeta del juego se conservan.
 launcher.ini    ajustes del launcher (carpetas del juego, idioma...)
 dlc\            tus DLC (.pkg), si los anades desde el launcher
 backups\        copias de seguridad de las partidas
