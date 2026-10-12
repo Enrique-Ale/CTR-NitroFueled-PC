@@ -16,6 +16,9 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
+#include <ctime>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -412,6 +415,32 @@ constexpr Choice kPresentModes[] = {
 };
 constexpr int kFpsLimits[] = {0, 30, 60, 72, 90, 120, 144, 240};
 
+struct SaveParam {  // OrbisSaveDataParam
+    char title[128], subtitle[128], detail[1024];
+    uint32_t user_param;
+    int32_t pad;
+    int64_t mtime;
+    uint8_t reserved[32];
+};
+static_assert(sizeof(SaveParam) == 1328, "OrbisSaveDataParam layout");
+
+struct SaveSlot {
+    std::string dir, title, subtitle, detail, modified;
+    std::uintmax_t bytes = 0;
+};
+
+struct Backup {
+    fs::path path;
+    std::string name, modified;
+    std::uintmax_t bytes = 0;
+};
+
+struct PatchInfo {
+    std::string key, name, author, note, version;
+    bool default_on = false;
+    const char* ini_key = nullptr;
+};
+
 enum class Job { None, Merge, Check, Play };
 
 struct App {
@@ -455,6 +484,16 @@ struct App {
     bool want_close = false;
     bool confirm_clear_cache = false;
     std::string notice;
+
+    // Patches tab.
+    std::vector<PatchInfo> patches;
+    std::vector<std::string> patch_enabled, patch_disabled;
+    // Saves tab.
+    std::vector<SaveSlot> saves;
+    std::vector<Backup> backups;
+    bool saves_dirty = true;
+    fs::path pending_path;
+    int pending_action = 0, confirm_action = 0;  // 1 restore, 2 delete a backup
 };
 
 App g_app;
@@ -695,6 +734,7 @@ void PollJobs() {
         a.game_running = false;
         a.show_exit = true;
         a.game.Load(GameIni());  // the in-game menu may have changed settings
+        a.saves_dirty = true;
         ShowWindow(a.hwnd, SW_RESTORE);
         SetForegroundWindow(a.hwnd);
     }
@@ -763,6 +803,336 @@ void ChooseFolder(fs::path& slot, FolderInfo& info, const wchar_t* title) {
         break;
     }
     SaveLauncher();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Saves: <port>\user\savedata\<user>\CUSA13795\<dir> holds the game's files and <dir>.sce_sys its
+// param.bin (title, subtitle, detail) and icon0.png, as src/runtime_savedata.c keeps them.
+
+
+
+
+
+
+std::string FileTimeText(const fs::path& p) {
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &data)) return {};
+    FILETIME local;
+    SYSTEMTIME st;
+    FileTimeToLocalFileTime(&data.ftLastWriteTime, &local);
+    FileTimeToSystemTime(&local, &st);
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%04u-%02u-%02u %02u:%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+    return buf;
+}
+
+std::string Stamp() {
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char buf[64];
+    std::snprintf(buf, sizeof buf, "%04u%02u%02u-%02u%02u%02u", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    return buf;
+}
+
+std::string Fixed(const char* s, size_t n) { return std::string(s, strnlen(s, n)); }
+
+std::string FormatSize(std::uintmax_t bytes) {
+    char buf[64];
+    if (bytes >= (1ull << 20)) std::snprintf(buf, sizeof buf, "%.1f MB", double(bytes) / double(1ull << 20));
+    else std::snprintf(buf, sizeof buf, "%.0f KB", double(bytes) / 1024.0);
+    return buf;
+}
+
+fs::path SaveRoot() {
+    const fs::path base = g_app.root / L"user" / L"savedata";
+    std::error_code ec;
+    for (fs::directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (fs::is_directory(it->path() / L"CUSA13795", e2)) return it->path() / L"CUSA13795";
+    }
+    return base / L"1" / L"CUSA13795";
+}
+
+fs::path BackupRoot() { return g_app.root / L"backups"; }
+
+bool IsMetaName(const std::wstring& name) {
+    auto ends = [&](const wchar_t* suffix) {
+        const size_t n = wcslen(suffix);
+        return name.size() > n && name.compare(name.size() - n, n, suffix) == 0;
+    };
+    return ends(L".sce_sys") || ends(L".memory");
+}
+
+std::vector<SaveSlot> ListSaves() {
+    std::vector<SaveSlot> slots;
+    const fs::path root = SaveRoot();
+    std::error_code ec;
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        if (!it->is_directory(e2) || IsMetaName(it->path().filename().wstring())) continue;
+        SaveSlot s;
+        s.dir = PathText(it->path().filename());
+        s.bytes = FolderBytes(it->path());
+        fs::path meta = it->path();
+        meta += L".sce_sys";
+        const std::string raw = ReadText(meta / L"param.bin");
+        if (raw.size() >= sizeof(SaveParam)) {
+            SaveParam p;
+            std::memcpy(&p, raw.data(), sizeof p);
+            s.title = Fixed(p.title, sizeof p.title);
+            s.subtitle = Fixed(p.subtitle, sizeof p.subtitle);
+            s.detail = Fixed(p.detail, sizeof p.detail);
+        }
+        s.modified = FileTimeText(it->path());
+        for (fs::recursive_directory_iterator f(it->path(), e2), fend; !e2 && f != fend; f.increment(e2)) {
+            std::error_code e3;
+            if (f->is_regular_file(e3)) {
+                const std::string t = FileTimeText(f->path());
+                if (t > s.modified) s.modified = t;
+            }
+        }
+        slots.push_back(std::move(s));
+    }
+    std::sort(slots.begin(), slots.end(), [](const SaveSlot& a, const SaveSlot& b) { return a.dir < b.dir; });
+    return slots;
+}
+
+std::vector<Backup> ListBackups() {
+    std::vector<Backup> list;
+    std::error_code ec;
+    for (fs::directory_iterator it(BackupRoot(), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        const std::string name = PathText(it->path().filename());
+        if (!it->is_directory(e2) || name.rfind("saves-", 0) != 0) continue;
+        list.push_back({it->path(), name, FileTimeText(it->path()), FolderBytes(it->path())});
+    }
+    std::sort(list.begin(), list.end(), [](const Backup& a, const Backup& b) { return a.name > b.name; });
+    return list;
+}
+
+bool HasSaves() {
+    std::error_code ec;
+    return fs::is_directory(SaveRoot(), ec) && !fs::is_empty(SaveRoot(), ec);
+}
+
+std::string CopyTree(const fs::path& from, const fs::path& to) {
+    std::error_code ec;
+    fs::create_directories(to, ec);
+    fs::copy(from, to, fs::copy_options::recursive | fs::copy_options::overwrite_existing, ec);
+    return ec ? PathText(from) + " -> " + PathText(to) + ": " + ec.message() : std::string();
+}
+
+/// A copy of all saves in backups\saves-<date>[-label]; empty error when there is nothing to copy.
+std::string BackupSaves(const char* label, fs::path* made = nullptr) {
+    if (!HasSaves()) return {};
+    fs::path target = BackupRoot() / Widen("saves-" + Stamp() + (label ? std::string("-") + label : ""));
+    const std::string error = CopyTree(SaveRoot(), target);
+    if (error.empty() && made) *made = target;
+    return error;
+}
+
+std::string RestoreBackup(const fs::path& backup) {
+    std::string error = BackupSaves("auto");
+    if (!error.empty()) return error;
+    std::error_code ec;
+    fs::remove_all(SaveRoot(), ec);
+    if (ec) return PathText(SaveRoot()) + ": " + ec.message();
+    return CopyTree(backup, SaveRoot());
+}
+
+/// A save folder from elsewhere: this launcher's backup or another PC's CUSA13795 folder (copied
+/// as it is), or a decrypted PS4 save (Apollo Save Tool, Save Wizard: its files plus
+/// sce_sys\param.sfo), converted to the runtime's layout.
+std::string ImportSaves(const fs::path& from) {
+    std::error_code ec;
+    const fs::path sfo_path = from / L"sce_sys" / L"param.sfo";
+    if (fs::is_regular_file(sfo_path, ec)) {
+        const auto sfo = ReadSfo(sfo_path);
+        auto get = [&](const char* k) {
+            const auto it = sfo.find(k);
+            return it == sfo.end() ? std::string() : it->second;
+        };
+        std::string dir = get("SAVEDATA_DIRECTORY");
+        if (dir.empty() || dir.size() >= 32 || dir.find_first_of("\\/:") != std::string::npos) {
+            return T("param.sfo no dice en qué ranura va la partida (SAVEDATA_DIRECTORY).",
+                     "param.sfo does not name the save slot (SAVEDATA_DIRECTORY).");
+        }
+        std::string error = BackupSaves("antes-de-importar");
+        if (!error.empty()) return error;
+        const fs::path target = SaveRoot() / Widen(dir);
+        fs::path meta = target;
+        meta += L".sce_sys";
+        fs::remove_all(target, ec);
+        fs::create_directories(target, ec);
+        fs::create_directories(meta, ec);
+        for (fs::directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+            if (it->path().filename() == L"sce_sys") continue;
+            std::error_code e2;
+            fs::copy(it->path(), target / it->path().filename(),
+                     fs::copy_options::recursive | fs::copy_options::overwrite_existing, e2);
+            if (e2) return PathText(it->path()) + ": " + e2.message();
+        }
+        SaveParam p{};
+        std::snprintf(p.title, sizeof p.title, "%s", get("MAINTITLE").c_str());
+        std::snprintf(p.subtitle, sizeof p.subtitle, "%s", get("SUBTITLE").c_str());
+        std::snprintf(p.detail, sizeof p.detail, "%s", get("DETAIL").c_str());
+        p.mtime = int64_t(time(nullptr));
+        if (!WriteTextAtomic(meta / L"param.bin", std::string(reinterpret_cast<const char*>(&p), sizeof p))) {
+            return T("No se pudo escribir param.bin.", "Could not write param.bin.");
+        }
+        fs::copy_file(from / L"sce_sys" / L"icon0.png", meta / L"icon0.png", fs::copy_options::overwrite_existing, ec);
+        return {};
+    }
+    // The runtime's layout: <dir> next to <dir>.sce_sys.
+    bool ours = false;
+    for (fs::directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        fs::path meta = it->path();
+        meta += L".sce_sys";
+        std::error_code e2;
+        if (!IsMetaName(it->path().filename().wstring()) && fs::is_directory(meta, e2)) ours = true;
+    }
+    if (!ours) {
+        return T("No reconozco esa carpeta: elige una copia de seguridad, la carpeta CUSA13795 de las partidas de "
+                 "otro PC o una partida de PS4 descifrada (con sce_sys\\param.sfo).",
+                 "This folder is not recognized: choose a backup, the CUSA13795 saves folder from another PC or a "
+                 "decrypted PS4 save (with sce_sys\\param.sfo).");
+    }
+    std::string error = BackupSaves("antes-de-importar");
+    if (!error.empty()) return error;
+    return CopyTree(from, SaveRoot());
+}
+
+// ---------------------------------------------------------------------------------------------
+// Patches: every eboot patch for CUSA13795 01.21 in patches\*.xml (shadPS4/GoldHEN XML format).
+// The three community patches keep their bbport.ini keys (shared with the in-game menu); others
+// are switched in patches.json ({"enabled": [...], "disabled": [...]}), as scripts/patches.py reads.
+
+
+
+constexpr std::pair<const char*, const char*> kIniPatches[] = {
+    {"CrashTeamRacing.xml/60 FPS Unlock", "patch_60fps"},
+    {"CrashTeamRacing.xml/Disable Motion Blur", "patch_no_motion_blur"},
+    {"CrashTeamRacing.xml/Resolution Patch (1080p for PS4 Pro)", "patch_pro_1080p"},
+};
+
+std::string XmlUnescape(std::string s) {
+    const std::pair<const char*, const char*> entities[] = {
+        {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}, {"&amp;", "&"}};
+    for (const auto& [from, to] : entities) {
+        for (size_t at = 0; (at = s.find(from, at)) != std::string::npos; at += std::strlen(to))
+            s.replace(at, std::strlen(from), to);
+    }
+    return s;
+}
+
+std::map<std::string, std::string> XmlAttributes(const std::string& tag) {
+    std::map<std::string, std::string> out;
+    size_t i = 0;
+    while (i < tag.size()) {
+        const size_t eq = tag.find('=', i);
+        if (eq == std::string::npos) break;
+        size_t name_end = eq;
+        while (name_end > i && (tag[name_end - 1] == ' ' || tag[name_end - 1] == '\n' || tag[name_end - 1] == '\r' || tag[name_end - 1] == '\t')) --name_end;
+        size_t name_start = name_end;
+        while (name_start > i && !std::isspace(static_cast<unsigned char>(tag[name_start - 1])) && tag[name_start - 1] != '<') --name_start;
+        size_t q = eq + 1;
+        while (q < tag.size() && std::isspace(static_cast<unsigned char>(tag[q]))) ++q;
+        if (q >= tag.size() || (tag[q] != '"' && tag[q] != '\'')) break;
+        const char quote = tag[q];
+        const size_t close = tag.find(quote, q + 1);
+        if (close == std::string::npos) break;
+        out[tag.substr(name_start, name_end - name_start)] = XmlUnescape(tag.substr(q + 1, close - q - 1));
+        i = close + 1;
+    }
+    return out;
+}
+
+std::vector<PatchInfo> LoadPatches() {
+    std::vector<PatchInfo> list;
+    std::error_code ec;
+    std::vector<fs::path> files;
+    for (fs::directory_iterator it(g_app.root / L"patches", ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() == L".xml") files.push_back(it->path());
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) {
+        const std::string xml = ReadText(file);
+        // Files naming other games are skipped; a file without <ID> applies to any.
+        bool any_id = false, ours = false;
+        for (size_t at = 0; (at = xml.find("<ID>", at)) != std::string::npos; at += 4) {
+            const size_t close = xml.find("</ID>", at);
+            if (close == std::string::npos) break;
+            any_id = true;
+            if (Trim(xml.substr(at + 4, close - at - 4)) == kTitleId) ours = true;
+        }
+        if (any_id && !ours) continue;
+        for (size_t at = 0; (at = xml.find("<Metadata", at)) != std::string::npos; ++at) {
+            const size_t close = xml.find('>', at);
+            if (close == std::string::npos) break;
+            const auto attr = XmlAttributes(xml.substr(at + 9, close - at - 9));
+            auto get = [&](const char* k) {
+                const auto it = attr.find(k);
+                return it == attr.end() ? std::string() : it->second;
+            };
+            const std::string elf = get("AppElf");
+            if (get("AppVer") != kUpdateVersion || !(elf.empty() || elf == "eboot.bin")) continue;
+            PatchInfo p;
+            p.name = get("Name");
+            p.key = PathText(file.filename()) + "/" + p.name;
+            p.author = get("Author");
+            p.note = get("Note");
+            p.version = get("PatchVer");
+            std::string on = get("isEnabled");
+            std::transform(on.begin(), on.end(), on.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+            p.default_on = on == "true";
+            for (const auto& [key, ini] : kIniPatches)
+                if (p.key == key) p.ini_key = ini;
+            list.push_back(std::move(p));
+        }
+    }
+    return list;
+}
+
+/// patches.json's "enabled" and "disabled" string lists (the file only holds those).
+void ReadPatchConfig(std::vector<std::string>& enabled, std::vector<std::string>& disabled) {
+    enabled.clear();
+    disabled.clear();
+    const std::string json = ReadText(g_app.root / L"patches.json");
+    auto read_list = [&](const char* name, std::vector<std::string>& out) {
+        size_t at = json.find(std::string("\"") + name + "\"");
+        if (at == std::string::npos) return;
+        at = json.find('[', at);
+        const size_t end = at == std::string::npos ? at : json.find(']', at);
+        if (at == std::string::npos || end == std::string::npos) return;
+        for (size_t i = at + 1; i < end; ++i) {
+            if (json[i] != '"') continue;
+            std::string value;
+            for (++i; i < end && json[i] != '"'; ++i) {
+                if (json[i] == '\\' && i + 1 < end) ++i;
+                value += json[i];
+            }
+            out.push_back(value);
+        }
+    };
+    read_list("enabled", enabled);
+    read_list("disabled", disabled);
+}
+
+void WritePatchConfig(const std::vector<std::string>& enabled, const std::vector<std::string>& disabled) {
+    auto list = [](const std::vector<std::string>& items) {
+        std::string out = "[";
+        for (size_t i = 0; i < items.size(); ++i) {
+            out += i ? ", \"" : "\"";
+            for (const char c : items[i]) {
+                if (c == '"' || c == '\\') out += '\\';
+                out += c;
+            }
+            out += '"';
+        }
+        return out + "]";
+    };
+    WriteTextAtomic(g_app.root / L"patches.json",
+                    "{\n  \"enabled\": " + list(enabled) + ",\n  \"disabled\": " + list(disabled) + "\n}\n");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -979,17 +1349,6 @@ void SettingsTab() {
     ImGui::TextColored(kGrey, "%s", T("Se aplican al pulsar Jugar. El menú del juego (Insert o L3+R3) cambia los mismos ajustes.",
                                       "Applied when you press Play. The in-game menu (Insert or L3+R3) changes the same settings."));
 
-    ImGui::SeparatorText(T("Parches del juego", "Game patches"));
-    GameFlag("patch_60fps", T("60 FPS (illusion)", "60 FPS unlock (illusion)"), false,
-             T("Desbloquea los 60 FPS. Con el límite de FPS de abajo puedes ir más alto.",
-               "Unlocks 60 FPS. With the FPS limit below the game can go higher."));
-    GameFlag("patch_no_motion_blur", T("Sin desenfoque de movimiento (illusion)", "Disable motion blur (illusion)"), false);
-    const bool neo = a.launcher.Flag("neo", false);
-    ImGui::BeginDisabled(!neo);
-    GameFlag("patch_pro_1080p", T("1080p en modo PS4 Pro (TroyWarez)", "1080p in PS4 Pro mode (TroyWarez)"), false,
-             T("Solo funciona con el modo PS4 Pro activado (sección Consola).", "Only with PS4 Pro mode on (Console section)."));
-    ImGui::EndDisabled();
-
     ImGui::SeparatorText(T("Rendimiento", "Performance"));
     {
         int limit = a.game.Int("fps_limit", 60);
@@ -1092,6 +1451,236 @@ void SettingsTab() {
                    "The game's PS4 Pro rendering path (higher resolution). Needed for the 1080p patch."));
 }
 
+void PatchesTab() {
+    App& a = g_app;
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(kGrey, "%s", T("Se aplican al iniciar el juego (o con \"Apply and restart\" del menú del juego).",
+                                      "Applied when the game starts (or with the in-game menu's \"Apply and restart\")."));
+    ImGui::PopTextWrapPos();
+    const bool neo = a.launcher.Flag("neo", false);
+    if (a.patches.empty()) {
+        ImGui::TextColored(kYellow, "%s", T("No hay parches en la carpeta patches.", "No patches in the patches folder."));
+    }
+    for (const auto& p : a.patches) {
+        ImGui::PushID(p.key.c_str());
+        bool on;
+        if (p.ini_key) {
+            on = a.game.Flag(p.ini_key, false);
+        } else {
+            const bool listed_on = std::find(a.patch_enabled.begin(), a.patch_enabled.end(), p.key) != a.patch_enabled.end();
+            const bool listed_off = std::find(a.patch_disabled.begin(), a.patch_disabled.end(), p.key) != a.patch_disabled.end();
+            on = listed_on || (p.default_on && !listed_off);
+        }
+        const bool needs_neo = p.ini_key && std::strcmp(p.ini_key, "patch_pro_1080p") == 0;
+        ImGui::BeginDisabled(needs_neo && !neo);
+        if (ImGui::Checkbox(p.name.c_str(), &on)) {
+            if (p.ini_key) {
+                a.game.Set(p.ini_key, on ? "1" : "0");
+                SaveGameIni();
+            } else {
+                auto drop = [&](std::vector<std::string>& v) { v.erase(std::remove(v.begin(), v.end(), p.key), v.end()); };
+                drop(a.patch_enabled);
+                drop(a.patch_disabled);
+                if (on) a.patch_enabled.push_back(p.key);
+                else if (p.default_on) a.patch_disabled.push_back(p.key);
+                WritePatchConfig(a.patch_enabled, a.patch_disabled);
+            }
+        }
+        ImGui::EndDisabled();
+        if (!p.author.empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(kGrey, "%s %s%s%s", T("de", "by"), p.author.c_str(), p.version.empty() ? "" : "  v",
+                               p.version.c_str());
+        }
+        ImGui::Indent();
+        ImGui::PushTextWrapPos(0.0f);
+        if (needs_neo) ImGui::TextColored(kGrey, "%s", T("Necesita el modo PS4 Pro (pestaña Ajustes).", "Needs PS4 Pro mode (Settings tab)."));
+        if (!p.note.empty()) ImGui::TextColored(kGrey, "%s", p.note.c_str());
+        ImGui::TextColored(kGrey, "%s", p.key.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+
+    ImGui::SeparatorText(T("Añadir parches", "Add patches"));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(T("Copia archivos .xml de parches en formato shadPS4 (como los de PS-Game-Patch o GoldHEN) en la "
+                             "carpeta patches y pulsa Recargar. Solo aparecen los que son para CUSA13795 versión 01.21.",
+                             "Copy patch .xml files in shadPS4 format (like PS-Game-Patch's or GoldHEN's) into the patches "
+                             "folder and press Reload. Only those for CUSA13795 version 01.21 are listed."));
+    ImGui::TextColored(kGrey, "%s", T("Por ahora no existen trucos públicos para CTR Nitro-Fueled (como desbloquear todos los "
+                                      "personajes). Para tener el juego desbloqueado puedes importar una partida en la pestaña "
+                                      "Guardados.",
+                                      "There are no public cheats for CTR Nitro-Fueled yet (like unlocking every character). To "
+                                      "have the game unlocked you can import a save in the Saves tab."));
+    ImGui::PopTextWrapPos();
+    if (ImGui::Button(T("Abrir la carpeta de parches", "Open the patches folder"))) {
+        std::error_code ec;
+        fs::create_directories(a.root / L"patches", ec);
+        OpenInShell(a.root / L"patches");
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Recargar", "Reload"))) {
+        a.patches = LoadPatches();
+        ReadPatchConfig(a.patch_enabled, a.patch_disabled);
+    }
+}
+
+void SavesTab() {
+    App& a = g_app;
+    if (a.saves_dirty) {
+        a.saves = ListSaves();
+        a.backups = ListBackups();
+        a.saves_dirty = false;
+    }
+    const bool locked = a.game_running;
+    if (locked) {
+        ImGui::TextColored(kYellow, "%s", T("Cierra el juego para copiar, importar o restaurar partidas.",
+                                            "Close the game to back up, import or restore saves."));
+    }
+    ImGui::SeparatorText(T("Partidas", "Saves"));
+    ImGui::TextColored(kGrey, "%s", PathText(SaveRoot()).c_str());
+    if (a.saves.empty()) {
+        ImGui::TextUnformatted(T("Todavía no hay partidas guardadas.", "No saves yet."));
+    } else if (ImGui::BeginTable("saves", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn(T("Ranura", "Slot"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("Descripción", "Description"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(T("Tamaño", "Size"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn(T("Modificada", "Modified"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableHeadersRow();
+        for (const auto& s : a.saves) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(s.dir.c_str());
+            ImGui::TableNextColumn();
+            std::string text = s.title;
+            if (!s.subtitle.empty()) text += (text.empty() ? "" : " - ") + s.subtitle;
+            if (!s.detail.empty()) text += (text.empty() ? "" : " - ") + s.detail;
+            ImGui::TextUnformatted(text.empty() ? "-" : text.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(FormatSize(s.bytes).c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(s.modified.c_str());
+        }
+        ImGui::EndTable();
+    }
+    ImGui::BeginDisabled(locked);
+    ImGui::BeginDisabled(a.saves.empty());
+    if (ImGui::Button(T("Hacer copia de seguridad", "Back up now"))) {
+        fs::path made;
+        const std::string error = BackupSaves(nullptr, &made);
+        a.notice = error.empty() ? std::string(T("Copia creada: ", "Backup created: ")) + PathText(made.filename()) : error;
+        a.saves_dirty = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Exportar...", "Export..."))) {
+        if (const auto dest = PickFolder(a.hwnd, L"Exportar partidas / Export saves", fs::path())) {
+            const fs::path target = *dest / Widen("CTR-saves-" + Stamp());
+            const std::string error = CopyTree(SaveRoot(), target);
+            a.notice = error.empty() ? std::string(T("Partidas exportadas a ", "Saves exported to ")) + PathText(target) : error;
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(T("Importar...", "Import..."))) {
+        if (const auto from = PickFolder(a.hwnd, L"Importar partida / Import save", fs::path())) {
+            const std::string error = ImportSaves(*from);
+            a.notice = error.empty() ? std::string(T("Partida importada. La anterior quedó en una copia de seguridad.",
+                                                     "Save imported. The previous one was backed up."))
+                                     : error;
+            a.saves_dirty = true;
+        }
+    }
+    HelpMarker(T("Acepta una copia de seguridad de este launcher, la carpeta CUSA13795 de las partidas de otro PC, o una "
+                 "partida de PS4 descifrada (Apollo Save Tool, Save Wizard: una carpeta con sce_sys\\param.sfo). Antes de "
+                 "importar se hace una copia de seguridad de tus partidas.",
+                 "Takes a backup made by this launcher, the CUSA13795 saves folder from another PC, or a decrypted PS4 "
+                 "save (Apollo Save Tool, Save Wizard: a folder with sce_sys\\param.sfo). Your saves are backed up "
+                 "before importing."));
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(T("Abrir carpeta", "Open folder"))) {
+        std::error_code ec;
+        fs::create_directories(SaveRoot(), ec);
+        OpenInShell(SaveRoot());
+    }
+
+    ImGui::SeparatorText(T("Copias de seguridad", "Backups"));
+    if (a.backups.empty()) {
+        ImGui::TextColored(kGrey, "%s", T("Todavía no hay copias.", "No backups yet."));
+    } else if (ImGui::BeginTable("backups", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn(T("Copia", "Backup"), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(T("Tamaño", "Size"), ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+        for (const auto& b : a.backups) {
+            ImGui::PushID(b.name.c_str());
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(b.name.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(FormatSize(b.bytes).c_str());
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled(locked);
+            if (ImGui::SmallButton(T("Restaurar", "Restore"))) {
+                a.pending_path = b.path;
+                a.pending_action = 1;
+            }
+            ImGui::EndDisabled();
+            ImGui::TableNextColumn();
+            if (ImGui::SmallButton(T("Borrar", "Delete"))) {
+                a.pending_path = b.path;
+                a.pending_action = 2;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    if (ImGui::Button(T("Abrir carpeta de copias", "Open backups folder"))) {
+        std::error_code ec;
+        fs::create_directories(BackupRoot(), ec);
+        OpenInShell(BackupRoot());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Actualizar", "Refresh"))) a.saves_dirty = true;
+}
+
+void SaveConfirmations() {
+    App& a = g_app;
+    if (a.pending_action) {
+        ImGui::OpenPopup("save_confirm");
+        a.confirm_action = a.pending_action;
+        a.pending_action = 0;
+    }
+    if (ImGui::BeginPopupModal("save_confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+        const std::string name = PathText(a.pending_path.filename());
+        if (a.confirm_action == 1) {
+            ImGui::Text(T("¿Restaurar %s?", "Restore %s?"), name.c_str());
+            ImGui::TextColored(kGrey, "%s", T("Tus partidas actuales se guardan antes en una copia automática.",
+                                              "Your current saves are backed up automatically first."));
+        } else {
+            ImGui::Text(T("¿Borrar la copia %s? No se puede deshacer.", "Delete the backup %s? This cannot be undone."), name.c_str());
+        }
+        if (ImGui::Button(a.confirm_action == 1 ? T("Restaurar", "Restore") : T("Borrar", "Delete"))) {
+            std::string error;
+            if (a.confirm_action == 1) {
+                error = RestoreBackup(a.pending_path);
+                if (error.empty()) a.notice = std::string(T("Restaurada: ", "Restored: ")) + name;
+            } else {
+                std::error_code ec;
+                fs::remove_all(a.pending_path, ec);
+                if (ec) error = name + ": " + ec.message();
+            }
+            if (!error.empty()) a.notice = error;
+            a.saves_dirty = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Cancelar", "Cancel"))) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
 void ToolsTab() {
     App& a = g_app;
     ImGui::SeparatorText(T("Carpetas y registro", "Folders and log"));
@@ -1186,6 +1775,18 @@ void Frame() {
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem(T("Parches", "Patches"))) {
+            ImGui::BeginChild("patches");
+            PatchesTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(T("Guardados", "Saves"))) {
+            ImGui::BeginChild("saves");
+            SavesTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem(T("Herramientas", "Tools"))) {
             ToolsTab();
             ImGui::EndTabItem();
@@ -1193,6 +1794,7 @@ void Frame() {
         ImGui::EndTabBar();
     }
 
+    SaveConfirmations();
     if (a.confirm_clear_cache) {
         ImGui::OpenPopup("clear_cache");
         a.confirm_clear_cache = false;
@@ -1260,6 +1862,8 @@ void LoadState() {
     }
     a.base_info = Analyze(a.base_dir);
     a.update_info = Analyze(a.update_dir);
+    a.patches = LoadPatches();
+    ReadPatchConfig(a.patch_enabled, a.patch_disabled);
     StartCheck();
     StartProbe();
 }
