@@ -224,7 +224,9 @@ if (WIN32)
     add_executable(sacredfire ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
         ../packaging/windows/sacredfire.rc)
     set_target_properties(sacredfire PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
-    target_compile_options(sacredfire PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
+    # Newer clang (MSYS2) warns about write-only counters kept for diagnostics.
+    target_compile_options(sacredfire PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror
+        -Wno-unknown-warning-option -Wno-unused-but-set-global>)
     target_include_directories(sacredfire PRIVATE .. ../src)
     target_link_libraries(sacredfire PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 -pthread)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.

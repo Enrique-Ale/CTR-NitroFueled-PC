@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
+#ifdef __cplusplus
+#include <cmath>
+#include <new>
+#else
+#include <math.h>
+#endif
 #ifndef _countof
 #define _countof(array) (sizeof(array) / sizeof((array)[0]))
 #endif

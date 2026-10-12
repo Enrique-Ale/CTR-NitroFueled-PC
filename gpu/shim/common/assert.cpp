@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <chrono>
+#include <thread>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include <unistd.h>
@@ -13,7 +15,12 @@ extern "C" __attribute__((weak)) volatile int runtime_restarting; // absent in t
 void assert_fail_impl() {
     if (&runtime_restarting && runtime_restarting) {
         for (;;) {
+#ifdef _WIN32
+            // runtime_restart starts the new process and then terminates this one.
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+#else
             pause();
+#endif
         }
     }
     std::fflush(stdout);
