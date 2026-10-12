@@ -1,3 +1,56 @@
+# CTR-NitroFueled-PC
+
+**Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21) running natively on Windows 10/11.**
+
+This is a Windows fork of [SacredFire](https://github.com/T3CHNOLOG1C/SacredFire), the native
+Linux port of the game by T3CHNOLOG1C. The game's own x86-64 code runs directly on the CPU, a
+small runtime replaces the PS4 system libraries, and a renderer derived from shadPS4 translates
+the PS4 GPU work to Vulkan. This fork adds the Windows layer (loader, memory, TLS, exceptions,
+files, timers) from Supermedo's Windows port of bbport, plus the fixes SacredFire needed on top
+of it: see [packaging/windows/README.md](packaging/windows/README.md).
+
+> **No game files are included.** You need your own dump of the game and its 1.21 update.
+> Not affiliated with or endorsed by Sony Interactive Entertainment, Activision or Beenox.
+> *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their owners, named
+> here only to identify the game this software runs.
+
+**Status on Windows: playable.** Menus, races, sound, Xbox controller, saving, the community
+patches (60 FPS, no motion blur) from the in-game menu, restart from the menu. Tested on
+Windows 11 24H2 with an NVIDIA RTX 3070 and an Intel i5-9500: 110-130 FPS uncapped in races
+with the 60 FPS patch (the menu's FPS limit keeps it at 60 by default). Shaders seen for the
+first time cause short stalls; they are cached and load at start from the next session on, or
+compile in the background with the menu's experimental switch.
+
+### Quick start (Windows)
+
+1. Install [MSYS2](https://www.msys2.org) to `C:\msys64` and the packages listed in
+   [packaging/windows/README.md](packaging/windows/README.md).
+2. In the **MSYS2 CLANG64** shell: `git clone --recursive <this repository>`, then
+   `bash build.sh` (builds `out/sacredfire.exe`).
+3. Merge the 1.21 update over the base game without copying it:
+   `python tools/merge_update.py <CUSA13795> <CUSA13795-patch> <CUSA13795-1.21>`.
+4. Run: `set BB_GAME_DIR=<CUSA13795-1.21>` and `C:\msys64\clang64\bin\python.exe run.py`.
+   In the game, **Insert** (or L3+R3) opens the port's menu.
+
+### Credits
+
+This fork stands on the work of:
+
+- **[T3CHNOLOG1C](https://github.com/T3CHNOLOG1C)**: [SacredFire](https://github.com/T3CHNOLOG1C/SacredFire),
+  the native port of CTR Nitro-Fueled this fork is built from.
+- **[deadinside28](https://github.com/deadinside28)**: [bbport](https://github.com/deadinside28/bloodborne_pc),
+  the native Bloodborne port whose loader, runtime and renderer SacredFire builds on.
+- **[Supermedo](https://github.com/Supermedo)**: the [Windows port of bbport](https://github.com/Supermedo/bloodborne_pc)
+  (branch `windows`), whose Windows layer is merged here.
+- **[shadPS4](https://github.com/shadps4-emu/shadPS4)**: the video core and shader recompiler.
+- **illusion** and **TroyWarez**: the game patches ([illusionyy/PS-Game-Patch](https://github.com/illusionyy/PS-Game-Patch)).
+- Windows port of SacredFire: [GetLostIn](https://github.com/GetLostIn), with Claude (Anthropic).
+
+Licensed under the GNU GPL v2 or later, as SacredFire, bbport and shadPS4. The rest of this
+README is SacredFire's own (Linux, Steam Deck).
+
+---
+
 # SacredFire
 
 SacredFire runs *Crash Team Racing: Nitro-Fueled* (PlayStation 4, CUSA13795, update 1.21) as a
