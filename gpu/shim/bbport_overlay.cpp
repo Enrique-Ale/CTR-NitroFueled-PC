@@ -619,9 +619,9 @@ void Menu() {
     ImGui::SeparatorText(BbSettings::MenuText("Display", "Экран"));
     {
         Checkbox(BbSettings::MenuText("Fullscreen", "Полный экран"), s.fullscreen);
-        Hint(BbSettings::MenuText("Exclusive fullscreen on the game's display (BB_DISPLAY). "
+        Hint(BbSettings::MenuText("Fullscreen on the game's display (BB_DISPLAY). "
                                   "Applies at once; BB_FULLSCREEN=1 at start.",
-                                  "Эксклюзивный полный экран на дисплее игры (BB_DISPLAY). "
+                                  "Полный экран на дисплее игры (BB_DISPLAY). "
                                   "Сразу; BB_FULLSCREEN=1 при запуске."));
     }
 

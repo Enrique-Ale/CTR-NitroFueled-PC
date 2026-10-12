@@ -70,3 +70,14 @@ memory), userfaultfd tracking, the watchdog/`--timeout` thread dumps, `BB_SAMPLE
 `BB_FREE_CHECK`, `BB_WAIT_TRACE`, `BB_COPY_PROTECT`, MangoHud, PGO, the AppImage and the
 `tests/` programs. These are Linux diagnostics or Linux-only mechanisms; the game itself does not
 need them.
+
+## Portable build
+
+`packaging/windows/make_portable.py` makes the portable ZIP (the file in Releases) from a finished
+build: `sacredfire.exe`, the DLLs it needs (found with `llvm-objdump`), the scripts, default
+`bbport.ini` (windowed, 60 FPS limit), launchers with CRLF line endings, `LICENSE` and a
+`THIRD-PARTY.txt` that names the MSYS2 package and license of every DLL.
+
+```bash
+C:\msys64\clang64\bin\python.exe packaging/windows/make_portable.py --version v0.1.1
+```

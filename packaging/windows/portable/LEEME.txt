@@ -33,6 +33,8 @@ Mando Xbox / SDL (recomendado) y teclado al mismo tiempo:
   R/F = L2/R2, Z/C = L3/R3, Enter = Options, IJKL = cruceta.
 Menu del port (parches 60 FPS, sin motion blur, 1080p Pro, limite FPS hasta 240,
 pantalla completa, FPS, idioma): tecla Insert o L3+R3. "Apply and restart" reinicia solo.
+Por defecto arranca en ventana y a 60 FPS; la pantalla completa y el limite de FPS
+(60/72/144/240...) se cambian en ese menu y se guardan en bbport.ini.
 
 ARCHIVOS QUE GENERA
 -------------------
@@ -50,6 +52,10 @@ PROBLEMAS COMUNES
 - Pantalla completa / 60 FPS / Pro mode: menu Insert o variables
   BB_FULLSCREEN=1, BB_NEO=1 (ver README del repo).
 
+Fallos y dudas: https://github.com/GetLostIn/CTR-NitroFueled-PC/issues
+(adjunta last_run.log).
+
 Proyecto: https://github.com/GetLostIn/CTR-NitroFueled-PC
 Sin afiliacion con Sony, Activision o Beenox. Necesitas tu propia copia
-del juego. Licencia GPL v2 o posterior (ver repo).
+del juego. Licencia GPL v2 o posterior: ver LICENSE. Las librerias de bin\
+(SDL3, FFmpeg, x264, x265...) y sus licencias estan en THIRD-PARTY.txt.

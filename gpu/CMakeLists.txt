@@ -10,6 +10,12 @@ if (NOT CMAKE_BUILD_TYPE)
 endif()
 # Frame pointers keep the loader's thread dumps (watchdog, SIGUSR2 sampling) walkable.
 add_compile_options(-fno-omit-frame-pointer)
+if (WIN32)
+    # Windows: the build directory's path stays out of the binary (assert and log file names,
+    # debug names of lambdas); sources show as ./gpu/... and ./src/...
+    get_filename_component(BB_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+    add_compile_options(-ffile-prefix-map=${BB_SOURCE_ROOT}=.)
+endif()
 
 # bbport: link-time optimization (BB_LTO, default on) and profile-guided optimization
 # (BB_PGO: off, generate = instrumented build writing into BB_PGO_DIR, use = build with that

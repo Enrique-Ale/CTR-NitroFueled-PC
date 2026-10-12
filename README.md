@@ -23,6 +23,14 @@ compile in the background with the menu's experimental switch.
 
 ### Quick start (Windows)
 
+**Easiest: the portable build.** Download `CTR-NitroFueled-PC-portable-windows.zip` from
+[Releases](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases), unzip it, and follow
+`LEEME.txt` (Spanish): put your `CUSA13795` and `CUSA13795-patch` folders next to it, run
+`1-Mergear actualizacion.bat` once, then `Jugar CTR Nitro-Fueled.bat`. It needs Python 3 and a
+Vulkan 1.3 GPU; nothing else is installed.
+
+**Or build it yourself:**
+
 1. Install [MSYS2](https://www.msys2.org) to `C:\msys64` and the packages listed in
    [packaging/windows/README.md](packaging/windows/README.md).
 2. In the **MSYS2 CLANG64** shell: `git clone --recursive <this repository>`, then

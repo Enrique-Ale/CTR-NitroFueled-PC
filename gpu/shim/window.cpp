@@ -246,10 +246,19 @@ void WindowSDL::UpdateTextTitle() {
 bool WindowSDL::PollEvents() {
     // SacredFire: the menu's fullscreen switch applies here, on the window thread.
     {
+        // A failure is logged once per requested state, not on every poll.
+        static int failed_for = -1;
         const bool want = BbSettings::Get().fullscreen.load(std::memory_order_relaxed);
         const bool have = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-        if (want != have && !SDL_SetWindowFullscreen(window, want)) {
-            LOG_ERROR(Frontend, "Failed to set fullscreen {}: {}", want, SDL_GetError());
+        if (want == have) {
+            failed_for = -1;
+        } else if (failed_for != int(want)) {
+            if (SDL_SetWindowFullscreen(window, want)) {
+                failed_for = -1;
+            } else {
+                failed_for = int(want);
+                LOG_ERROR(Frontend, "Failed to set fullscreen {}: {}", want, SDL_GetError());
+            }
         }
     }
     {
