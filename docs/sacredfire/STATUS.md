@@ -165,6 +165,13 @@ with the desktop apps closed.
   GStreamer). Booted with `--appimage-extract-and-run --play` to the intro videos on the bundled
   RADV. Not tagged: the build reads v0.1-4-g33847e1; tag before publishing a release.
 
+## v0.2.1 (2026-10-11, evening)
+
+- Tag v0.2.1 at 5b0319d (issue-2 fast-forwarded into main): the issue #2 diagnostics and the
+  "SacredFire issue #2" report request. `dist/SacredFire-x86_64.AppImage` rebuilt with the
+  nix-shell build (429 MB, nixpkgs 26.11pre1087755.e7439b6b14ad), booted to the start screen with
+  `--appimage-extract-and-run --play`, released on GitHub with the .sha256.
+
 ## Launcher and controllers (2026-10-11, branch backport-0.51)
 
 - Launcher, log page: *Copy* (clipboard) and *Export log…* (a file dialog; `sacredfire-<date>.log`),
