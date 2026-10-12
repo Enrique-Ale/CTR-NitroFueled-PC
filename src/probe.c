@@ -148,6 +148,7 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
     }
     snprintf(out,size,"%p",(void *)address);
 }
+const char *runtime_thread_current_name(void);
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
@@ -174,7 +175,23 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
         if (get_description && SUCCEEDED(get_description(GetCurrentThread(),&description)) && description && *description)
             fprintf(stderr,"  thread name: %ls\n",description);
         if (description) LocalFree(description);
+        const char *guest_name=runtime_thread_current_name();
+        if (guest_name) fprintf(stderr,"  guest thread: %s\n",guest_name);
+        static const char *const reg_names[]={"rax","rbx","rcx","rdx","rsi","rdi","rbp","r8","r9","r10","r11","r12","r13","r14","r15"};
+        const DWORD64 regs[]={c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->R8,c->R9,c->R10,c->R11,c->R12,c->R13,c->R14,c->R15};
+        for (int r=0;r<15;++r) {
+            describe_address(where,sizeof(where),(uintptr_t)regs[r]);
+            if (strchr(where,'+')) fprintf(stderr,"  %s -> %s\n",reg_names[r],where);
+        }
         CONTEXT walk=*c;
+        if (!walk.Rip) {
+            /* A call through a null pointer: the caller's return address is on top of the stack. */
+            DWORD64 ret=0; SIZE_T got=0;
+            if (ReadProcessMemory(GetCurrentProcess(),(void *)walk.Rsp,&ret,sizeof(ret),&got) && got==sizeof(ret)) {
+                walk.Rip=ret; walk.Rsp+=8;
+                fprintf(stderr,"  (called through a null pointer)\n");
+            }
+        }
         for (int depth=0; depth<32 && walk.Rip; ++depth) {
             describe_address(where,sizeof(where),(uintptr_t)walk.Rip);
             fprintf(stderr,"  native #%d %s\n",depth,where);

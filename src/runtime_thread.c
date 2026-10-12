@@ -114,6 +114,9 @@ static GuestThread *new_thread(void) {
 static void publish(GuestThread *t) {
     pthread_mutex_lock(&lock); t->next=threads; threads=t; pthread_mutex_unlock(&lock);
 }
+/* The guest name of the calling thread, or NULL for a thread the runtime never saw (fault
+ * reports; creates nothing). */
+const char *runtime_thread_current_name(void) { return current ? current->name : NULL; }
 /* Host threads that call into guest code without being created by the guest
  * (the main thread, test threads) get a record on first use. */
 GuestThread *runtime_thread_current(void) {
