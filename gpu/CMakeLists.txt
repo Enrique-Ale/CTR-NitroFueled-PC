@@ -87,6 +87,17 @@ add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
+# SacredFire (Windows, MinGW): the FidelityFX 1.1.4 host sources expect MSVC's CRT on _WIN32;
+# GNU mode keeps MinGW's MSVC-compatible names (swprintf_s) visible and the header adds _countof.
+if (MINGW)
+    foreach(ffx_target ffx_vulkan_fsr3_host_1_1_4 ffx_vulkan_fsr3_vk_backend_1_1_4)
+        if (TARGET ${ffx_target})
+            set_target_properties(${ffx_target} PROPERTIES CXX_EXTENSIONS ON)
+            target_compile_options(${ffx_target} PRIVATE
+                -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/ffx_mingw_compat.h)
+        endif()
+    endforeach()
+endif()
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
 set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders)
