@@ -3,7 +3,7 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")"
 mkdir -p out
 # Windows: MSYS2 CLANG64 (packages in packaging/windows/README.md). The GPU library is static
-# there and CMake links bb-probe.exe as well; no PGO (GCC-only flags), LTO off by default.
+# there and CMake links sacredfire.exe as well; no PGO (GCC-only flags), LTO off by default.
 case $(uname -s) in
 MINGW*|MSYS*)
     # shellcheck source=msys2-env.sh
@@ -23,12 +23,14 @@ MINGW*|MSYS*)
     cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO=off \
         -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}"
-    if ! ninja -C out/gpu bb-probe bb-gpu-capabilities bb-play > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu sacredfire bb-gpu-capabilities > out/gpu-build.log 2>&1; then
         grep -v '^\[' out/gpu-build.log | tail -40 >&2
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/gpu/bb-play.exe out/
-    echo "Built $PWD/out/bb-probe.exe"
+    cp out/gpu/sacredfire.exe out/gpu/bb-gpu-capabilities.exe out/
+    version=$(git describe --tags --match 'v*' --always 2>/dev/null || echo unknown)
+    printf '%s-windows\n' "$version" > out/VERSION
+    echo "Built $PWD/out/sacredfire.exe ($(cat out/VERSION))"
     exit 0
     ;;
 esac

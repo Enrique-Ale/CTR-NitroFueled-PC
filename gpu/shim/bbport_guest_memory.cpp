@@ -1,6 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_guest_memory.h"
 
+#ifdef _WIN32
+// SacredFire (Windows): no dma-buf on Windows; the PC memory model stays off and direct memory
+// stays in the runtime's pagefile section.
+namespace BbGuestMemory {
+bool Usable(const Vulkan::Instance&) { return false; }
+bool PcModelGpu(const Vulkan::Instance&) { return false; }
+void Install(const Vulkan::Instance&) {}
+const Chunk* Find(std::uint64_t) { return nullptr; }
+} // namespace BbGuestMemory
+#else
+
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -268,3 +279,4 @@ const Chunk* Find(std::uint64_t phys) {
     return phys < c->phys + c->size ? c : nullptr;
 }
 } // namespace BbGuestMemory
+#endif // _WIN32

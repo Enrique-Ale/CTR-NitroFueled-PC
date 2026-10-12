@@ -9,8 +9,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <pthread.h>
+#ifndef _WIN32
 #include <sys/mman.h>
 #include <ucontext.h>
+#endif
 #include <unistd.h>
 
 namespace BbClobber {
@@ -188,6 +190,9 @@ void AskForReport() {
 }
 
 bool ProtectCopies() {
+#ifdef _WIN32
+    return false; // SacredFire (Windows): BB_COPY_PROTECT uses mprotect and SIGSEGV (Linux only)
+#endif
     static const bool enabled = [] {
         const char* env = std::getenv("BB_COPY_PROTECT");
         return env && env[0] == '1';
@@ -199,10 +204,15 @@ void* AllocCopy(std::size_t bytes) {
     if (!ProtectCopies()) {
         return std::malloc(bytes);
     }
+#ifdef _WIN32
+    return std::malloc(bytes);
+#else
     return std::aligned_alloc(Page, RoundUp(bytes));
+#endif
 }
 
 void FreeCopy(void* storage, std::size_t bytes) {
+#ifndef _WIN32
     if (ProtectCopies()) {
         mprotect(storage, RoundUp(bytes), PROT_READ | PROT_WRITE);
         for (Protected& p : protected_copies) {
@@ -211,6 +221,7 @@ void FreeCopy(void* storage, std::size_t bytes) {
             }
         }
     }
+#endif
     std::free(storage);
 }
 
@@ -227,15 +238,22 @@ void ProtectCopy(std::uint64_t seq, const void* storage, std::size_t bytes) {
             break;
         }
     }
+#ifndef _WIN32
     if (mprotect(const_cast<void*>(storage), RoundUp(bytes), PROT_READ) != 0) {
         static std::atomic<bool> once{false};
         if (!once.exchange(true)) {
             std::perror("BB_COPY_PROTECT: mprotect");
         }
     }
+#endif
 }
 
 bool OnFault(void* ucontext, std::uint64_t address) {
+#ifdef _WIN32
+    (void)ucontext;
+    (void)address;
+    return false;
+#else
     if (!ProtectCopies()) {
         return false;
     }
@@ -264,5 +282,6 @@ bool OnFault(void* ucontext, std::uint64_t address) {
         }
     }
     return false;
+#endif
 }
 } // namespace BbClobber

@@ -340,7 +340,11 @@ static void PrintMemory() {
         }
         std::fclose(statm);
     }
+#ifdef _WIN32
+    const u64 rss = u64(rss_pages) * 4096; // no /proc on Windows: 0
+#else
     const u64 rss = u64(rss_pages) * u64(sysconf(_SC_PAGESIZE));
+#endif
     const u64 device = BbStats::device_alloc_bytes.load() - BbStats::device_free_bytes.load();
     u64 vma_blocks = 0, vma_used = 0;
     Vulkan::VmaDeviceUsage(vma_blocks, vma_used);

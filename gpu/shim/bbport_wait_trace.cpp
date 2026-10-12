@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_wait_trace.h"
 
+#ifdef _WIN32
+// SacredFire (Windows): BB_WAIT_TRACE needs backtrace() (glibc); off on Windows.
+namespace BbWaitTrace {
+bool Enabled() { return false; }
+Scope::Scope() {}
+Scope::~Scope() {}
+void Report(double) {}
+} // namespace BbWaitTrace
+#else
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -123,3 +133,4 @@ void Report(double window_s) {
     }
 }
 } // namespace BbWaitTrace
+#endif // _WIN32

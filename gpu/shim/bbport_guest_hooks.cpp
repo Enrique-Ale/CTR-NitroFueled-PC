@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_guest_hooks.h"
+
+#ifdef _WIN32
+// SacredFire (Windows): the guest code hooks belong to the PC memory model (BB_GUEST_IN_PLACE),
+// which needs dma-buf guest memory: Linux only.
+namespace BbGuestHooks {
+void Install(RangeCallback) {}
+} // namespace BbGuestHooks
+#else
 #include "bbport_heap_sites.h"
 #include "bbport_toggles.h"
 
@@ -207,3 +215,4 @@ void Install(RangeCallback on_gpu_range_allocated) {
     }
 }
 } // namespace BbGuestHooks
+#endif // _WIN32
