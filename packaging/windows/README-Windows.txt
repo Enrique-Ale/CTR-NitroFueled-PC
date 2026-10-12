@@ -15,8 +15,10 @@ Starting
 - Bloodborne.exe opens the launcher. On "Game & effects" pick your game folder, adjust the
   settings, press PLAY. The "Play" page checks the game version, saves, graphics card and
   FSR 4 assets.
-- Bloodborne.exe --play starts the game with the saved settings, without the launcher (for
-  Steam: "Add a Non-Steam Game" -> Bloodborne.exe, launch options --play). Its log goes to
+- Play Bloodborne.exe starts the game straight away with the settings saved in the launcher,
+  without opening it. Set things up once in Bloodborne.exe, then use Play Bloodborne.exe (or a
+  shortcut to it, or add it to Steam with "Add a Non-Steam Game"). If no game folder is chosen
+  yet it opens the launcher. Bloodborne.exe --play does the same. The log goes to
   user\last_run.log.
 - Advanced -> "Desktop shortcut" puts Bloodborne on the desktop.
 - Advanced -> "Launcher language": English, Russian, Arabic, Spanish, Portuguese, French,
@@ -29,6 +31,17 @@ Data
 - Saves and shader caches: user\ next to Bloodborne.exe (the launcher can pick another folder).
 - Settings: bbport.ini next to Bloodborne.exe; launcher options in %APPDATA%\bbport-launcher.
 - Generated files (prepared game image, patches): out\.
+
+Cheats
+- The "Cheats" page has cheats (never die, enemies do not see or hear you, Rally never fades,
+  control the targeted enemy) and gameplay tweaks (no Rally, camera further away, no camera
+  auto-rotation, run with less stick tilt, ragdoll physics). They are game patches for 1.09,
+  applied when the game starts.
+
+Problems
+- Black screen at start: Advanced -> "Clear shader cache", then start again (the first minutes
+  stutter while the cache is rebuilt).
+- Send user\last_run.log with any bug report.
 
 Upscaling
 - FSR 3.1 works on every GPU. FSR 4 needs its assets in fsr4_shaders\ (included in this

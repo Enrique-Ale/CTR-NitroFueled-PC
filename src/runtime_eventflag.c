@@ -32,11 +32,21 @@ typedef struct EventFlag {
     struct EventFlag *next;
 } EventFlag;
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
-/* Deadlines are on CLOCK_MONOTONIC, so the condition variable must use that clock too. */
+/* Deadlines are on WAIT_CLOCK, so the condition variable must use that clock too. winpthreads
+ * condition variables accept only CLOCK_REALTIME (pthread_condattr_setclock(CLOCK_MONOTONIC)
+ * fails with EINVAL), as in runtime_sema.c. */
+#ifdef _WIN32
+#define WAIT_CLOCK CLOCK_REALTIME
+#else
+#define WAIT_CLOCK CLOCK_MONOTONIC
+#endif
 static pthread_cond_t changed;
 static pthread_once_t changed_once=PTHREAD_ONCE_INIT;
 static void init_changed(void) {
-    pthread_condattr_t a; pthread_condattr_init(&a); pthread_condattr_setclock(&a,CLOCK_MONOTONIC);
+    pthread_condattr_t a; pthread_condattr_init(&a);
+#ifndef _WIN32
+    pthread_condattr_setclock(&a,WAIT_CLOCK);
+#endif
     pthread_cond_init(&changed,&a); pthread_condattr_destroy(&a);
 }
 static EventFlag *registry;
@@ -132,7 +142,7 @@ static int32_t wait_pattern(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t 
     *link=&w; ++f->waiters; ++waits;
     struct timespec deadline; uint64_t start_ns=0;
     if (timeout) {
-        clock_gettime(CLOCK_MONOTONIC,&deadline);
+        clock_gettime(WAIT_CLOCK,&deadline);
         start_ns=(uint64_t)deadline.tv_sec*1000000000+(uint64_t)deadline.tv_nsec;
         uint64_t total=start_ns+(uint64_t)*timeout*1000;
         deadline.tv_sec=(time_t)(total/1000000000); deadline.tv_nsec=(long)(total%1000000000);
@@ -150,7 +160,7 @@ static int32_t wait_pattern(uint32_t id,uint64_t pattern,uint32_t mode,uint64_t 
     if (w.done) status=w.status;
     if (!status && result) *result=w.result;
     if (timeout) {
-        struct timespec now; clock_gettime(CLOCK_MONOTONIC,&now);
+        struct timespec now; clock_gettime(WAIT_CLOCK,&now);
         uint64_t spent=((uint64_t)now.tv_sec*1000000000+(uint64_t)now.tv_nsec-start_ns)/1000;
         *timeout= spent>=*timeout ? 0 : (uint32_t)(*timeout-spent);
     }
