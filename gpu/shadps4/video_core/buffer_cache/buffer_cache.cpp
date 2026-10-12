@@ -495,10 +495,14 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
                                          instance.GetReadbackQueueFamilyIndex()};
     const bool shared = bool(instance.GetReadbackQueue()); // as Buffer creates the arenas
+#ifdef _WIN32
+    // Windows drivers (AMD: 2 GiB) can limit buffers below two 4 GiB arena pages. Linux keeps
+    // SacredFire's tested 4 GiB pages.
     while (arena_page_bits > MIN_ARENA_PAGE_BITS &&
            (u64{2} << arena_page_bits) > instance.GetMaxBufferSize()) {
         --arena_page_bits;
     }
+#endif
     arena_page_size = u64{1} << arena_page_bits;
     num_arena_pages = u64{1} << (ADDRESS_SPACE_BITS - arena_page_bits);
     if (arena_page_bits != MAX_ARENA_PAGE_BITS) {
