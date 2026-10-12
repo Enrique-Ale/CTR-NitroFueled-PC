@@ -8,22 +8,23 @@ REQUISITOS (no incluidos, los pones tu)
 1. Tu dump del juego base (carpeta CUSA13795) y de la actualizacion 1.21
    (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
 2. GPU con Vulkan 1.3 y sus drivers al dia.
-3. Python 3 (https://www.python.org, marca "Add python.exe to PATH"
-   al instalar). Comprueba con:  py --version
-4. Internet solo el primer arranque (descarga una lista de nombres del
-   motor; sin red tambien arranca, la descarga el siguiente inicio).
+Python ya viene incluido (carpeta python\): no hay que instalar nada.
 
-PUESTA EN MARCHA (una vez)
----------------------------
-1. Copia tus carpetas CUSA13795 y CUSA13795-patch junto a este archivo.
-2. Doble clic en "1-Mergear actualizacion.bat".
-   Crea CUSA13795-1.21 con enlaces duros (no ocupa el doble).
-3. Doble clic en "Jugar CTR Nitro-Fueled.bat".
-   El primer arranque tarda (compila shaders; se guarda cache en user\
-   y los siguientes son rapidos).
+PUESTA EN MARCHA
+----------------
+1. Abre CTR-NitroFueled-PC.exe (el launcher).
+2. En "Juego base" elige tu carpeta CUSA13795 y en "Actualizacion 1.21"
+   tu carpeta CUSA13795-patch. Pulsa "Preparar el juego": crea
+   CUSA13795-1.21 al lado del juego base con enlaces duros (no ocupa el
+   doble ni cambia tus carpetas). Solo se hace una vez.
+   Si ya tienes el juego mergeado, usa "Ya tengo el juego preparado".
+3. Pulsa JUGAR. El primer arranque tarda (compila shaders; se guarda
+   cache en user\ y los siguientes son rapidos).
+En la pestana Ajustes estan los parches, el limite de FPS, la pantalla
+completa, el monitor, el mando, el idioma del juego y el modo PS4 Pro.
 
-Si ya tienes CUSA13795-1.21 mergeada, ponla junto al .bat y ve al paso 3.
-Para usar una ruta distinta: set BB_GAME_DIR=D:\ruta\CUSA13795-1.21
+Sin launcher: "Jugar sin launcher.bat" arranca .\CUSA13795-1.21
+(o la ruta de BB_GAME_DIR).
 
 CONTROLES
 ---------
@@ -38,19 +39,21 @@ Por defecto arranca en ventana y a 60 FPS; la pantalla completa y el limite de F
 
 ARCHIVOS QUE GENERA
 -------------------
-user\            saves, cache de shaders y bbport.ini (tus ajustes)
+user\           partidas guardadas y cache de shaders
+bbport.ini      ajustes del juego (los mismos que el menu Insert)
+launcher.ini    ajustes del launcher (carpetas del juego, idioma...)
 out\            imagen preparada del juego (se regenera sola)
 last_run.log    salida del ultimo arranque (para reportar fallos)
-logs\           solo con diagnostico (BB_SAVE_LOG=1)
+logs\           solo con "Guardar registro detallado" (Herramientas)
 
 PROBLEMAS COMUNES
 -----------------
 - "No eboot.bin in ...": falta CUSA13795-1.21 o BB_GAME_DIR mal.
-- "sacredfire.exe not found": el .bat debe estar junto a bin\.
+- "sacredfire.exe not found": no muevas el launcher fuera de esta carpeta.
 - Tirones la primera vez en cada pista: normal, son shaders nuevos.
 - Pantalla negra con sonido: actualiza drivers Vulkan de tu GPU.
-- Pantalla completa / 60 FPS / Pro mode: menu Insert o variables
-  BB_FULLSCREEN=1, BB_NEO=1 (ver README del repo).
+- El launcher no abre: necesita Direct3D 11 (cualquier GPU actual);
+  usa "Jugar sin launcher.bat".
 
 Fallos y dudas: https://github.com/GetLostIn/CTR-NitroFueled-PC/issues
 (adjunta last_run.log).

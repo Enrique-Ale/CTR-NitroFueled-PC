@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,6 +26,12 @@ PORTABLE = ROOT / 'packaging' / 'windows' / 'portable'
 MSYS2 = Path(os.environ.get('MSYS2_ROOT', r'C:\msys64'))
 CLANG_BIN = MSYS2 / 'clang64' / 'bin'
 NAME = 'CTR-NitroFueled-PC-portable'
+LAUNCHER = 'CTR-NitroFueled-PC.exe'
+# The Python that runs run.py and scripts/ (python.org's "embeddable package": no installer, no
+# registry, no PATH). Pinned by version and SHA-256.
+PYTHON_VERSION = '3.14.8'
+PYTHON_URL = f'https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip'
+PYTHON_SHA256 = 'a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310'
 # Windows' own DLLs: never bundled.
 SYSTEM_DLLS = {'kernel32', 'user32', 'gdi32', 'advapi32', 'shell32', 'ole32', 'oleaut32', 'ws2_32',
                'msvcrt', 'ntdll', 'bcrypt', 'bcryptprimitives', 'crypt32', 'secur32', 'winmm',
@@ -66,7 +73,7 @@ def pacman(*args):
                           text=True, errors='replace').stdout
 
 
-def third_party(dlls):
+def third_party(dlls, python=None):
     """THIRD-PARTY.txt: the MSYS2 package, version, license and home page of every bundled DLL."""
     packages = {}
     for dll in sorted(dlls):
@@ -87,9 +94,39 @@ def third_party(dlls):
                   f'  home:    {field("URL")}',
                   f'  source:  https://packages.msys2.org/packages/{package}',
                   f'  files:   {", ".join(packages[package]["dlls"])}', '']
+    if python:
+        lines += [f'{python}, in python\\',
+                  '  license: PSF-2.0 (python\\LICENSE.txt; also covers the bundled OpenSSL, libffi,',
+                  '           SQLite and the Microsoft C runtime redistributables)',
+                  '  home:    https://www.python.org/',
+                  f'  source:  https://www.python.org/downloads/release/python-{PYTHON_VERSION.replace(".", "")}/', '']
+    lines += ['The launcher (CTR-NitroFueled-PC.exe) and sacredfire.exe include Dear ImGui (MIT,',
+              'https://github.com/ocornut/imgui) and the other libraries listed in the repository.', '']
     lines += ['The game files are not included and are not covered by any of these licenses.',
               'Not affiliated with Sony, Activision or Beenox.', '']
     return '\r\n'.join(lines)
+
+
+def bundle_python(folder, cache):
+    """python/ in the package: python.org's embeddable Python, with scripts/ and tools/ on its
+    path (its ._pth file replaces sys.path, and the scripts import their neighbours)."""
+    archive = cache / Path(PYTHON_URL).name
+    if not archive.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        print(f'Downloading {PYTHON_URL}')
+        with urllib.request.urlopen(PYTHON_URL, timeout=120) as response:
+            archive.write_bytes(response.read())
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if digest != PYTHON_SHA256:
+        archive.unlink()
+        sys.exit(f'{archive.name}: SHA-256 {digest}, expected {PYTHON_SHA256}')
+    target = folder / 'python'
+    with zipfile.ZipFile(archive) as z:
+        z.extractall(target)
+    pth = next(target.glob('python3*._pth'))
+    zipped = next(target.glob('python3*.zip')).name
+    pth.write_bytes(f'{zipped}\r\n.\r\n..\\scripts\r\n..\\tools\r\n'.encode())
+    return f'Python {PYTHON_VERSION} (python.org embeddable package)'
 
 
 def write_text(path, text):
@@ -102,11 +139,14 @@ def main():
     p.add_argument('--dist', type=Path, default=ROOT / 'dist')
     a = p.parse_args()
     exe, caps = ROOT / 'out' / 'sacredfire.exe', ROOT / 'out' / 'bb-gpu-capabilities.exe'
-    for f in (exe, caps):
+    launcher = ROOT / 'out' / LAUNCHER
+    for f in (exe, caps, launcher):
         if not f.is_file():
             sys.exit(f'{f} not found: build with build.sh first')
     folder = a.dist / NAME
     shutil.rmtree(folder, ignore_errors=True)
+    if folder.exists():
+        sys.exit(f'{folder} could not be removed (is it open?)')
     for sub in ('bin', 'scripts', 'tools', 'patches', 'out'):
         (folder / sub).mkdir(parents=True)
     shutil.copy2(exe, folder / 'bin')
@@ -116,6 +156,8 @@ def main():
     dlls = closure([exe, caps])
     for path in dlls.values():
         shutil.copy2(path, folder / 'bin')
+    shutil.copy2(launcher, folder)
+    python = bundle_python(folder, a.dist / 'pycache')
     shutil.copy2(ROOT / 'run.py', folder)
     for script in (ROOT / 'scripts').glob('*.py'):
         shutil.copy2(script, folder / 'scripts')
@@ -126,13 +168,13 @@ def main():
         shutil.copy2(ROOT / 'out' / 'aerolib.inl', folder / 'out')
     # bbport.ini is in .gitignore (it is the player's settings file), so the defaults live in
     # bbport.default.ini and ship under the real name.
+    # The launcher sets up the game folder and starts it; the .bat is the way without it.
     for source, target in (('bbport.default.ini', 'bbport.ini'),
-                           ('1-Mergear actualizacion.bat', '1-Mergear actualizacion.bat'),
-                           ('Jugar CTR Nitro-Fueled.bat', 'Jugar CTR Nitro-Fueled.bat'),
+                           ('Jugar CTR Nitro-Fueled.bat', 'Jugar sin launcher.bat'),
                            ('LEEME.txt', 'LEEME.txt')):
         write_text(folder / target, (PORTABLE / source).read_text(encoding='utf-8'))
     write_text(folder / 'LICENSE', (ROOT / 'LICENSE').read_text(encoding='utf-8'))
-    (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls).encode('utf-8'))
+    (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls, python).encode('utf-8'))
 
     archive = a.dist / f'{NAME}-windows.zip'
     archive.unlink(missing_ok=True)
