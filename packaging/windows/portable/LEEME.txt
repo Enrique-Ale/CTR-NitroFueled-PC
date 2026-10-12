@@ -20,8 +20,11 @@ PUESTA EN MARCHA
    Si ya tienes el juego mergeado, usa "Ya tengo el juego preparado".
 3. Pulsa JUGAR. El primer arranque tarda (compila shaders; se guarda
    cache en user\ y los siguientes son rapidos).
-En la pestana Ajustes estan los parches, el limite de FPS, la pantalla
-completa, el monitor, el mando, el idioma del juego y el modo PS4 Pro.
+En la pestana Ajustes estan el limite de FPS, la pantalla completa, el
+monitor, el mando, el idioma del juego y el modo PS4 Pro. En Parches, los
+parches del juego; en Guardados, copias de seguridad e importar partidas;
+en DLC, tus paquetes DLC de PS4 (.pkg), opcionales: el juego funciona
+igual sin ellos.
 
 Sin launcher: "Jugar sin launcher.bat" arranca .\CUSA13795-1.21
 (o la ruta de BB_GAME_DIR).
@@ -42,6 +45,8 @@ ARCHIVOS QUE GENERA
 user\           partidas guardadas y cache de shaders
 bbport.ini      ajustes del juego (los mismos que el menu Insert)
 launcher.ini    ajustes del launcher (carpetas del juego, idioma...)
+dlc\            tus DLC (.pkg), si los anades desde el launcher
+backups\        copias de seguridad de las partidas
 out\            imagen preparada del juego (se regenera sola)
 last_run.log    salida del ultimo arranque (para reportar fallos)
 logs\           solo con "Guardar registro detallado" (Herramientas)

@@ -20,6 +20,24 @@ int main(int argc,char **argv) {
     if (argc>1 && !strcmp(argv[1],"--missing")) { load(0xb4); return 99; }
     const uint32_t profile[]={1,13,0x80000000,0,7};
     runtime_content_configure(profile);
+    if (argc>1 && !strcmp(argv[1],"--addons")) {
+        /* DLC from the content profile: counted without a list, written up to the capacity. */
+        runtime_content_add_addon("CTRDELUXEPACK001");
+        runtime_content_add_addon("CTRCODEKART00001");
+        unsigned char none[32]={0};
+        unsigned char boot[40];
+        assert(load(0xb4)==0 && init(none,boot)==0);
+        uint32_t hits=0;
+        assert(list(0,NULL,0,&hits)==0 && hits==2);
+        unsigned char out[24*2+8]; memset(out,0xaa,sizeof(out));
+        assert(list(0,out,1,&hits)==0 && hits==1);
+        assert(!memcmp(out,"CTRDELUXEPACK001",17) && out[17]==0 && out[19]==0);
+        uint32_t status; memcpy(&status,out+20,4); assert(status==4);
+        for (unsigned i=24;i<sizeof(out);++i) assert(out[i]==0xaa);
+        assert(list(0,out,5,&hits)==0 && hits==2 && !memcmp(out+24,"CTRCODEKART00001",17));
+        for (unsigned i=48;i<sizeof(out);++i) assert(out[i]==0xaa);
+        puts("PASS: AppContent add-ons"); return 0;
+    }
     if (argc>1 && !strcmp(argv[1],"--unknown")) {
         /* Other system modules are host-provided: reference counted, independent. */
         assert((uint32_t)loaded(0xb5)==0x805a1001);

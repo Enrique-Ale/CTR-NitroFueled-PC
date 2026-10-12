@@ -537,17 +537,25 @@ int main(int argc, char **argv) {
         printf("Import names: %d symbols from %s\n", loaded, import_names);
     }
     if (content_profile) {
+        /* BBCONT01: SKU and the four user-defined parameters. BBCONT02 adds the installed
+         * add-ons (DLC): a count and 20-byte entitlement labels (scripts/content_profile.py). */
         FILE *profile=fopen(content_profile,"rb");
-        unsigned char data[28];
+        static unsigned char data[32+64*20+1];
         if (!profile) fail("cannot open content profile");
-        if (fread(data,1,sizeof(data),profile)!=sizeof(data) || fgetc(profile)!=EOF || memcmp(data,"BBCONT01",8)) fail("invalid content profile");
+        size_t size=fread(data,1,sizeof(data),profile);
         fclose(profile);
-        uint32_t values[5];
-        for (unsigned i=0;i<5;++i) {
+        int v2=size>=32 && !memcmp(data,"BBCONT02",8);
+        if (size==sizeof(data) || (!v2 && (size!=28 || memcmp(data,"BBCONT01",8)))) fail("invalid content profile");
+        uint32_t values[6];
+        for (unsigned i=0;i<(v2 ? 6u : 5u);++i) {
             unsigned char *p=data+8+i*4;
             values[i]=(uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;
         }
         runtime_content_configure(values);
+        if (v2) {
+            if (values[5]>64 || size!=32+values[5]*20) fail("invalid content profile add-on list");
+            for (uint32_t i=0;i<values[5];++i) runtime_content_add_addon((const char *)data+32+i*20);
+        }
     }
     if (app0) {
         runtime_file_configure(app0, user_dir ? user_dir : "user");

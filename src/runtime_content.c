@@ -1,5 +1,6 @@
 /* Offline AppContent provider for the configured base-game profile.
- * No package/DLC mounting, downloads, entitlement or license emulation. */
+ * Add-ons (DLC) without extra data are reported installed when the content profile lists them
+ * (the player's own DLC packages, scripts/content_profile.py); no mounting or downloads. */
 #include "runtime.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +12,19 @@
 static unsigned refs, initialized, configured;
 static uint32_t parameters[5];
 static unsigned queries, lists;
+/* SceAppContentAddcontInfo: SceNpUnifiedEntitlementLabel (17 chars + 3 padding) and a status. */
+typedef struct { char label[17]; char padding[3]; uint32_t status; } AddcontInfo;
+_Static_assert(sizeof(AddcontInfo)==24,"SceAppContentAddcontInfo layout");
+#define ADDCONT_INSTALLED 4u
+static char addons[64][17];
+static unsigned addon_count;
+void runtime_content_add_addon(const char *label) {
+    if (addon_count>=64) return;
+    memcpy(addons[addon_count],label,16);
+    addons[addon_count][16]=0;
+    printf("Runtime: add-on %s (installed)\n",addons[addon_count]);
+    ++addon_count;
+}
 void runtime_content_configure(const uint32_t values[5]) {
     if (refs || initialized || (values[0]!=1 && values[0]!=3)) {
         fputs("ERROR: invalid or late content profile\n",stderr); exit(1);
@@ -64,7 +78,7 @@ static ABI int32_t content_init(const unsigned char *init,unsigned char *boot) {
     /* Only the reserved-zero init profile is implemented. */
     for (unsigned i=0;i<32;++i) if (init[i]) return PARAMETER;
     memset(boot,0,40); initialized=1;
-    puts("Runtime: AppContent initialized; offline base-game profile, no mounted add-ons");
+    printf("Runtime: AppContent initialized; offline base-game profile, %u add-on(s)\n",addon_count);
     return 0;
 }
 static void require_initialized(void) {
@@ -82,9 +96,22 @@ static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint
     require_initialized();
     if (service) { fputs("STOP: nonzero AppContent service label unsupported\n",stderr); exit(21); }
     if ((!capacity || !list) && !hits) return PARAMETER;
-    /* No add-ons are mounted by this provider. Never touch unused list slots. */
-    if (hits) *hits=0;
-    ++lists; return 0;
+    ++lists;
+    /* Without a list: the number of add-ons. With one: up to capacity entries, never touching
+     * the unused slots. BB_ADDCONT_STATUS overrides the status (tests). */
+    if (!capacity || !list) { *hits=addon_count; return 0; }
+    static int status_read; static uint32_t status=ADDCONT_INSTALLED;
+    if (!status_read) { const char *v=getenv("BB_ADDCONT_STATUS"); if (v && *v) status=(uint32_t)strtoul(v,NULL,0); status_read=1; }
+    AddcontInfo *out=list;
+    uint32_t n=addon_count<capacity ? addon_count : capacity;
+    for (uint32_t i=0;i<n;++i) {
+        memset(&out[i],0,sizeof(out[i]));
+        memcpy(out[i].label,addons[i],17);
+        out[i].status=status;
+    }
+    if (hits) *hits=n;
+    if (lists<=3) printf("Runtime: AppContent add-on list: %u of %u\n",n,addon_count);
+    return 0;
 }
 uintptr_t runtime_content_resolve(const char *name) {
     if (runtime_nid_equals(name,"g8cM39EUZ6o#libSceSysmodule")) return (uintptr_t)module_load;

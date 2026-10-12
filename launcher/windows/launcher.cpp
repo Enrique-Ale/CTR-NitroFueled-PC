@@ -177,9 +177,8 @@ struct Ini {
 // ---------------------------------------------------------------------------------------------
 // param.sfo: the game's title, version and category (gd = game, gp = patch).
 
-std::map<std::string, std::string> ReadSfo(const fs::path& file) {
+std::map<std::string, std::string> ParseSfo(const std::string& data) {
     std::map<std::string, std::string> out;
-    const std::string data = ReadText(file);
     auto u32 = [&](size_t at) -> uint32_t {
         if (at + 4 > data.size()) return 0;
         return uint32_t(uint8_t(data[at])) | uint32_t(uint8_t(data[at + 1])) << 8 |
@@ -211,6 +210,8 @@ std::map<std::string, std::string> ReadSfo(const fs::path& file) {
     }
     return out;
 }
+
+std::map<std::string, std::string> ReadSfo(const fs::path& file) { return ParseSfo(ReadText(file)); }
 
 enum class Kind { Empty, Missing, NotGame, OtherTitle, OtherVersion, Base, Update, Complete };
 
@@ -359,6 +360,40 @@ void OpenInShell(const fs::path& target) {
     ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+std::vector<fs::path> PickFiles(HWND owner, const wchar_t* title, const wchar_t* filter_name, const wchar_t* filter) {
+    std::vector<fs::path> result;
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
+        return result;
+    }
+    DWORD options = 0;
+    dialog->GetOptions(&options);
+    dialog->SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST);
+    dialog->SetTitle(title);
+    const COMDLG_FILTERSPEC spec[] = {{filter_name, filter}};
+    dialog->SetFileTypes(1, spec);
+    if (SUCCEEDED(dialog->Show(owner))) {
+        IShellItemArray* items = nullptr;
+        if (SUCCEEDED(dialog->GetResults(&items))) {
+            DWORD count = 0;
+            items->GetCount(&count);
+            for (DWORD i = 0; i < count; ++i) {
+                IShellItem* item = nullptr;
+                if (FAILED(items->GetItemAt(i, &item))) continue;
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) {
+                    result.emplace_back(path);
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+            items->Release();
+        }
+    }
+    dialog->Release();
+    return result;
+}
+
 std::optional<fs::path> PickFolder(HWND owner, const wchar_t* title, const fs::path& start) {
     IFileOpenDialog* dialog = nullptr;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) {
@@ -441,6 +476,12 @@ struct PatchInfo {
     const char* ini_key = nullptr;
 };
 
+struct DlcInfo {
+    fs::path path;
+    std::string file, title, label, problem;
+    bool ok = false;
+};
+
 enum class Job { None, Merge, Check, Play };
 
 struct App {
@@ -493,7 +534,10 @@ struct App {
     std::vector<Backup> backups;
     bool saves_dirty = true;
     fs::path pending_path;
-    int pending_action = 0, confirm_action = 0;  // 1 restore, 2 delete a backup
+    int pending_action = 0, confirm_action = 0;  // 1 restore, 2 delete a backup, 3 remove a DLC
+    // DLC tab.
+    std::vector<DlcInfo> dlc;
+    bool dlc_dirty = true;
 };
 
 App g_app;
@@ -636,6 +680,8 @@ void StartGame() {
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
     SetEnv(L"BB_GAMEPAD", a.launcher.Get("gamepad"));
     SetEnv(L"BB_SAVE_LOG", a.launcher.Flag("save_log", false) ? "1" : "");
+    SetEnv(L"BB_DLC", a.launcher.Flag("dlc", true) ? "1" : "0");
+    SetEnv(L"BB_DLC_DISABLED", a.launcher.Get("dlc_disabled"));
     SetEnv(L"BB_FULLSCREEN", "");  // bbport.ini's fullscreen= (the menu switch) decides
     SetEnv(L"PYTHONUTF8", "1");
     SetEnv(L"PYTHONIOENCODING", "utf-8");
@@ -1645,6 +1691,201 @@ void SavesTab() {
     if (ImGui::Button(T("Actualizar", "Refresh"))) a.saves_dirty = true;
 }
 
+// ---------------------------------------------------------------------------------------------
+// DLC (optional): the player's add-on packages in <port>\dlc, as .pkg files or extracted folders.
+// CTR Nitro-Fueled's DLC hold only the license; scripts/content_profile.py reads the same folder
+// and the runtime reports each one installed (BB_DLC, BB_DLC_DISABLED from launcher.ini).
+
+fs::path DlcRoot() { return g_app.root / L"dlc"; }
+
+uint32_t Be32(const char* p) {
+    return uint32_t(uint8_t(p[0])) << 24 | uint32_t(uint8_t(p[1])) << 16 | uint32_t(uint8_t(p[2])) << 8 | uint32_t(uint8_t(p[3]));
+}
+
+/// param.sfo of a PS4 package (entry 0x1000), when it is stored in the clear.
+std::map<std::string, std::string> ReadPkgSfo(const fs::path& pkg, std::string& error) {
+    std::ifstream f(pkg, std::ios::binary);
+    char header[0x20];
+    if (!f.read(header, sizeof header) || std::memcmp(header, "\x7f" "CNT", 4) != 0) {
+        error = T("no es un paquete de PS4", "not a PS4 package");
+        return {};
+    }
+    const uint32_t count = Be32(header + 0x10), table = Be32(header + 0x18);
+    if (count == 0 || count > 4096) {
+        error = T("paquete dañado", "damaged package");
+        return {};
+    }
+    std::string entries(size_t(count) * 32, '\0');
+    f.seekg(table);
+    if (!f.read(entries.data(), std::streamsize(entries.size()))) {
+        error = T("paquete dañado", "damaged package");
+        return {};
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        const char* e = entries.data() + size_t(i) * 32;
+        if (Be32(e) != 0x1000) continue;
+        const uint32_t flags = Be32(e + 8), offset = Be32(e + 16), size = Be32(e + 20);
+        if (flags & 0x80000000u) {
+            error = T("param.sfo está cifrado", "param.sfo is encrypted");
+            return {};
+        }
+        if (size > (1u << 20)) break;
+        std::string data(size, '\0');
+        f.seekg(offset);
+        if (!f.read(data.data(), size)) break;
+        return ParseSfo(data);
+    }
+    error = T("no tiene param.sfo", "no param.sfo");
+    return {};
+}
+
+DlcInfo DescribeDlc(const fs::path& path) {
+    DlcInfo d;
+    d.path = path;
+    d.file = PathText(path.filename());
+    std::error_code ec;
+    std::map<std::string, std::string> sfo;
+    if (fs::is_directory(path, ec)) {
+        if (!fs::is_regular_file(path / L"sce_sys" / L"param.sfo", ec)) {
+            d.problem = T("la carpeta no tiene sce_sys\\param.sfo", "the folder has no sce_sys\\param.sfo");
+            return d;
+        }
+        sfo = ReadSfo(path / L"sce_sys" / L"param.sfo");
+    } else {
+        sfo = ReadPkgSfo(path, d.problem);
+        if (!d.problem.empty()) return d;
+    }
+    auto get = [&](const char* k) {
+        const auto it = sfo.find(k);
+        return it == sfo.end() ? std::string() : it->second;
+    };
+    const std::string content = get("CONTENT_ID");
+    const size_t dash = content.rfind('-');
+    d.label = dash == std::string::npos ? std::string() : content.substr(dash + 1);
+    d.title = get("TITLE");
+    if (get("TITLE_ID") != kTitleId || get("CATEGORY") != "ac" || d.label.size() != 16) {
+        d.problem = T("no es un DLC de CTR Nitro-Fueled (CUSA13795)", "not a CTR Nitro-Fueled (CUSA13795) DLC");
+        return d;
+    }
+    if (d.title.empty()) d.title = d.label;
+    d.ok = true;
+    return d;
+}
+
+std::vector<DlcInfo> ScanDlc() {
+    std::vector<DlcInfo> list;
+    std::error_code ec;
+    for (fs::directory_iterator it(DlcRoot(), ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code e2;
+        const bool pkg = it->is_regular_file(e2) && (it->path().extension() == L".pkg" || it->path().extension() == L".PKG");
+        if (pkg || it->is_directory(e2)) list.push_back(DescribeDlc(it->path()));
+    }
+    std::sort(list.begin(), list.end(), [](const DlcInfo& a, const DlcInfo& b) { return a.title < b.title; });
+    return list;
+}
+
+std::vector<std::string> SplitList(const std::string& text) {
+    std::vector<std::string> out;
+    std::stringstream ss(text);
+    std::string item;
+    while (std::getline(ss, item, ','))
+        if (!Trim(item).empty()) out.push_back(Trim(item));
+    return out;
+}
+
+std::string JoinList(const std::vector<std::string>& items) {
+    std::string out;
+    for (const auto& item : items) out += (out.empty() ? "" : ",") + item;
+    return out;
+}
+
+void AddDlcPackages() {
+    App& a = g_app;
+    const auto files = PickFiles(a.hwnd, L"DLC (.pkg)", L"PS4 DLC (*.pkg)", L"*.pkg");
+    if (files.empty()) return;
+    std::error_code ec;
+    fs::create_directories(DlcRoot(), ec);
+    int added = 0;
+    std::string problems;
+    for (const auto& file : files) {
+        const DlcInfo d = DescribeDlc(file);
+        if (!d.ok) {
+            problems += PathText(file.filename()) + ": " + d.problem + ". ";
+            continue;
+        }
+        const fs::path target = DlcRoot() / file.filename();
+        if (!CopyFileW(file.c_str(), target.c_str(), FALSE)) {
+            problems += PathText(file.filename()) + ": error " + std::to_string(GetLastError()) + ". ";
+            continue;
+        }
+        ++added;
+    }
+    a.notice = std::string(T("DLC añadidos: ", "DLC added: ")) + std::to_string(added) + (problems.empty() ? "" : ". " + problems);
+    a.dlc_dirty = true;
+}
+
+void DlcTab() {
+    App& a = g_app;
+    if (a.dlc_dirty) {
+        a.dlc = ScanDlc();
+        a.dlc_dirty = false;
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextUnformatted(T("Opcional: el juego funciona igual sin DLC. Los DLC de CTR Nitro-Fueled solo traen la licencia "
+                             "(el contenido ya está en el juego); el port los marca como instalados al iniciar.",
+                             "Optional: the game runs the same without DLC. CTR Nitro-Fueled's DLC only carry the license "
+                             "(the content is already in the game); the port reports them installed at start."));
+    ImGui::TextColored(kGrey, "%s", T("Usa tus propios paquetes DLC de PS4 (.pkg) de CUSA13795. Se copian a la carpeta dlc del "
+                                      "port; tus archivos originales no cambian.",
+                                      "Use your own PS4 DLC packages (.pkg) for CUSA13795. They are copied into the port's "
+                                      "dlc folder; your original files are not changed."));
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    LauncherFlag("dlc", T("Activar los DLC", "Enable DLC"), true);
+    const bool enabled = a.launcher.Flag("dlc", true);
+    std::vector<std::string> disabled = SplitList(a.launcher.Get("dlc_disabled"));
+
+    ImGui::SeparatorText(T("DLC encontrados", "DLC found"));
+    if (a.dlc.empty()) ImGui::TextColored(kGrey, "%s", T("No hay DLC en la carpeta dlc.", "No DLC in the dlc folder."));
+    ImGui::BeginDisabled(!enabled);
+    for (const auto& d : a.dlc) {
+        ImGui::PushID(d.file.c_str());
+        if (d.ok) {
+            bool on = std::find(disabled.begin(), disabled.end(), d.label) == disabled.end();
+            if (ImGui::Checkbox(d.title.c_str(), &on)) {
+                disabled.erase(std::remove(disabled.begin(), disabled.end(), d.label), disabled.end());
+                if (!on) disabled.push_back(d.label);
+                a.launcher.Set("dlc_disabled", JoinList(disabled));
+                SaveLauncher();
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(kGrey, "%s", d.label.c_str());
+        } else {
+            ImGui::TextColored(kRed, "%s: %s", d.file.c_str(), d.problem.c_str());
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(a.game_running);
+        if (ImGui::SmallButton(T("Quitar", "Remove"))) {
+            a.pending_path = d.path;
+            a.pending_action = 3;
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+    ImGui::Spacing();
+    if (ImGui::Button(T("Añadir DLC (.pkg)...", "Add DLC (.pkg)..."))) AddDlcPackages();
+    ImGui::SameLine();
+    if (ImGui::Button(T("Abrir la carpeta dlc", "Open the dlc folder"))) {
+        std::error_code ec;
+        fs::create_directories(DlcRoot(), ec);
+        OpenInShell(DlcRoot());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(T("Actualizar##dlc", "Refresh##dlc"))) a.dlc_dirty = true;
+    ImGui::TextColored(kGrey, "%s", T("Los cambios se aplican la próxima vez que pulses Jugar.", "Changes apply the next time you press Play."));
+}
+
 void SaveConfirmations() {
     App& a = g_app;
     if (a.pending_action) {
@@ -1658,10 +1899,13 @@ void SaveConfirmations() {
             ImGui::Text(T("¿Restaurar %s?", "Restore %s?"), name.c_str());
             ImGui::TextColored(kGrey, "%s", T("Tus partidas actuales se guardan antes en una copia automática.",
                                               "Your current saves are backed up automatically first."));
+        } else if (a.confirm_action == 3) {
+            ImGui::Text(T("¿Quitar %s de la carpeta dlc?", "Remove %s from the dlc folder?"), name.c_str());
+            ImGui::TextColored(kGrey, "%s", T("Solo se borra la copia del port.", "Only the port's copy is deleted."));
         } else {
             ImGui::Text(T("¿Borrar la copia %s? No se puede deshacer.", "Delete the backup %s? This cannot be undone."), name.c_str());
         }
-        if (ImGui::Button(a.confirm_action == 1 ? T("Restaurar", "Restore") : T("Borrar", "Delete"))) {
+        if (ImGui::Button(a.confirm_action == 1 ? T("Restaurar", "Restore") : a.confirm_action == 3 ? T("Quitar", "Remove") : T("Borrar", "Delete"))) {
             std::string error;
             if (a.confirm_action == 1) {
                 error = RestoreBackup(a.pending_path);
@@ -1673,6 +1917,7 @@ void SaveConfirmations() {
             }
             if (!error.empty()) a.notice = error;
             a.saves_dirty = true;
+            a.dlc_dirty = true;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -1784,6 +2029,12 @@ void Frame() {
         if (ImGui::BeginTabItem(T("Guardados", "Saves"))) {
             ImGui::BeginChild("saves");
             SavesTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("DLC")) {
+            ImGui::BeginChild("dlc");
+            DlcTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
@@ -1967,7 +2218,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             std::string result;
             if (op == L"--import" && argc == 4) result = ImportSaves(argv[2]);
             else if (op == L"--restore" && argc == 4) result = RestoreBackup(argv[2]);
-            else if (op == L"--patches") {
+            else if (op == L"--dlc") {
+                for (const auto& d : ScanDlc())
+                    result += d.file + " | " + d.title + " | " + d.label + " | " + (d.ok ? "ok" : d.problem) + "\n";
+            } else if (op == L"--patches") {
                 for (const auto& p : LoadPatches())
                     result += p.key + " | " + p.author + " | " + p.version + " | " + (p.ini_key ? p.ini_key : "-") +
                               (p.default_on ? " | on" : "") + "\n";
@@ -1986,8 +2240,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
     WNDCLASSEXW wc{sizeof wc, CS_CLASSDC, WndProc, 0, 0, instance, nullptr, nullptr, nullptr, nullptr, L"CtrNitroFueledPcLauncher", nullptr};
-    wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
-    wc.hIconSm = wc.hIcon;
+    wc.hIcon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXICON),
+                                              GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                                GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
     const int width = int(820 * scale), height = int(720 * scale);

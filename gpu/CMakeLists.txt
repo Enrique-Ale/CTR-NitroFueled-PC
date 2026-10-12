@@ -245,7 +245,7 @@ if (WIN32)
     add_executable(ctr-launcher WIN32 ../launcher/windows/launcher.cpp
         third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_win32.cpp
-        third_party/imgui/backends/imgui_impl_dx11.cpp)
+        third_party/imgui/backends/imgui_impl_dx11.cpp ../packaging/windows/launcher.rc)
     target_include_directories(ctr-launcher PRIVATE third_party/imgui third_party/imgui/backends)
     target_compile_definitions(ctr-launcher PRIVATE UNICODE _UNICODE)
     target_link_options(ctr-launcher PRIVATE -static -municode -s)

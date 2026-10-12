@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/logo.png" alt="CTR Nitro-Fueled PC" width="360">
+</p>
+
 # CTR-NitroFueled-PC
 
 **Crash Team Racing: Nitro-Fueled (PS4, CUSA13795 v1.21) running natively on Windows 10/11.**
@@ -24,10 +28,15 @@ compile in the background with the menu's experimental switch.
 ### Quick start (Windows)
 
 **Easiest: the portable build.** Download `CTR-NitroFueled-PC-portable-windows.zip` from
-[Releases](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases), unzip it, and follow
-`LEEME.txt` (Spanish): put your `CUSA13795` and `CUSA13795-patch` folders next to it, run
-`1-Mergear actualizacion.bat` once, then `Jugar CTR Nitro-Fueled.bat`. It needs Python 3 and a
-Vulkan 1.3 GPU; nothing else is installed.
+[Releases](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases), unzip it anywhere and open
+**`CTR-NitroFueled-PC.exe`**, the launcher: choose your `CUSA13795` (base game) and
+`CUSA13795-patch` (update 1.21) folders, press *Prepare the game* once (it merges them with hard
+links, no extra disk space) and then *Play*. Python is bundled; you only need a Vulkan 1.3 GPU.
+
+The launcher also has the game patches, FPS limit, display, monitor and controller settings, save
+backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
+(`.pkg`) and the port reports them installed (CTR Nitro-Fueled's DLC only carry the license; the
+content is in the game). Spanish and English.
 
 **Or build it yourself:**
 

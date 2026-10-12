@@ -160,7 +160,9 @@ def main():
                    'libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx')
         # Symbol names for the eboot's host-side imports (shadPS4's aerolib list, fetched once).
         run_python('tools/gen_import_names.py', '--out', out)
-        run_python('scripts/content_profile.py', game, '--out', out, '--sku', env.get('BB_CONTENT_SKU', 'full'))
+        # DLC (optional): the player's add-on packages in dlc\ (BB_DLC_DIR), reported installed.
+        run_python('scripts/content_profile.py', game, '--out', out, '--sku', env.get('BB_CONTENT_SKU', 'full'),
+                   '--dlc-dir', env.get('BB_DLC_DIR', data / 'dlc'))
         env.setdefault('BB_NEO', '0')
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
