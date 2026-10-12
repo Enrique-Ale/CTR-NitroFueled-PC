@@ -1955,6 +1955,32 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 }
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+#ifdef LAUNCHER_SELFTEST
+    // Test build only (CMake never defines it): file operations without the window.
+    //   --import <folder> <port>, --restore <backup> <port>, --patches <port>; result in <port>\selftest.txt
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argc >= 3) {
+            const std::wstring op = argv[1];
+            g_app.root = argv[argc - 1];
+            std::string result;
+            if (op == L"--import" && argc == 4) result = ImportSaves(argv[2]);
+            else if (op == L"--restore" && argc == 4) result = RestoreBackup(argv[2]);
+            else if (op == L"--patches") {
+                for (const auto& p : LoadPatches())
+                    result += p.key + " | " + p.author + " | " + p.version + " | " + (p.ini_key ? p.ini_key : "-") +
+                              (p.default_on ? " | on" : "") + "\n";
+                std::vector<std::string> on, off;
+                ReadPatchConfig(on, off);
+                for (const auto& k : on) result += "json enabled: " + k + "\n";
+                for (const auto& k : off) result += "json disabled: " + k + "\n";
+            }
+            std::ofstream(g_app.root / L"selftest.txt", std::ios::binary) << (result.empty() ? "OK" : result) << "\n";
+            return 0;
+        }
+    }
+#endif
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     ImGui_ImplWin32_EnableDpiAwareness();
     const float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
