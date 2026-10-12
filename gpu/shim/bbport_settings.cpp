@@ -311,7 +311,13 @@ void Save() {
         std::filesystem::rename(temporary, Path(), error);
     }
     if (!ok || error) {
-        std::printf("Settings: cannot write %s\n", Path());
+        std::printf("Settings: cannot write %s (%s)\n", Path(), error ? error.message().c_str() : "write failed");
+    } else {
+        std::printf("Settings: saved %s (", Path());
+        for (int g = 0; g < GamePatchCount; ++g) {
+            std::printf("%s%s=%d", g ? ", " : "", GamePatches[g].key, int(v.game_patches[g]));
+        }
+        std::printf(")\n");
     }
 }
 

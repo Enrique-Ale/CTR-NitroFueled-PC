@@ -491,7 +491,11 @@ void Menu() {
                                               "Патчи игры (после перезапуска)"));
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         const auto& patch = BbSettings::GamePatches[g];
+        const bool before = s.game_patches[g];
         Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
+        if (before != s.game_patches[g]) {
+            std::printf("Menu: %s = %d (applies after the restart)\n", patch.key, int(s.game_patches[g]));
+        }
     }
     Hint(BbSettings::MenuText("From patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), applied to the executable at start.",
                               "Из patches/CrashTeamRacing.xml (illusionyy/PS-Game-Patch), применяются к исполняемому файлу при запуске."));

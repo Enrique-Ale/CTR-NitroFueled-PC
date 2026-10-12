@@ -21,10 +21,14 @@ import time
 PORT = Path(__file__).resolve().parent
 TITLE_ID = 'CUSA13795'
 APP_VERSION = '01.21'
+LOG = None  # last_run.log (or BB_SAVE_LOG's file): everything this launch prints
 
 
 def fail(message, code=1):
     print(message, file=sys.stderr)
+    if LOG:
+        LOG.write(message + '\n')
+        LOG.flush()
     sys.exit(code)
 
 
@@ -42,11 +46,25 @@ def no_console():
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
+def emit(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
+    if LOG:
+        LOG.write(text)
+        LOG.flush()
+
+
+def say(message):
+    emit(message + '\n')
+
+
 def run_python(script, *args, capture=False):
     command = [sys.executable, str(PORT / script), *map(str, args)]
-    result = subprocess.run(command, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE if capture else None, text=True,
-                            creationflags=no_console())
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=None if capture else subprocess.STDOUT, text=True,
+                            encoding='utf-8', errors='replace', creationflags=no_console())
+    if not capture and result.stdout:
+        emit(result.stdout)
     if result.returncode:
         sys.exit(result.returncode)
     return result.stdout if capture else None
@@ -67,24 +85,15 @@ def ini_has(path, line):
         return False
 
 
-class Tee:
-    """BB_SAVE_LOG=1: the game's output also goes to logs/<time>.log."""
-
-    def __init__(self, path):
-        self.file = open(path, 'w', encoding='utf-8', errors='replace')
-
-    def pump(self, stream):
-        for raw in iter(stream.readline, b''):
-            line = raw.decode('utf-8', errors='replace')
-            sys.stdout.write(line)
-            sys.stdout.flush()
-            self.file.write(line)
-            self.file.flush()
+def pump(stream):
+    for raw in iter(stream.readline, b''):
+        emit(raw.decode('utf-8', errors='replace'))
 
 
 def main():
     args = sys.argv[1:]
-    if len(args) >= 2 and args[0] == '--after':
+    restarted = len(args) >= 2 and args[0] == '--after'
+    if restarted:
         wait_for(int(args[1]))
         args = args[2:]
     os.chdir(PORT)  # as run.sh: relative paths are from the port
@@ -104,7 +113,9 @@ def main():
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
 
-    tee = None
+    # The output of every launch also goes to last_run.log (an in-game restart appends to it);
+    # BB_SAVE_LOG=1 (with frame statistics) writes logs/<time>.log instead.
+    global LOG
     if env.get('BB_SAVE_LOG') == '1':
         logs = data / 'logs'
         logs.mkdir(parents=True, exist_ok=True)
@@ -112,8 +123,11 @@ def main():
         env['BB_FRAME_STATS'] = '1'
         env.setdefault('BB_FRAME_LOG', str(logs / f'{stamp}.frames.csv'))
         env.setdefault('BB_READBACK_LOG', str(logs / f'{stamp}.readbacks.csv'))
-        print(f'Log: {logs / (stamp + ".log")}')
-        tee = Tee(logs / f'{stamp}.log')
+        LOG = open(logs / f'{stamp}.log', 'w', encoding='utf-8', errors='replace')
+        say(f'Log: {logs / (stamp + ".log")}')
+    else:
+        LOG = open(data / 'last_run.log', 'a' if restarted else 'w', encoding='utf-8', errors='replace')
+    say(f'--- SacredFire launch {time.strftime("%Y-%m-%d %H:%M:%S")}{" (restart)" if restarted else ""}')
 
     # BB_GAME_DIR: the merged CTR dump (update 1.21 copied over the base game).
     game = Path(env.get('BB_GAME_DIR', PORT / 'orig' / TITLE_ID))
@@ -126,7 +140,7 @@ def main():
     if check.returncode:
         fail(check.stdout.strip() or 'Game check failed.', 2)
     env['BB_GAME_PROFILE'] = check.stdout.strip() or 'ctr'
-    print(f'Game profile: {env["BB_GAME_PROFILE"]}')
+    say(f'Game profile: {env["BB_GAME_PROFILE"]}')
 
     original_game = game.resolve()
     game = Path(run_python('scripts/mods.py', game, '--out', out,
@@ -148,14 +162,14 @@ def main():
                    '--settings', config)
 
         env.setdefault('BB_NEO', '0')
-        print(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
+        say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
             shutil.rmtree(user_dir / 'cache' / TITLE_ID, ignore_errors=True)
-            print('Shader cache: cleared for this launch (BB_CLEAR_SHADER_CACHE=1)')
+            say('Shader cache: cleared for this launch (BB_CLEAR_SHADER_CACHE=1)')
         if ini_has(config, 'patch_60fps=1'):
             env.setdefault('BB_VBLANK_HZ', '480')
-            print(f'60 FPS patch on: virtual vblank {env["BB_VBLANK_HZ"]} Hz')
+            say(f'60 FPS patch on: virtual vblank {env["BB_VBLANK_HZ"]} Hz')
         env.setdefault('BB_PREUPLOAD', '1')
         # The PC memory model (dma-buf guest memory) is Linux only: the 0.3 model on Windows.
         env['BB_GUEST_IN_PLACE'] = '0'
@@ -171,7 +185,7 @@ def main():
             if candidate.is_file():
                 version = candidate.read_text().strip()
                 break
-        print(f'SacredFire {version or "unknown version"}')
+        say(f'SacredFire {version or "unknown version"}')
         # The GPU library builds its path table when it loads: the user directory must exist.
         user_dir.mkdir(parents=True, exist_ok=True)
         env['BB_GPU_USER_DIR'] = str(user_dir)
@@ -182,15 +196,14 @@ def main():
                    '--app0', str(game), '--user', str(user_dir),
                    '--timeout', env.get('BB_TIMEOUT', '0'), *args]
         # No stdin: an inherited pipe (Git Bash, MSYS2) cost the game its console output.
-        if tee:
-            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                       stderr=subprocess.STDOUT, creationflags=no_console())
-            pump = threading.Thread(target=tee.pump, args=(process.stdout,), daemon=True)
-            pump.start()
-            code = process.wait()
-            pump.join(timeout=5)
-            return code
-        return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, creationflags=no_console())
+        reader = threading.Thread(target=pump, args=(process.stdout,), daemon=True)
+        reader.start()
+        code = process.wait()
+        reader.join(timeout=5)
+        say(f'--- the game ended with code {code}')
+        return code
     finally:
         if mod_view:
             shutil.rmtree(mod_view, ignore_errors=True)
