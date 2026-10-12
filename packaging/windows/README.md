@@ -37,6 +37,30 @@ links (no copy, the dumps stay untouched; same drive):
 python tools/merge_update.py <path>/CUSA13795 <path>/CUSA13795-patch <path>/CUSA13795-1.21
 ```
 
+## Launcher
+
+`CTR-NitroFueled-PC.exe` (`launcher/windows/launcher.cpp`, target `ctr-launcher`; Dear ImGui on
+Win32 + Direct3D 11, linked statically, no DLLs) is what players open:
+
+- **Play**: base game and 1.21 update folders (told apart by `param.sfo`), merged with hard links
+  into `CUSA13795-1.21`, checked with `scripts/game_check.py`; starts `run.py` with the bundled
+  Python in a job object and shows its output.
+- **Settings**: FPS limit, background shader compiles, fullscreen, FPS counter (`bbport.ini`, the
+  in-game menu's keys); monitor, present mode, controller, game language, PS4 Pro mode
+  (`launcher.ini`, passed as `BB_*` variables).
+- **Patches**: every patch for CUSA13795 01.21 in `patches\*.xml`; the three community patches
+  keep their `bbport.ini` keys, others go through `patches.json`.
+- **Saves**: backups to `backups\`, restore, export, import of another PC's saves or a decrypted
+  PS4 save (`sce_sys\param.sfo`, converted to the runtime's `<dir>` + `<dir>.sce_sys\param.bin`).
+- **DLC** (optional): the player's own add-on packages (`.pkg`) copied into `dlc\`.
+  `scripts/content_profile.py` reads their entitlement labels (package header and `param.sfo`,
+  nothing is extracted: CTR Nitro-Fueled's DLC only carry the license) into `content.bin`
+  (`BBCONT02`), and the runtime reports them installed from `sceAppContentGetAddcontInfoList`.
+  `BB_DLC=0` / `BB_DLC_DISABLED=label,...` turn them off.
+
+A test build with `-DLAUNCHER_SELFTEST` runs the file operations from the command line
+(`--import`, `--restore`, `--patches`, `--dlc`).
+
 ## Run
 
 `run.py` is the Windows `run.sh` (same variables; MSYS2's Python or a python.org Python):
@@ -62,7 +86,7 @@ moves them).
 | SIGSEGV handler, `sigsetjmp` recovery | Vectored exception handler; `bb_setjmp`/`bb_longjmp` (`src/compat_win.c`). |
 | glibc sleeps, `CLOCK_MONOTONIC` condition variables | High-resolution waitable timers; semaphore and event flag deadlines on `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
 | `libbbgpu.so` | A static `libbbgpu.a` linked into `sacredfire.exe`, with a manifest for UTF-8 and long paths. |
-| `run.sh`, GTK launcher | `run.py`; no launcher window yet (the in-game menu has the game's settings). |
+| `run.sh`, GTK launcher | `run.py` and the Windows launcher (`CTR-NitroFueled-PC.exe`, above). |
 | Save files replaced with `rename` | `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`; all files opened in binary mode. |
 
 Not available on Windows: the PC memory model (`BB_PC_MODEL`/`BB_GUEST_IN_PLACE`, dma-buf guest

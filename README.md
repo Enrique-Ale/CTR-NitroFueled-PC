@@ -18,12 +18,18 @@ of it: see [packaging/windows/README.md](packaging/windows/README.md).
 > *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their owners, named
 > here only to identify the game this software runs.
 
-**Status on Windows: playable.** Menus, races, sound, Xbox controller, saving, the community
-patches (60 FPS, no motion blur) from the in-game menu, restart from the menu. Tested on
-Windows 11 24H2 with an NVIDIA RTX 3070 and an Intel i5-9500: 110-130 FPS uncapped in races
-with the 60 FPS patch (the menu's FPS limit keeps it at 60 by default). Shaders seen for the
-first time cause short stalls; they are cached and load at start from the next session on, or
-compile in the background with the menu's experimental switch.
+**Status on Windows: playable.** Menus, Adventure and Arcade, races, sound, cutscenes, Xbox/SDL
+controllers and keyboard, saving, the community patches (60 FPS, no motion blur, 1080p Pro),
+restart from the in-game menu, and the game's DLC from your own packages (optional). Tested on
+Windows 11 24H2 with an NVIDIA RTX 3070 and an Intel i5-9500: 110-130 FPS uncapped in races with
+the 60 FPS patch (the FPS limit keeps it at 60 by default; up to 240). Shaders seen for the first
+time cause short stalls; they are cached and load at start from the next session on, or compile
+in the background with the experimental switch.
+
+| Release | What it brought |
+|---|---|
+| [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
+| [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
 
 ### Quick start (Windows)
 
