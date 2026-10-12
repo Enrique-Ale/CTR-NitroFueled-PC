@@ -859,7 +859,14 @@ void PlayTab() {
             ChooseFolder(a.game_dir, a.game_info, L"CUSA13795 + 1.21");
         }
     } else {
-        if (a.game_info.kind != Kind::Empty) {
+        if (a.game_info.kind == Kind::Update) {
+            ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
+                               T("solo tiene la actualización 1.21, falta el juego base",
+                                 "only has the 1.21 update, the base game is missing"));
+        } else if (a.game_info.kind == Kind::Base) {
+            ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
+                               T("es el juego base sin la actualización 1.21", "is the base game without the 1.21 update"));
+        } else if (a.game_info.kind != Kind::Empty) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(), Describe(a.game_info).c_str());
         }
         ImGui::PushTextWrapPos(0.0f);
