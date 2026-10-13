@@ -7,6 +7,17 @@ REQUISITOS (no incluidos, los pones tu)
 ----------------------------------------
 1. Tu dump del juego base (carpeta CUSA13795) y de la actualizacion 1.21
    (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
+   Que dumps sirven:
+   - Archivos descifrados de CUSA13795 (la edicion USA). El nombre de las
+     carpetas da igual; el launcher dice en verde o rojo que encontro.
+   - Dump hecho desde tu PS4 con un dumper: eboot.bin, sce_module y
+     sce_sys\param.sfo directamente en cada carpeta. Funciona.
+   - Extraido con PS4 PKG Tool: carpetas Image0 (eboot.bin, sce_module,
+     datos) y Sc0 (param.sfo). Funciona: elige la carpeta que contiene
+     Image0 y Sc0 y pulsa "Preparar el juego".
+   - No sirven: un .pkg sin extraer (solo la pestana DLC usa .pkg), otra
+     region o edicion (EU CUSA14876, JP...) ni archivos cifrados ("eboot.bin
+     could not be read as a decrypted PS4 executable").
 2. GPU con Vulkan 1.3 y sus drivers al dia.
 Python ya viene incluido (carpeta python\): no hay que instalar nada.
 

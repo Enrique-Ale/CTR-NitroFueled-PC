@@ -47,6 +47,25 @@ backups and imports (including decrypted PS4 saves), and optional DLC: add your 
 (`.pkg`) and the port reports them installed (CTR Nitro-Fueled's DLC only carry the license; the
 content is in the game). Spanish and English.
 
+### Which game dumps work
+
+The launcher needs the game as **folders of decrypted files** from **CUSA13795** (the USA
+edition): the base game (v01.00) and the 1.21 update. The folder names do not matter. When you
+choose a folder, the launcher says in green or red what it found.
+
+| Your dump | What it looks like | Works? |
+|---|---|---|
+| Dumped from your own PS4 with a game dumper | `eboot.bin`, `sce_module\`, `sce_sys\param.sfo`… directly in each folder (base, update) | Yes |
+| Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.3: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
+| Any other tool | Works if the files end up in one of the two layouts above | Yes |
+| A `.pkg` file that was not extracted | | No: extract it first. Only the DLC tab takes `.pkg` files |
+| Another region or edition (EU CUSA14876, JP…) | | No: each one has a different executable |
+| Encrypted files (straight from a disc or an official package) | `eboot.bin could not be read as a decrypted PS4 executable` | No: dump the game again |
+
+Both builds of the 1.21 update work (for firmware 5.05 and for 6.72+). If something fails, the
+launcher's log and `user\last_run.log` say which file is missing; attach `last_run.log` when you
+[open an issue](https://github.com/GetLostIn/CTR-NitroFueled-PC/issues).
+
 **Or build it yourself:**
 
 1. Install [MSYS2](https://www.msys2.org) to `C:\msys64` and the packages listed in
@@ -125,7 +144,8 @@ full play-through has not been verified, and the Steam Deck (RADV) is the only t
 - Or Windows 10 (1903+)/11 64-bit with a Vulkan 1.3 GPU, built with MSYS2 CLANG64: see
   [packaging/windows/README.md](packaging/windows/README.md). Tested: Windows 11, NVIDIA RTX 3070.
 - Your decrypted dump of CUSA13795 with the 1.21 update merged in: copy the dumped update over
-  the base game, replacing files (eboot.bin and sce_sys too). The launcher and `run.sh` check
+  the base game, replacing files (eboot.bin and sce_sys too), or use `tools/merge_update.py`
+  (it also reads PS4 PKG Tool's Image0 + Sc0 layout; see "Which game dumps work" above). The launcher and `run.sh` check
   the executable image and say what is missing (`BB_SKIP_GAME_CHECK=1` skips the check).
 - To build: GCC, CMake, Ninja, Python 3, glslang, SDL3, Vulkan headers and the libraries in
   `shell.nix` (with [Nix](https://nixos.org), `shell.nix` provides them). On Arch:
