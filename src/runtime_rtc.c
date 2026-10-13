@@ -4,6 +4,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -144,7 +145,52 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     return 0;
 }
 
+/* SacredFire: sceRtcParseDateTime (dates from web services, online): RFC 3339
+ * ("2026-10-13T18:20:00.5Z", "...+05:00") or RFC 2822 ("Tue, 13 Oct 2026 18:20:00 GMT" / "+0500"),
+ * to a UTC tick. */
+#define ERR_BAD_PARSE ((int32_t)0x80B50007)
+static ABI int32_t rtc_parse_date_time(uint64_t *utc, const char *text) {
+    if (!utc || !text) return ERR_INVALID_POINTER;
+    DateTime t={0};
+    int y=0,mo=0,d=0,h=0,mi=0,se=0,n=0;
+    int64_t offset_minutes=0;
+    const char *rest=NULL;
+    while (*text==' ') ++text;
+    if (sscanf(text,"%4d-%2d-%2d%*[Tt ]%2d:%2d:%2d%n",&y,&mo,&d,&h,&mi,&se,&n)==6) {
+        rest=text+n;
+        if (*rest=='.') { /* fraction: microseconds from the first six digits */
+            uint32_t us=0; int digits=0;
+            for (++rest; *rest>='0' && *rest<='9'; ++rest) if (digits<6) { us=us*10+(uint32_t)(*rest-'0'); ++digits; }
+            while (digits++<6) us*=10;
+            t.microsecond=us;
+        }
+        if (*rest=='+' || *rest=='-') {
+            int oh=0, om=0;
+            if (sscanf(rest+1,"%2d:%2d",&oh,&om)<1) return ERR_BAD_PARSE;
+            offset_minutes=(*rest=='-' ? -1 : 1)*(oh*60+om);
+        } else if (*rest!='Z' && *rest!='z' && *rest) return ERR_BAD_PARSE;
+    } else {
+        static const char *months[]={"Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"};
+        char month[4]={0}, zone[8]={0};
+        const char *p=strchr(text,',');
+        p=p ? p+1 : text;
+        if (sscanf(p,"%d %3s %d %d:%d:%d %7s",&d,month,&y,&h,&mi,&se,zone)<6) return ERR_BAD_PARSE;
+        for (int i=0;i<12;++i) if (!strcmp(month,months[i])) mo=i+1;
+        if (!mo) return ERR_BAD_PARSE;
+        if (zone[0]=='+' || zone[0]=='-') {
+            const int hhmm=atoi(zone+1);
+            offset_minutes=(zone[0]=='-' ? -1 : 1)*(hhmm/100*60+hhmm%100);
+        }
+    }
+    t.year=(uint16_t)y; t.month=(uint16_t)mo; t.day=(uint16_t)d; t.hour=(uint16_t)h; t.minute=(uint16_t)mi; t.second=(uint16_t)se;
+    const int32_t e=validate(&t);
+    if (e) return e;
+    *utc=(uint64_t)((int64_t)to_tick(&t)-offset_minutes*60000000);
+    return 0;
+}
+
 static const RuntimeExport exports[]={
+    {"sceRtcParseDateTime",rtc_parse_date_time},
     {"sceRtcGetCurrentClockLocalTime",rtc_current_local}, {"sceRtcGetCurrentClock",rtc_current_clock},
     {"sceRtcGetCurrentTick",rtc_current_tick}, {"sceRtcGetCurrentNetworkTick",rtc_current_tick},
     {"sceRtcConvertUtcToLocalTime",rtc_utc_to_local}, {"sceRtcConvertLocalTimeToUtc",rtc_local_to_utc},
