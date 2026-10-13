@@ -92,6 +92,20 @@ bool SceneTargets::Eligible(const VideoCore::Image& image) const {
     }
     return Blittable(image.backing->image.image_ci.format) || ShaderResampled(image);
 }
+std::string SceneTargets::Why(const VideoCore::Image& image) const {
+    if (!image.backing) return "no backing";
+    const auto format = image.backing->image.image_ci.format;
+    const auto features = Features(format);
+    return std::string("blit ") + (Blittable(format) ? "1" : "0") + " sampled " +
+           ((features & vk::FormatFeatureFlagBits::eSampledImage) ? "1" : "0") + " ds " +
+           ((features & vk::FormatFeatureFlagBits::eDepthStencilAttachment) ? "1" : "0") +
+           " stencil " +
+           ((image.aspect_mask & vk::ImageAspectFlagBits::eStencil) ? "1" : "0") +
+           " export " + (instance.IsShaderStencilExportSupported() ? "1" : "0") + " forced " +
+           (force_stencil_bits ? "1" : "0") + " resampled " +
+           (ShaderResampled(image) ? "1" : "0") + " divisor " +
+           std::to_string(image.info.size.width) + "x" + std::to_string(image.info.size.height);
+}
 bool SceneTargets::EligibleScene(const VideoCore::Image& image) const {
     return image.info.size.width == 1920 && image.info.size.height == 1080 && Eligible(image);
 }

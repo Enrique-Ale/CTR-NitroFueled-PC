@@ -3,6 +3,7 @@
 #include <array>
 #include <memory>
 #include <optional>
+#include <string>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -31,6 +32,8 @@ public:
     bool Eligible(const VideoCore::Image&) const;
     /// Eligible at the full scene size (1920x1080): the upscaler's inputs, the scene start.
     bool EligibleScene(const VideoCore::Image&) const;
+    /// Diagnostics: the format checks behind Eligible (blit, shader resample, stencil export).
+    std::string Why(const VideoCore::Image&) const;
     /// The proxy size of an eligible image: the scene size divided like the native size.
     SceneResolution::Size ProxySize(const VideoCore::Image&, u32 level = 0) const;
     struct Target {

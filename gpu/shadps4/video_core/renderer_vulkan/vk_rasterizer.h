@@ -619,6 +619,7 @@ private:
     float sampler_lod_bias = 0.0f; ///< bbport: extra bias of this draw's samplers
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
     bool scene_debug_frame = false; ///< BB_SCENE_DEBUG: this frame's passes are printed
+    bool last_draw_display = false; ///< the previous draw targeted a display buffer
     u32 preupload_frame = ~0u; ///< bbport: frame of the last background pre-upload
     bool PendingWriteOverlaps(VAddr address, u64 size);
     /// Stage B: the ring bindings of the stages of the packet being recorded.

@@ -1467,8 +1467,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const auto& regs = Regs();
     // bbport: the pass copying a finished frame to a display buffer; the previous draw's
     // target is that frame.
-    if (camera_motion->Enabled() && regs.color_buffers[0] &&
-        FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+    // SacredFire: CTR draws its HUD straight into the display buffer (dozens of draws); only
+    // the first draw of such a run starts a frame (Bloodborne's display pass is one draw).
+    const bool display_draw =
+        regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address());
+    const bool display_start = display_draw && !last_draw_display;
+    last_draw_display = display_draw;
+    if (camera_motion->Enabled() && display_start) {
         scene_started = false;
         camera_motion->OnDisplayPass(cb_descs[0].first);
         if (upscaler->OnFrameStart()) {
@@ -3401,12 +3406,15 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         std::string depth = "none";
         if (db_desc.first) {
             const auto& d = texture_cache.GetImage(db_desc.first);
-            depth = fmt::format("{} {}x{} levels {} block {} eligible {} scene {}",
+            depth = fmt::format("{} {}x{}x{} levels {} layers {} samples {}/{} block {} "
+                                "eligible {} scene {} ({})",
                                 vk::to_string(d.backing ? d.backing->image.image_ci.format
                                                         : vk::Format::eUndefined),
-                                d.info.size.width, d.info.size.height, d.info.resources.levels,
+                                d.info.size.width, d.info.size.height, d.info.size.depth,
+                                d.info.resources.levels, d.info.resources.layers,
+                                d.info.num_samples, d.backing ? d.backing->num_samples : 0,
                                 u32(d.info.props.is_block), scene_targets->Eligible(d),
-                                scene_targets->EligibleScene(d));
+                                scene_targets->EligibleScene(d), scene_targets->Why(d));
         }
         std::printf("Scene start check: mrt %#x (%d targets, need %d) started %d size %ux%u "
                     "depth [%s]\n",
