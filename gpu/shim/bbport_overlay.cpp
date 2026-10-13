@@ -513,6 +513,16 @@ void Menu() {
             ImGui::EndCombo();
         }
         Checkbox(BbSettings::MenuText("FSR 1 upscaling", "Апскейл FSR 1"), s.fsr1);
+        Checkbox(BbSettings::MenuText("FSR 3 (experimental)", "FSR 3 (экспериментально)"), s.fsr3);
+        Hint(BbSettings::MenuText(
+            "AMD FSR 3.1 temporal upscaling: rebuilds detail over several frames from the game's "
+            "depth and motion. Also smooths edges at the same resolution. Experimental: may smear "
+            "or shimmer. Applies at once; takes over from FSR 1 in races.",
+            "Временной апскейл AMD FSR 3.1. Экспериментально. Применяется сразу."));
+        if (s.fsr3) {
+            Slider(BbSettings::MenuText("FSR 3 sharpness", "Резкость FSR 3"), s.fsr3_sharpness,
+                   0.0f, 1.0f);
+        }
         Hint(BbSettings::MenuText(
             "When the scene is smaller than the picture (720p, 480p, 1440p and 1620p on the 4K "
             "picture), AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges "

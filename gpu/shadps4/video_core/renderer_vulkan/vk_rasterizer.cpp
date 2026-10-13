@@ -72,6 +72,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     camera_motion->SetObjectMotion(object_motion.get());
     upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime,
                                                   *camera_motion, *scene_targets);
+    ctr_fsr3 = std::make_unique<CtrFsr3>(instance, scheduler, texture_cache, runtime);
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -589,6 +590,13 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         const auto& vp = regs.viewports[0];
         camera_motion->OnGBufferPass(db_desc.first, vp.xscale < 0.0f ? -1.0f : 1.0f,
                                      vp.yscale < 0.0f ? -1.0f : 1.0f);
+    }
+    // SacredFire: CTR's G-buffer pass (four color targets and the scene depth): the depth and the
+    // velocity target (color 3) feed FSR 3, and the pass's draws are the scene.
+    ctr_gbuffer_draw = std::popcount(key.mrt_mask) == 4 && db_desc.first && cb_descs[3].first &&
+                       ctr_fsr3->Enabled();
+    if (ctr_gbuffer_draw) {
+        ctr_fsr3->OnGBufferPass(db_desc.first, cb_descs[3].first);
     }
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
@@ -1477,9 +1485,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     last_draw_display = display_draw;
     if (display_start) {
         // The previous draw's target is the finished scene the display pass stretches.
-        fsr_pending = BbSettings::Get().fsr1 && cb_descs[0].first;
+        fsr_pending = (BbSettings::Get().fsr1 || ctr_fsr3->Enabled()) && cb_descs[0].first;
         fsr_source = cb_descs[0].first;
         fsr_done = false;
+        ctr_fsr3->OnFrameEnd();
     } else if (!display_draw) {
         fsr_pending = false;
     }
@@ -1640,6 +1649,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
         draw_jitter = upscaler->Jitter();
     }
+    if (draw_jitter[0] == 0.0f && draw_jitter[1] == 0.0f) {
+        draw_jitter = ctr_fsr3->DrawJitter(
+            db_desc.first, regs.num_indices <= 6 && regs.num_instances.NumInstances() <= 1);
+    }
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
@@ -1777,6 +1790,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
         draw_jitter = upscaler->Jitter();
     }
+    if (draw_jitter[0] == 0.0f && draw_jitter[1] == 0.0f) {
+        draw_jitter = ctr_fsr3->DrawJitter(db_desc.first, false);
+    }
     UpdateDynamicState(pipeline, is_indexed);
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
@@ -1843,6 +1859,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     buffer_cache.NewPacket();
     FrameCapture::Poll();
     gbuffer_draw = false;
+    ctr_gbuffer_draw = false;
     fsr_pending = false;
 
     scheduler.PopPendingOperations();
@@ -2713,6 +2730,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     memory->IsValidGpuMapping(ring->address, 0)) {
                     camera_motion->OnConstants(reinterpret_cast<const float*>(ring->address));
                 }
+                if (ring->size == 528 && ctr_gbuffer_draw &&
+                    stage.sw_stage == Shader::SwStage::Vertex &&
+                    ctr_fsr3->WantsCameraConstants() &&
+                    memory->IsValidGpuMapping(ring->address, 0)) {
+                    ctr_fsr3->OnCameraConstants(reinterpret_cast<const float*>(ring->address));
+                }
                 push_data.AddOffset(binding.buffer, 0);
             }
             buffer_infos.emplace_back(constant_ring->Handle(), ring->offset, ring->size);
@@ -2773,6 +2796,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
+            }
+            if (vsharp.GetSize() == 528 && ctr_gbuffer_draw &&
+                stage.sw_stage == Shader::SwStage::Vertex && ctr_fsr3->WantsCameraConstants() &&
+                memory->IsValidGpuMapping(vsharp.base_address, 0)) {
+                ctr_fsr3->OnCameraConstants(reinterpret_cast<const float*>(vsharp.base_address));
             }
             // Object motion research: the vertex shader buffers of G-buffer draws.
             if (FrameCapture::Active() && gbuffer_draw && stage.sw_stage == Shader::SwStage::Vertex &&
@@ -3117,9 +3145,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
             }
             if (FsrRedirects(image_id) && !is_storage && !image.info.props.is_depth) {
-                if (const auto upscaled = DisplayFsr(image_id, view)) {
+                if (const auto upscaled = DisplayFsr(image_id, view, image_view.info.format)) {
                     view = upscaled;
-                    layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                    layout = fsr_layout;
                     set_ok = false;
                 }
             }
@@ -4390,12 +4418,14 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
     });
 }
 
-vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view) {
+vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view,
+                                     vk::Format view_format) {
     if (fsr_done) {
         return fsr_view;
     }
     fsr_done = true;
     fsr_view = vk::ImageView{};
+    fsr_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     const auto target = cb_descs[0].first;
     if (!target) {
         return {};
@@ -4404,6 +4434,17 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
     const auto& display = texture_cache.GetImage(target);
     const vk::Extent2D in{source.info.size.width, source.info.size.height};
     const vk::Extent2D out{display.info.size.width, display.info.size.height};
+    // SacredFire: FSR 3 first (races and other 3D scenes); FSR 1 or the plain stretch otherwise.
+    if (ctr_fsr3->Enabled()) {
+        if (const auto upscaled = ctr_fsr3->Upscale(id, view_format, out, fsr_layout)) {
+            fsr_view = upscaled;
+            return fsr_view;
+        }
+        fsr_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    }
+    if (!BbSettings::Get().fsr1) {
+        return {};
+    }
     // Only a smaller scene of the display's shape: no FSR at native size or for other images.
     if (in.width >= out.width || in.height >= out.height || in.width * 4 < out.width ||
         std::abs(double(in.width) / in.height - double(out.width) / out.height) > 0.02) {

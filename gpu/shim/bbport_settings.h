@@ -105,6 +105,9 @@ struct Values {
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> render_res{-1}; ///< index into RenderResHeights, -1 when not set
     std::atomic<bool> fsr1{true}; ///< SacredFire: FSR 1 for the game's scene-to-display stretch
+    /// SacredFire: FSR 3 temporal upscaling/AA of the finished frame (vk_ctr_fsr3; experimental).
+    std::atomic<bool> fsr3{false};
+    std::atomic<float> fsr3_sharpness{0.3f}; ///< FSR 3's RCAS, 0 off .. 1
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.

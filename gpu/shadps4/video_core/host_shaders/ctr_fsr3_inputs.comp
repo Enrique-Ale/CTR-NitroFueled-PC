@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// SacredFire: FSR 3 inputs from CTR's G-buffer (docs/sacredfire/14-fsr3.md). The game keeps its
+// scene depth (D32) and a velocity target (RGBA8, the motion blur's input; cleared to 0.498 in G
+// and B) at 2x MSAA; FSR 3 takes single-sample images. Sample 0 of both is copied: the depth as
+// is (R32F), the velocity decoded to pixels at render size (RG16F, previous minus current
+// position). The decoding is a guess under test: `scale` and `bias` come from the settings.
+// `debug` replaces the frame shown with a view of these inputs (RGBA8 at render size).
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+layout(local_size_x = 8, local_size_y = 8) in;
+#ifdef MSAA
+layout(binding = 0) uniform texture2DMS depth_tex;
+layout(binding = 1) uniform texture2DMS velocity_tex;
+#define FETCH(tex, p) texelFetch(tex, p, 0)
+#else
+layout(binding = 0) uniform texture2D depth_tex;
+layout(binding = 1) uniform texture2D velocity_tex;
+#define FETCH(tex, p) texelFetch(tex, p, 0)
+#endif
+layout(binding = 2, r32f) uniform writeonly image2D depth_img;
+layout(binding = 3, rg16f) uniform writeonly image2D motion_img;
+layout(binding = 4, rgba8) uniform writeonly image2D debug_img;
+
+layout(push_constant) uniform Params {
+    vec2 scale;     // pixels per unit of (channel - bias)
+    vec2 bias;      // the encoded zero
+    uint channels;  // x channel in bits 0-1, y channel in bits 2-3
+    uint debug;     // 0 off, 1 motion, 2 depth, 3 raw velocity
+    uint write_debug;
+    float pad;
+} params;
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(depth_img)))) {
+        return;
+    }
+    const float depth = FETCH(depth_tex, pixel).r;
+    const vec4 raw = FETCH(velocity_tex, pixel);
+    const vec2 encoded = vec2(raw[params.channels & 3u], raw[(params.channels >> 2) & 3u]);
+    const vec2 motion = (encoded - params.bias) * params.scale;
+    imageStore(depth_img, pixel, vec4(depth));
+    imageStore(motion_img, pixel, vec4(motion, 0.0, 0.0));
+    if (params.write_debug == 0u) {
+        return;
+    }
+    vec4 shown = raw;
+    if (params.debug == 1u) {
+        // Motion: red right, green down, blue left/up; a pixel of motion is full brightness.
+        shown = vec4(clamp(motion.x, 0.0, 1.0) + clamp(-motion.x, 0.0, 1.0) * 0.25,
+                     clamp(motion.y, 0.0, 1.0) + clamp(-motion.y, 0.0, 1.0) * 0.25,
+                     clamp(-motion.x - motion.y, 0.0, 1.0), 1.0);
+        shown.rgb = max(shown.rgb, vec3(0.08));
+    } else if (params.debug == 2u) {
+        shown = vec4(vec3(fract(depth * 64.0)) * 0.5 + vec3(depth) * 0.5, 1.0);
+    }
+    imageStore(debug_img, pixel, shown);
+}

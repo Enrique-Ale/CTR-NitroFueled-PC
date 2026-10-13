@@ -1,0 +1,650 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_ctr_fsr3.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+#include <vk_mem_alloc.h>
+
+#include "bbport_settings.h"
+#include "ffx_vk_portable.h"
+#include "video_core/host_shaders/ctr_fsr3_inputs_comp.h"
+#include "video_core/host_shaders/ctr_fsr3_inputs_msaa_comp.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_platform.h"
+#include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/texture_cache/texture_cache.h"
+
+namespace Vulkan {
+
+namespace {
+
+// The velocity decoding (shader push constants), from BB_FSR3_MV="sx,sy,bx,by,cx,cy" while it is
+// being worked out: pixels = (channel - bias) * s * render size. Default: G and B around 0.498.
+struct Decode {
+    float sx = 1.0f, sy = 1.0f, bx = 127.0f / 255.0f, by = 127.0f / 255.0f;
+    u32 cx = 1, cy = 2;
+    bool off = false;
+};
+
+const Decode& MotionDecode() {
+    static const Decode decode = [] {
+        Decode d;
+        if (const char* env = std::getenv("BB_FSR3_MV")) {
+            if (std::strcmp(env, "off") == 0) {
+                d.off = true;
+            } else {
+                std::sscanf(env, "%f,%f,%f,%f,%u,%u", &d.sx, &d.sy, &d.bx, &d.by, &d.cx, &d.cy);
+                d.cx &= 3;
+                d.cy &= 3;
+            }
+        }
+        std::printf("FSR 3: velocity = (channel %u/%u - %.4f/%.4f) * %g/%g of the render size%s\n",
+                    d.cx, d.cy, d.bx, d.by, d.sx, d.sy, d.off ? " (off: zero motion)" : "");
+        return d;
+    }();
+    return decode;
+}
+
+int DebugMode() {
+    static const int mode = [] {
+        const char* env = std::getenv("BB_FSR3_DEBUG");
+        return env ? std::atoi(env) : 0;
+    }();
+    return mode;
+}
+
+/// BB_FSR3_DUMP_TRIGGER=<file>: creating it saves the next frame's FSR 3 inputs (BB_FSR3_DUMP_DIR,
+/// default the current folder) and prints the camera constants.
+bool DumpDue() {
+    static const char* trigger = std::getenv("BB_FSR3_DUMP_TRIGGER");
+    static u32 polls = 0;
+    return trigger && ++polls % 30 == 0 && std::remove(trigger) == 0;
+}
+
+float Halton(u32 index, u32 base) {
+    float f = 1.0f, r = 0.0f;
+    while (index > 0) {
+        f /= float(base);
+        r += f * float(index % base);
+        index /= base;
+    }
+    return r;
+}
+
+FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 w, u32 h,
+                            vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect,
+                            FfxVkPortableResourceState state) {
+    FfxVkPortableImage out{};
+    out.structSize = sizeof(out);
+    out.image = image;
+    out.format = static_cast<VkFormat>(format);
+    out.extent = {w, h};
+    out.mipCount = 1;
+    out.arrayLayers = 1;
+    out.usage = static_cast<VkImageUsageFlags>(usage);
+    out.aspect = static_cast<VkImageAspectFlags>(aspect);
+    out.state = state;
+    return out;
+}
+
+void PrintIssues(const char* what, u64 issues) {
+    std::printf("FSR 3: %s invalid:", what);
+    for (u32 bit = 0; bit < 64; ++bit) {
+        if (issues & (1ull << bit)) {
+            std::printf(" %s", ffxVkPortableValidationIssueName(1ull << bit));
+        }
+    }
+    std::printf("\n");
+}
+
+vk::Format Linear(vk::Format format) {
+    switch (format) {
+    case vk::Format::eR8G8B8A8Srgb:
+        return vk::Format::eR8G8B8A8Unorm;
+    case vk::Format::eB8G8R8A8Srgb:
+        return vk::Format::eB8G8R8A8Unorm;
+    default:
+        return format;
+    }
+}
+
+} // namespace
+
+CtrFsr3::CtrFsr3(const Instance& instance_, Scheduler& scheduler_,
+                 VideoCore::TextureCache& texture_cache_, Runtime& runtime_)
+    : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_},
+      runtime{runtime_} {}
+
+CtrFsr3::~CtrFsr3() {
+    if (context) {
+        ffxVkPortableUpscaleContextDestroy(context);
+    }
+}
+
+bool CtrFsr3::Enabled() const {
+    return !failed && BbSettings::Get().fsr3;
+}
+
+void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity_) {
+    scene_depth = depth;
+    velocity = velocity_;
+    scene_this_frame = true;
+}
+
+void CtrFsr3::OnCameraConstants(const float* data) {
+    std::memcpy(camera.data(), data, sizeof(camera));
+    camera_this_frame = true;
+    camera_valid = true;
+}
+
+void CtrFsr3::OnFrameEnd() {
+    frame_jitter = jitter;
+    if (!Enabled()) {
+        jitter = {};
+        reset = true;
+        return;
+    }
+    jitter_index = jitter_index % std::max(jitter_phases, 1u) + 1;
+    jitter = {Halton(jitter_index, 2) - 0.5f, Halton(jitter_index, 3) - 0.5f};
+    if (std::getenv("BB_FSR3_NO_JITTER")) {
+        jitter = {};
+    }
+}
+
+std::array<float, 2> CtrFsr3::DrawJitter(VideoCore::ImageId depth, bool full_screen) const {
+    if (full_screen || !depth || depth != scene_depth || !Enabled()) {
+        return {};
+    }
+    return jitter;
+}
+
+vk::ImageView CtrFsr3::SourceView(const VideoCore::Image& image, vk::Format format,
+                                  vk::ImageAspectFlags aspect, bool msaa, int slot) {
+    auto& entry = source_views[slot];
+    const vk::Image handle = image.GetImage();
+    if (entry.view && entry.image == handle && entry.uid == image.image_uid &&
+        entry.format == format) {
+        return *entry.view;
+    }
+    if (entry.view) {
+        scheduler.DeferOperation([view = std::move(entry.view)] {});
+    }
+    entry.image = handle;
+    entry.uid = image.image_uid;
+    entry.format = format;
+    entry.view = Check(instance.GetDevice().createImageViewUnique({
+        .image = handle,
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {aspect, 0, 1, 0, 1},
+    }));
+    (void)msaa;
+    return *entry.view;
+}
+
+vk::ImageView CtrFsr3::OutputView(vk::Format format) {
+    for (auto& entry : output_views) {
+        if (entry.view && entry.format == format) {
+            return *entry.view;
+        }
+    }
+    auto& entry = output_views[output_views[0].view ? 1 : 0];
+    const vk::ImageViewUsageCreateInfo usage{.usage = vk::ImageUsageFlagBits::eSampled};
+    entry.format = format;
+    entry.view = Check(instance.GetDevice().createImageViewUnique({
+        .pNext = &usage,
+        .image = vk::Image(output_image),
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    return *entry.view;
+}
+
+void CtrFsr3::CreatePipelines() {
+    if (pipeline) {
+        return;
+    }
+    const auto device = instance.GetDevice();
+    const std::array<vk::DescriptorSetLayoutBinding, 5> bindings{{
+        {0, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eCompute},
+        {1, vk::DescriptorType::eSampledImage, 1, vk::ShaderStageFlagBits::eCompute},
+        {2, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+        {3, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+        {4, vk::DescriptorType::eStorageImage, 1, vk::ShaderStageFlagBits::eCompute},
+    }};
+    desc_layout = Check(device.createDescriptorSetLayoutUnique({
+        .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+        .bindingCount = u32(bindings.size()),
+        .pBindings = bindings.data(),
+    }));
+    const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 8 * sizeof(u32)};
+    pipeline_layout = Check(device.createPipelineLayoutUnique({
+        .setLayoutCount = 1,
+        .pSetLayouts = &*desc_layout,
+        .pushConstantRangeCount = 1,
+        .pPushConstantRanges = &push,
+    }));
+    const auto compute = [&](std::span<const u32> code) {
+        const auto module = CompileSPV(code, device);
+        auto result = Check(device.createComputePipelineUnique(
+            {}, vk::ComputePipelineCreateInfo{
+                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
+                              .module = module,
+                              .pName = "main"},
+                    .layout = *pipeline_layout,
+                }));
+        device.destroyShaderModule(module);
+        return result;
+    };
+    pipeline = compute(CTR_FSR3_INPUTS_COMP);
+    pipeline_msaa = compute(CTR_FSR3_INPUTS_MSAA_COMP);
+}
+
+bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool msaa) {
+    if (context && w == width && h == height && ow == out_width && oh == out_height) {
+        resources_msaa = msaa;
+        return true;
+    }
+    const auto device = instance.GetDevice();
+    scheduler.Finish();
+    if (context) {
+        ffxVkPortableUpscaleContextDestroy(context);
+        context = nullptr;
+    }
+    width = w;
+    height = h;
+    out_width = ow;
+    out_height = oh;
+    resources_msaa = msaa;
+    reset = true;
+
+    FfxVkPortableDeviceInfo device_info{};
+    device_info.structSize = sizeof(device_info);
+    device_info.instance = instance.GetInstance();
+    device_info.physicalDevice = instance.GetPhysicalDevice();
+    device_info.device = device;
+    device_info.getDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr;
+    device_info.queue = instance.GetGraphicsQueue();
+    device_info.queueFamilyIndex = instance.GetGraphicsQueueFamilyIndex();
+    device_info.shaderFloat16Enabled = instance.IsShaderFloat16Enabled();
+    device_info.subgroupSizeControlEnabled = instance.IsSubgroupSizeControlEnabled();
+    device_info.synchronization2Enabled = VK_TRUE;
+    device_info.shaderStorageImageWriteWithoutFormatEnabled = VK_TRUE;
+
+    FfxVkPortableUpscaleCreateInfo create_info{};
+    create_info.structSize = sizeof(create_info);
+    // The game's finished, tonemapped frame (8 bits a channel): no HDR, no exposure.
+    create_info.flags = std::getenv("BB_FSR3_DEPTH_INVERTED") ? FFX_VK_PORTABLE_CONTEXT_DEPTH_INVERTED : 0;
+    create_info.maxRenderSize = {w, h};
+    create_info.maxOutputSize = {ow, oh};
+    if (const u64 issues = ffxVkPortableValidateUpscaleCreateInfo(&create_info)) {
+        PrintIssues("create info", issues);
+        return false;
+    }
+    if (ffxVkPortableUpscaleContextCreate(&device_info, &create_info, &context) !=
+        FFX_VK_PORTABLE_OK) {
+        std::printf("FSR 3: context creation failed\n");
+        context = nullptr;
+        return false;
+    }
+
+    const auto allocator = instance.GetAllocator();
+    const auto make = [&](VideoCore::UniqueImage& image, vk::UniqueImageView* view,
+                          vk::Format format, u32 iw, u32 ih, vk::ImageUsageFlags usage,
+                          const void* next = nullptr, vk::ImageCreateFlags flags = {}) {
+        if (view) {
+            view->reset();
+        }
+        image = VideoCore::UniqueImage(device, allocator);
+        image.Create(vk::ImageCreateInfo{
+            .pNext = next,
+            .flags = flags,
+            .imageType = vk::ImageType::e2D,
+            .format = format,
+            .extent = {iw, ih, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = vk::SampleCountFlagBits::e1,
+            .tiling = vk::ImageTiling::eOptimal,
+            .usage = usage,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        });
+        if (view) {
+            *view = Check(device.createImageViewUnique({
+                .image = vk::Image(image),
+                .viewType = vk::ImageViewType::e2D,
+                .format = format,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            }));
+        }
+    };
+    const auto inputs = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                        vk::ImageUsageFlagBits::eTransferSrc;
+    make(depth_image, &depth_view, vk::Format::eR32Sfloat, w, h, inputs);
+    make(motion_image, &motion_view, vk::Format::eR16G16Sfloat, w, h, inputs);
+    make(debug_image, &debug_view, vk::Format::eR8G8B8A8Unorm, w, h, inputs);
+    // The output is sampled through views in the game's format (sRGB or not).
+    static constexpr std::array<vk::Format, 2> formats{vk::Format::eR8G8B8A8Unorm,
+                                                       vk::Format::eR8G8B8A8Srgb};
+    const vk::ImageFormatListCreateInfo list{.viewFormatCount = u32(formats.size()),
+                                             .pViewFormats = formats.data()};
+    for (auto& entry : output_views) {
+        entry.view.reset();
+    }
+    make(output_image, nullptr, vk::Format::eR8G8B8A8Unorm, ow, oh,
+         vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+             vk::ImageUsageFlagBits::eTransferSrc,
+         &list, vk::ImageCreateFlagBits::eMutableFormat);
+    CreatePipelines();
+
+    // The images start in General: FSR 3 reads and writes them there.
+    const auto cmdbuf = scheduler.CommandBuffer();
+    std::array<vk::ImageMemoryBarrier2, 4> barriers{};
+    const std::array<vk::Image, 4> images{vk::Image(depth_image), vk::Image(motion_image),
+                                          vk::Image(debug_image), vk::Image(output_image)};
+    for (u32 i = 0; i < barriers.size(); ++i) {
+        barriers[i] = vk::ImageMemoryBarrier2{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eGeneral,
+            .image = images[i],
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+    }
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(barriers.size()),
+                             .pImageMemoryBarriers = barriers.data()});
+
+    // FSR's recommended jitter sequence length: 8 times the area ratio.
+    const float ratio = float(ow) / float(w);
+    jitter_phases = std::clamp(u32(std::ceil(8.0f * ratio * ratio)), 8u, 72u);
+    FfxVkPortableMemoryUsage usage{};
+    usage.structSize = sizeof(usage);
+    ffxVkPortableUpscaleContextGetMemoryUsage(context, &usage);
+    std::printf("FSR 3: %ux%u -> %ux%u%s, %u jitter phases, %.1f MB\n", w, h, ow, oh,
+                msaa ? " (2x MSAA G-buffer)" : "", jitter_phases, usage.totalUsageInBytes / 1e6);
+    return true;
+}
+
+vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_format,
+                               vk::Extent2D out, vk::ImageLayout& layout) {
+    const bool scene = scene_this_frame;
+    scene_this_frame = false;
+    camera_this_frame = false;
+    if (!Enabled() || !scene || !source_id || !scene_depth || !velocity) {
+        reset = true;
+        return {};
+    }
+    auto& source = texture_cache.GetImage(source_id);
+    auto& depth = texture_cache.GetImage(scene_depth);
+    auto& vel = texture_cache.GetImage(velocity);
+    const u32 w = source.info.size.width, h = source.info.size.height;
+    // The finished frame, the depth and the velocity share the render size; FSR 3 does not
+    // downscale.
+    if (depth.info.size.width != w || depth.info.size.height != h ||
+        vel.info.size.width != w || vel.info.size.height != h || out.width < w ||
+        out.height < h || w * 4 < out.width ||
+        std::abs(double(w) / h - double(out.width) / out.height) > 0.02 ||
+        depth.info.num_samples != vel.info.num_samples) {
+        if (!announced) {
+            announced = true;
+            std::printf("FSR 3: not used: frame %ux%u, depth %ux%u, velocity %ux%u, output %ux%u\n",
+                        w, h, depth.info.size.width, depth.info.size.height, vel.info.size.width,
+                        vel.info.size.height, out.width, out.height);
+        }
+        reset = true;
+        return {};
+    }
+    const bool msaa = depth.info.num_samples > 1;
+    // Inside the display pass's draw: its rendering ends here (and resumes when it draws).
+    scheduler.EndRendering();
+    if (!EnsureResources(w, h, out.width, out.height, msaa)) {
+        failed = true;
+        std::printf("FSR 3: off for this session\n");
+        return {};
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    float frame_ms = 16.6f;
+    if (last_frame.time_since_epoch().count() != 0) {
+        frame_ms = std::clamp(
+            std::chrono::duration<float, std::milli>(now - last_frame).count(), 1.0f, 100.0f);
+        if (frame_ms >= 100.0f) {
+            reset = true;  // a pause, a load, a menu
+        }
+    }
+    last_frame = now;
+
+    runtime.Transit(&source, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+    runtime.Transit(&depth, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+    runtime.Transit(&vel, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+    runtime.FlushBarriers();
+    const auto cmdbuf = scheduler.CommandBuffer();
+
+    // 1. Inputs: sample 0 of the depth and the decoded velocity.
+    const bool dump = DumpDue();
+    const int debug = DebugMode();
+    const auto& decode = MotionDecode();
+    const vk::ImageView depth_src =
+        SourceView(depth, depth.info.pixel_format, vk::ImageAspectFlagBits::eDepth, msaa, 0);
+    const vk::ImageView vel_src =
+        SourceView(vel, Linear(vel.info.pixel_format), vk::ImageAspectFlagBits::eColor, msaa, 1);
+    {
+        const vk::DescriptorImageInfo infos[5] = {
+            {{}, depth_src, vk::ImageLayout::eShaderReadOnlyOptimal},
+            {{}, vel_src, vk::ImageLayout::eShaderReadOnlyOptimal},
+            {{}, *depth_view, vk::ImageLayout::eGeneral},
+            {{}, *motion_view, vk::ImageLayout::eGeneral},
+            {{}, *debug_view, vk::ImageLayout::eGeneral},
+        };
+        std::array<vk::WriteDescriptorSet, 5> writes{};
+        for (u32 i = 0; i < writes.size(); ++i) {
+            writes[i] = {.dstBinding = i,
+                         .descriptorCount = 1,
+                         .descriptorType = i < 2 ? vk::DescriptorType::eSampledImage
+                                                 : vk::DescriptorType::eStorageImage,
+                         .pImageInfo = &infos[i]};
+        }
+        struct {
+            float sx, sy, bx, by;
+            u32 channels, debug, write_debug;
+            float pad;
+        } params{decode.off ? 0.0f : decode.sx * float(w), decode.off ? 0.0f : decode.sy * float(h),
+                 decode.bx, decode.by, decode.cx | (decode.cy << 2),
+                 u32(dump ? 3 : std::max(debug, 0)), u32(dump || debug > 0), 0.0f};
+        const vk::MemoryBarrier2 before{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        };
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
+        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, msaa ? *pipeline_msaa : *pipeline);
+        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipeline_layout, 0, writes);
+        cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+                             sizeof(params), &params);
+        cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+        const vk::MemoryBarrier2 after{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eMemoryRead,
+        };
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+    }
+    if (dump) {
+        Dump(cmdbuf);
+    }
+    if (debug > 0) {
+        // The inputs instead of the upscaled frame (stretched by the display pass).
+        layout = vk::ImageLayout::eGeneral;
+        return *debug_view;
+    }
+
+    // 2. FSR 3.
+    float near_plane = 16.0f, far_plane = 150000.0f, fov = 1.2870f;
+    if (camera_valid) {
+        // Projection at floats 48-63 (column-major, OpenGL style): [5] = 1/tan(fov/2),
+        // [10] = A, [14] = B with near = B/(A-1), far = B/(A+1).
+        const float* p = &camera[48];
+        const float a = p[10], b = p[14];
+        if (p[5] > 0.0f && std::isfinite(a) && std::isfinite(b) && a != 1.0f && a != -1.0f) {
+            fov = 2.0f * std::atan(1.0f / p[5]);
+            near_plane = std::abs(b / (a - 1.0f));
+            far_plane = std::abs(b / (a + 1.0f));
+        }
+    }
+    if (!(near_plane > 0.0f) || !(far_plane > near_plane) || !(fov > 0.01f && fov < 3.1f)) {
+        near_plane = 16.0f;
+        far_plane = 150000.0f;
+        fov = 1.2870f;
+    }
+    const auto& settings = BbSettings::Get();
+    FfxVkPortableUpscaleDispatchInfo info{};
+    info.structSize = sizeof(info);
+    info.commandBuffer = cmdbuf;
+    info.color = Describe(source.GetImage(), source.info.pixel_format, w, h, source.usage_flags,
+                          vk::ImageAspectFlagBits::eColor,
+                          FFX_VK_PORTABLE_RESOURCE_STATE_COMPUTE_READ);
+    const auto inputs = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                        vk::ImageUsageFlagBits::eTransferSrc;
+    info.depth = Describe(vk::Image(depth_image), vk::Format::eR32Sfloat, w, h, inputs,
+                          vk::ImageAspectFlagBits::eColor,
+                          FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+    info.motionVectors = Describe(vk::Image(motion_image), vk::Format::eR16G16Sfloat, w, h, inputs,
+                                  vk::ImageAspectFlagBits::eColor,
+                                  FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
+    info.output = Describe(vk::Image(output_image), vk::Format::eR8G8B8A8Unorm, out.width,
+                           out.height,
+                           vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
+                               vk::ImageUsageFlagBits::eTransferSrc,
+                           vk::ImageAspectFlagBits::eColor,
+                           FFX_VK_PORTABLE_RESOURCE_STATE_UNORDERED_ACCESS);
+    info.exposure.structSize = sizeof(info.exposure);
+    info.reactiveMask.structSize = sizeof(info.reactiveMask);
+    info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
+    const float sign = std::getenv("BB_FSR3_JITTER_FLIP") ? -1.0f : 1.0f;
+    info.jitterOffset = {sign * frame_jitter[0], sign * frame_jitter[1]};
+    info.motionVectorScale = {1.0f, 1.0f};
+    info.renderSize = {w, h};
+    info.outputSize = {out.width, out.height};
+    info.frameTimeMilliseconds = frame_ms;
+    info.preExposure = 1.0f;
+    info.cameraNear = near_plane;
+    info.cameraFar = far_plane;
+    info.cameraVerticalFovRadians = fov;
+    info.viewSpaceToMeters = 0.01f;
+    info.sharpness = std::clamp(settings.fsr3_sharpness.load(), 0.0f, 1.0f);
+    info.enableSharpening = info.sharpness > 0.0f ? VK_TRUE : VK_FALSE;
+    info.reset = reset ? VK_TRUE : VK_FALSE;
+    info.frameId = frame_id++;
+
+    FfxVkPortableUpscaleCreateInfo create_info{};
+    create_info.structSize = sizeof(create_info);
+    create_info.maxRenderSize = {width, height};
+    create_info.maxOutputSize = {out_width, out_height};
+    if (const u64 issues = ffxVkPortableValidateUpscaleDispatchInfo(&create_info, &info)) {
+        PrintIssues("dispatch", issues);
+        failed = true;
+        return {};
+    }
+    if (ffxVkPortableUpscaleContextRecordDispatch(context, &info) != FFX_VK_PORTABLE_OK) {
+        std::printf("FSR 3: dispatch failed; off for this session\n");
+        failed = true;
+        return {};
+    }
+    reset = false;
+    const vk::MemoryBarrier2 done{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
+    if (!announced) {
+        announced = true;
+        std::printf("FSR 3: upscaling %ux%u -> %ux%u (near %.2f, far %.0f, fov %.1f deg)\n", w, h,
+                    out.width, out.height, near_plane, far_plane, fov * 57.29578f);
+    }
+    layout = vk::ImageLayout::eGeneral;
+    return OutputView(view_format);
+}
+
+void CtrFsr3::Dump(vk::CommandBuffer cmdbuf) {
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_FSR3_DUMP_DIR");
+        return std::string{env && env[0] ? env : "."};
+    }();
+    static int index = 0;
+    const int frame = index++;
+    struct Item {
+        vk::Image image;
+        const char* name;
+        const char* format;
+    };
+    const Item items[] = {{vk::Image(depth_image), "depth", "r32f"},
+                          {vk::Image(debug_image), "velocity", "rgba8"},
+                          {vk::Image(motion_image), "motion", "rg16f"}};
+    for (const auto& item : items) {
+        const VkDeviceSize size = VkDeviceSize(width) * height * 4;
+        const VkBufferCreateInfo buffer_ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+        };
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo alloc_info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &alloc_info) != VK_SUCCESS) {
+            continue;
+        }
+        const vk::BufferImageCopy region{
+            .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .imageExtent = {width, height, 1},
+        };
+        cmdbuf.copyImageToBuffer(item.image, vk::ImageLayout::eGeneral, buffer, region);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/fsr3_f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
+                      item.name, width, height, item.format);
+        scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
+                                          alloc_info, size, file = std::string{path}] {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(alloc_info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        });
+    }
+    const vk::MemoryBarrier2 after{
+        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+    std::printf("FSR 3 dump %d (%s), jitter %.4f %.4f, camera constants%s:\n", frame, dir.c_str(),
+                frame_jitter[0], frame_jitter[1], camera_valid ? "" : " (none)");
+    for (u32 row = 0; camera_valid && row < camera.size() / 4; ++row) {
+        std::printf("  [%3u] %12g %12g %12g %12g\n", row * 4, camera[row * 4], camera[row * 4 + 1],
+                    camera[row * 4 + 2], camera[row * 4 + 3]);
+    }
+    std::fflush(stdout);
+}
+
+} // namespace Vulkan
