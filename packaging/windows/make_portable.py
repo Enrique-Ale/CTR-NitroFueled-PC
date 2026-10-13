@@ -3,6 +3,11 @@
 """Builds the Windows portable ZIP from a finished build (out/sacredfire.exe).
 
     C:\\msys64\\clang64\\bin\\python.exe packaging/windows/make_portable.py [--version v0.1.1]
+        [--dlss-sdk <NVIDIA DLSS SDK folder>]
+
+With --dlss-sdk, bin\\ also gets the DLSS bridge (dlss_bridge\\sacredfire_dlss.dll, built with
+dlss_bridge\\build.bat) and the SDK's nvngx_dlss.dll, which NVIDIA's DLSS SDK license lets an
+application redistribute; their licenses go in licenses\\.
 
 Needs MSYS2 (CLANG64) for the DLLs and for pacman, which tells THIRD-PARTY.txt which package,
 version and license each bundled DLL comes from. Output: dist/CTR-NitroFueled-PC-portable-windows.zip
@@ -73,7 +78,22 @@ def pacman(*args):
                           text=True, errors='replace').stdout
 
 
-def third_party(dlls, python=None):
+DLSS_THIRD_PARTY = [
+    'sacredfire_dlss.dll, in bin\\ (the DLSS bridge)',
+    '  license: MIT (licenses\\dlss-bridge-LICENSE.txt), by IFreemz',
+    '  source:  dlss_bridge\\ in this repository; from https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR',
+    '  It links NVIDIA\'s DLSS SDK (NGX). sacredfire.exe contains no NVIDIA code: it loads the',
+    '  bridge at run time when it is present.', '',
+    'nvngx_dlss.dll, in bin\\ (NVIDIA DLSS)',
+    '  license: NVIDIA RTX SDKs license (licenses\\NVIDIA-DLSS-SDK-LICENSE.txt), redistributed',
+    '           unchanged as part of this application under its terms',
+    '  home:    https://github.com/NVIDIA/DLSS',
+    '  NVIDIA, the NVIDIA logo, DLSS and GeForce RTX are trademarks and/or registered trademarks of',
+    '  NVIDIA Corporation in the U.S. and other countries.', '',
+]
+
+
+def third_party(dlls, python=None, dlss=False):
     """THIRD-PARTY.txt: the MSYS2 package, version, license and home page of every bundled DLL."""
     packages = {}
     for dll in sorted(dlls):
@@ -100,6 +120,10 @@ def third_party(dlls, python=None):
                   '           SQLite and the Microsoft C runtime redistributables)',
                   '  home:    https://www.python.org/',
                   f'  source:  https://www.python.org/downloads/release/python-{PYTHON_VERSION.replace(".", "")}/', '']
+    if dlss:
+        lines += DLSS_THIRD_PARTY
+    lines += ['sacredfire.exe includes AMD FidelityFX FSR 3.1 (MIT, through',
+              'https://github.com/FireBurn/FSR-Vulkan).', '']
     lines += ['The launcher (CTR-NitroFueled-PC.exe) and sacredfire.exe include Dear ImGui (MIT,',
               'https://github.com/ocornut/imgui) and the other libraries listed in the repository.', '']
     lines += ['The game files are not included and are not covered by any of these licenses.',
@@ -137,7 +161,15 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--version', default='')
     p.add_argument('--dist', type=Path, default=ROOT / 'dist')
+    p.add_argument('--dlss-sdk', type=Path, help='NVIDIA DLSS SDK folder: bundle DLSS')
     a = p.parse_args()
+    dlss_files = []
+    if a.dlss_sdk:
+        dlss_files = [ROOT / 'dlss_bridge' / 'sacredfire_dlss.dll',
+                      a.dlss_sdk / 'lib' / 'Windows_x86_64' / 'rel' / 'nvngx_dlss.dll']
+        for f in dlss_files + [a.dlss_sdk / 'LICENSE.txt']:
+            if not f.is_file():
+                sys.exit(f'{f} not found (dlss_bridge\\build.bat builds the bridge)')
     exe, caps = ROOT / 'out' / 'sacredfire.exe', ROOT / 'out' / 'bb-gpu-capabilities.exe'
     launcher = ROOT / 'out' / LAUNCHER
     for f in (exe, caps, launcher):
@@ -156,6 +188,13 @@ def main():
     dlls = closure([exe, caps])
     for path in dlls.values():
         shutil.copy2(path, folder / 'bin')
+    if dlss_files:
+        for path in dlss_files:
+            shutil.copy2(path, folder / 'bin')
+        (folder / 'licenses').mkdir()
+        shutil.copy2(a.dlss_sdk / 'LICENSE.txt', folder / 'licenses' / 'NVIDIA-DLSS-SDK-LICENSE.txt')
+        write_text(folder / 'licenses' / 'dlss-bridge-LICENSE.txt',
+                   (ROOT / 'dlss_bridge' / 'LICENSE.txt').read_text(encoding='utf-8'))
     shutil.copy2(launcher, folder)
     python = bundle_python(folder, a.dist / 'pycache')
     shutil.copy2(ROOT / 'run.py', folder)
@@ -176,7 +215,7 @@ def main():
                            ('LEEME.txt', 'LEEME.txt')):
         write_text(folder / target, (PORTABLE / source).read_text(encoding='utf-8'))
     write_text(folder / 'LICENSE', (ROOT / 'LICENSE').read_text(encoding='utf-8'))
-    (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls, python).encode('utf-8'))
+    (folder / 'THIRD-PARTY.txt').write_bytes(third_party(dlls, python, bool(dlss_files)).encode('utf-8'))
 
     archive = a.dist / f'{NAME}-windows.zip'
     archive.unlink(missing_ok=True)
@@ -185,7 +224,8 @@ def main():
             if path.is_file():  # forward slashes in the entry names, as the ZIP format asks
                 z.write(path, f'{NAME}/{path.relative_to(folder).as_posix()}')
     digest = hashlib.sha256(archive.read_bytes()).hexdigest().upper()
-    print(f'{archive}  {archive.stat().st_size / 1e6:.1f} MB  {len(dlls)} DLLs  {version}')
+    print(f'{archive}  {archive.stat().st_size / 1e6:.1f} MB  {len(dlls)} DLLs  {version}'
+          f'{"  with DLSS" if dlss_files else ""}')
     print(f'SHA256 {digest}')
     (a.dist / f'{archive.name}.sha256').write_text(f'{digest}  {archive.name}\n')
 

@@ -21,8 +21,10 @@ of it: see [packaging/windows/README.md](packaging/windows/README.md).
 > here only to identify the game this software runs.
 
 **Status on Windows: playable.** Menus, Adventure and Arcade, races, sound, cutscenes, Xbox/SDL
-controllers and keyboard, saving, the community patches (60 FPS, no motion blur, 1080p Pro),
-restart from the in-game menu, and the game's DLC from your own packages (optional). Tested on
+controllers and keyboard, saving, the community patches (60 FPS, no motion blur), restart from
+the in-game menu, and the game's DLC from your own packages (optional). Internal resolution from
+480p to native 4K, with AMD FSR 1 or temporal upscaling (AMD FSR 3.1, or NVIDIA DLSS on RTX
+cards; experimental). Tested on
 Windows 11 24H2 with an NVIDIA RTX 3070 and an Intel i5-9500: 110-130 FPS uncapped in races with
 the 60 FPS patch (the FPS limit keeps it at 60 by default; up to 240). Shaders seen for the first
 time cause short stalls; they are cached and load at start from the next session on, or compile
@@ -30,6 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); AMD FSR 1; temporal upscaling with AMD FSR 3.1 or NVIDIA DLSS (experimental); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -41,6 +44,13 @@ in the background with the experimental switch.
 **`CTR-NitroFueled-PC.exe`**, the launcher: choose your `CUSA13795` (base game) and
 `CUSA13795-patch` (update 1.21) folders, press *Prepare the game* once (it merges them with hard
 links, no extra disk space) and then *Play*. Python is bundled; you only need a Vulkan 1.3 GPU.
+
+**Picture** (launcher: Settings > Display; in game: Insert): *Internal resolution* is the size
+the game draws its 3D scene at (480p and 720p for modest PCs, 1440p to 2160p output a 4K picture,
+which also smooths edges on a 1080p screen; needs a restart). *Temporal upscaling* rebuilds detail
+over several frames: **NVIDIA DLSS** on GeForce RTX cards (the files come in the package), **AMD FSR
+3** on any GPU, also as anti-aliasing at the same resolution. Experimental: turn it off if you see
+trails. *FSR 1* is the lighter spatial option.
 
 The launcher also has the game patches, FPS limit, display, monitor and controller settings, save
 backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
@@ -89,6 +99,13 @@ This fork stands on the work of:
   (branch `windows`), whose Windows layer is merged here.
 - **[shadPS4](https://github.com/shadps4-emu/shadPS4)**: the video core and shader recompiler.
 - **illusion** and **TroyWarez**: the game patches ([illusionyy/PS-Game-Patch](https://github.com/illusionyy/PS-Game-Patch)).
+- **[IFreemz](https://github.com/IFreemz)**: [shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR),
+  whose DLSS bridge (MIT, `dlss_bridge/`) and NGX loader this fork uses.
+- **[FireBurn/FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)**: AMD FidelityFX FSR 3.1 on Vulkan (MIT).
+- **NVIDIA DLSS**: `nvngx_dlss.dll` from the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS),
+  redistributed under its license (in `licenses\` of the package). NVIDIA, the NVIDIA logo, DLSS
+  and GeForce RTX are trademarks and/or registered trademarks of NVIDIA Corporation. The GPL
+  program contains no NVIDIA code: it loads the separate bridge DLL when present.
 - Windows port of SacredFire: [GetLostIn](https://github.com/GetLostIn), with Claude (Anthropic).
 
 Licensed under the GNU GPL v2 or later, as SacredFire, bbport and shadPS4. The rest of this

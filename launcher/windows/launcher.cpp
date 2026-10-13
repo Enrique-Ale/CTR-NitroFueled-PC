@@ -2385,7 +2385,23 @@ void ToolsTab() {
                              "Windows fork of SacredFire (T3CHNOLOG1C), built on bbport (deadinside28), Supermedo's Windows "
                              "port and shadPS4. Patches by illusion and TroyWarez. Not affiliated with Sony, Activision or "
                              "Beenox. GPL v2 or later."));
+    ImGui::Spacing();
+    ImGui::TextUnformatted(T("Escalado temporal: AMD FidelityFX FSR 3.1 (MIT) y NVIDIA DLSS. DLSS usa el SDK de "
+                             "NVIDIA DLSS (nvngx_dlss.dll, redistribuido según su licencia, en licenses\\) a través del "
+                             "puente de IFreemz (MIT). NVIDIA, DLSS y GeForce RTX son marcas de NVIDIA Corporation.",
+                             "Temporal upscaling: AMD FidelityFX FSR 3.1 (MIT) and NVIDIA DLSS. DLSS uses the NVIDIA DLSS "
+                             "SDK (nvngx_dlss.dll, redistributed under its license, in licenses\\) through IFreemz's "
+                             "bridge (MIT). NVIDIA, DLSS and GeForce RTX are trademarks of NVIDIA Corporation."));
     ImGui::PopTextWrapPos();
+    {
+        std::error_code ec;
+        const bool dlss = fs::is_regular_file(a.root / L"bin" / L"sacredfire_dlss.dll", ec) &&
+                          fs::is_regular_file(a.root / L"bin" / L"nvngx_dlss.dll", ec);
+        ImGui::TextColored(kGrey, "%s", dlss ? T("DLSS: archivos presentes (necesita una tarjeta NVIDIA RTX)",
+                                                 "DLSS: files present (needs an NVIDIA RTX card)")
+                                             : T("DLSS: archivos no incluidos (se usa FSR 3)",
+                                                 "DLSS: files not included (FSR 3 is used)"));
+    }
     ImGui::TextLinkOpenURL(kRepoUrl, kRepoUrl);
     if (a.python) ImGui::TextColored(kGrey, "Python: %s", a.python->description.c_str());
 }
