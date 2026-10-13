@@ -565,8 +565,12 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         return;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
+    // SacredFire: Recreate waits for the device to go idle, which needs every queue to itself:
+    // the recording threads submit concurrently (submit_mutex). Unlocked, switching to
+    // fullscreen in game corrupted the heap on NVIDIA (0xc0000374).
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
         !swapchain.IsPresentable()) {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.IsPresentable()) {
             free_frame();
@@ -575,6 +579,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 
     if (!swapchain.AcquireNextImage()) {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
         if (!swapchain.AcquireNextImage()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
