@@ -1,0 +1,1357 @@
+/* SacredFire: online play through a private server (docs/sacredfire/15-online.md).
+ *
+ * Off unless BB_ONLINE_SERVER names a server: runtime_net_resolve then answers nothing and
+ * runtime_services.c's offline contracts stay (cable unplugged, signed out of PSN).
+ *
+ * On, with these guarantees:
+ *   - every host name the game resolves answers the private server's address: the game's own
+ *     servers (Activision's, Sony's) are never looked up and never reached;
+ *   - sockets connect and send only to the private server, loopback and the addresses in
+ *     BB_ONLINE_ALLOW; anything else is refused and logged;
+ *   - HTTP and HTTPS requests go as plain HTTP to the private server's BB_ONLINE_HTTP_PORT
+ *     (8080), with the original Host header and X-SacredFire-Scheme (no TLS, no certificates);
+ *   - PSN: local user 1 is signed in under BB_ONLINE_ID (else BB_USER_NAME), with an account
+ *     id made from the name and PS Plus granted. Authorization codes and ID tokens are made up
+ *     here: they mean something only to the private server, never to Sony.
+ * Every resolution, connection, first packet and HTTP request is logged ("Net:" lines) so the
+ * game's protocol can be studied with a local server (tools/online/discovery_server.py).
+ *
+ * Sockets, epoll and resolvers follow the PS4 libnet contracts as shadPS4 documents them
+ * (GPL-2.0, core/libraries/network): BSD sockaddr layout, errors 0x80410100 | errno with BSD
+ * errno numbers, epoll timeouts in microseconds. */
+#define _GNU_SOURCE
+#include "runtime.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <strings.h>
+#include <pthread.h>
+#include <time.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef SOCKET NativeSocket;
+#define NATIVE_INVALID INVALID_SOCKET
+#define native_close closesocket
+typedef WSAPOLLFD NativePollFd;
+#define native_poll WSAPoll
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+typedef int NativeSocket;
+#define NATIVE_INVALID (-1)
+#define native_close close
+typedef struct pollfd NativePollFd;
+#define native_poll poll
+#endif
+
+/* ---- PS4 constants ---- */
+#define NET_ERROR(e) ((int32_t)(0x80410100u | (uint32_t)(e)))
+enum { E_INTR=4, E_BADF=9, E_ACCES=13, E_FAULT=14, E_INVAL=22, E_PIPE=32, E_AGAIN=35,
+       E_INPROGRESS=36, E_ALREADY=37, E_NOTSOCK=38, E_MSGSIZE=40, E_PROTONOSUPPORT=43,
+       E_AFNOSUPPORT=47, E_ADDRINUSE=48, E_ADDRNOTAVAIL=49, E_NETDOWN=50, E_NETUNREACH=51,
+       E_CONNABORTED=53, E_CONNRESET=54, E_NOBUFS=55, E_ISCONN=56, E_NOTCONN=57,
+       E_TIMEDOUT=60, E_CONNREFUSED=61, E_HOSTUNREACH=65, E_EXIST=17, E_NOSPC=28,
+       E_RESOLVER_BUSY=221 };
+#define PS_AF_INET 2
+#define PS_SOCK_STREAM 1
+#define PS_SOCK_DGRAM 2
+#define PS_SOCK_RAW 3
+#define PS_SOCK_DGRAM_P2P 6
+#define PS_SOCK_STREAM_P2P 10
+#define PS_SOL_SOCKET 0xffff
+#define PS_MSG_PEEK 0x2
+#define PS_MSG_WAITALL 0x40
+#define PS_MSG_DONTWAIT 0x80
+#define PS_EPOLLIN 0x1
+#define PS_EPOLLOUT 0x2
+#define PS_EPOLLERR 0x8
+#define PS_EPOLLHUP 0x10
+#define NET_CTL_INVALID_ADDR ((int32_t)0x80412107)
+#define NP_SIGNED_OUT ((int32_t)0x80550006)
+#define NP_INVALID_ARGUMENT ((int32_t)0x80550003)
+#define NP_REQUEST_NOT_FOUND ((int32_t)0x80550017)
+#define NP_AUTH_INVALID_ARGUMENT ((int32_t)0x80550303)
+#define HTTP_INVALID_ID ((int32_t)0x80431100)
+#define HTTP_INVALID_VALUE ((int32_t)0x804311fe)
+#define HTTP_OUT_OF_MEMORY ((int32_t)0x80431022)
+#define HTTP_INVALID_URL ((int32_t)0x80433060)
+#define HTTP_NETWORK ((int32_t)0x80431063)
+#define HTTP_BEFORE_SEND ((int32_t)0x80431065)
+#define HTTP_TIMEOUT ((int32_t)0x80431068)
+#define HTTP_PARSE_NOT_FOUND ((int32_t)0x80432025)
+
+typedef struct { uint8_t len, family; uint16_t port; uint32_t addr; uint16_t vport; char zero[6]; } PsSockaddrIn;
+typedef struct { uint32_t events, pad; uint64_t ident; uint64_t data; } PsEpollEvent;
+
+/* ---- Configuration ---- */
+static struct {
+    int on;
+    uint32_t server;            /* network order */
+    char server_text[64];
+    uint16_t http_port;
+    uint32_t allow[16];
+    int allow_count;
+    int trace;                  /* BB_ONLINE_TRACE: hex dump of every packet, not only the first */
+    char online_id[17];
+    uint64_t account_id;
+    uint32_t local_ip;          /* network order: the address that reaches the server */
+} cfg;
+static pthread_once_t cfg_once=PTHREAD_ONCE_INIT;
+static pthread_mutex_t net_lock=PTHREAD_MUTEX_INITIALIZER;
+
+static void ip_text(uint32_t addr, char *out, size_t size) {
+    const unsigned char *b=(const unsigned char *)&addr;
+    snprintf(out,size,"%u.%u.%u.%u",b[0],b[1],b[2],b[3]);
+}
+static int parse_ipv4(const char *text, uint32_t *out) {
+    struct in_addr a;
+    if (!text || inet_pton(AF_INET,text,&a)!=1) return 0;
+    *out=a.s_addr; return 1;
+}
+static uint64_t fnv1a(const char *s) {
+    uint64_t h=0xcbf29ce484222325ull;
+    for (; *s; ++s) { h^=(unsigned char)*s; h*=0x100000001b3ull; }
+    return h;
+}
+/* The PSN online id: 3 to 16 letters, digits, '-' or '_'. */
+static void make_online_id(void) {
+    const char *source=getenv("BB_ONLINE_ID");
+    if (!source || !*source) source=getenv("BB_USER_NAME");
+    if (!source || !*source) source="Player1";
+    size_t n=0;
+    for (const char *p=source; *p && n<16; ++p) {
+        const char c=*p;
+        cfg.online_id[n++]=(isalnum((unsigned char)c) || c=='-' || c=='_') ? c : '_';
+    }
+    while (n<3) cfg.online_id[n++]='_';
+    cfg.online_id[n]=0;
+    const char *account=getenv("BB_ONLINE_ACCOUNT_ID");
+    cfg.account_id=account && *account ? strtoull(account,NULL,0) : (fnv1a(cfg.online_id) & 0x7fffffffffffffffull);
+    if (!cfg.account_id) cfg.account_id=1;
+}
+/* The local address the server sees: a UDP socket "connected" to the server (nothing is sent). */
+static void find_local_ip(void) {
+    cfg.local_ip=htonl(0x7f000001);
+    if ((ntohl(cfg.server)>>24)==127) return;
+    NativeSocket s=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);
+    if (s==NATIVE_INVALID) return;
+    struct sockaddr_in to={0}; to.sin_family=AF_INET; to.sin_port=htons(9); to.sin_addr.s_addr=cfg.server;
+    struct sockaddr_in me={0};
+    socklen_t len=sizeof me;
+    if (!connect(s,(struct sockaddr *)&to,sizeof to) && !getsockname(s,(struct sockaddr *)&me,&len)) cfg.local_ip=me.sin_addr.s_addr;
+    native_close(s);
+}
+static void configure(void) {
+    const char *server=getenv("BB_ONLINE_SERVER");
+    if (!server || !*server) return;
+#ifdef _WIN32
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2,2),&wsa)) { printf("Net: online off: Winsock did not start\n"); return; }
+#endif
+    /* The only real name lookup: the private server's own name, once. */
+    if (!parse_ipv4(server,&cfg.server)) {
+        struct addrinfo hints={0}, *found=NULL;
+        hints.ai_family=AF_INET;
+        if (getaddrinfo(server,NULL,&hints,&found) || !found) {
+            printf("Net: online off: the private server '%s' was not found\n",server);
+            return;
+        }
+        cfg.server=((struct sockaddr_in *)found->ai_addr)->sin_addr.s_addr;
+        freeaddrinfo(found);
+    }
+    ip_text(cfg.server,cfg.server_text,sizeof cfg.server_text);
+    const char *port=getenv("BB_ONLINE_HTTP_PORT");
+    cfg.http_port=(uint16_t)(port && atoi(port)>0 ? atoi(port) : 8080);
+    const char *allow=getenv("BB_ONLINE_ALLOW");
+    if (allow) {
+        char list[512];
+        snprintf(list,sizeof list,"%s",allow);
+        for (char *item=strtok(list,", ;"); item && cfg.allow_count<16; item=strtok(NULL,", ;"))
+            if (parse_ipv4(item,&cfg.allow[cfg.allow_count])) ++cfg.allow_count;
+    }
+    cfg.trace=getenv("BB_ONLINE_TRACE") && atoi(getenv("BB_ONLINE_TRACE"))>0;
+    make_online_id();
+    find_local_ip();
+    char local[32];
+    ip_text(cfg.local_ip,local,sizeof local);
+    cfg.on=1;
+    printf("Net: online ON: private server %s (%s), HTTP port %u, local address %s, PSN user '%s' "
+           "(account %llu); every host name answers the private server\n",
+           server,cfg.server_text,cfg.http_port,local,cfg.online_id,(unsigned long long)cfg.account_id);
+}
+static int online(void) { pthread_once(&cfg_once,configure); return cfg.on; }
+
+/* Where the game may connect or send: the server, loopback, BB_ONLINE_ALLOW. */
+static int allowed(uint32_t addr) {
+    if (addr==cfg.server || (ntohl(addr)>>24)==127) return 1;
+    for (int i=0;i<cfg.allow_count;++i) if (cfg.allow[i]==addr) return 1;
+    return 0;
+}
+
+/* ---- Logging ---- */
+static void hexdump(const char *what, int id, const void *data, size_t size) {
+    const unsigned char *b=data;
+    const size_t shown=size<64 ? size : 64;
+    char hex[64*3+1], text[65];
+    for (size_t i=0;i<shown;++i) { snprintf(hex+i*3,4,"%02x ",b[i]); text[i]=b[i]>=32 && b[i]<127 ? (char)b[i] : '.'; }
+    hex[shown*3]=0; text[shown]=0;
+    printf("Net: %s %d: %zu bytes: %s|%s|%s\n",what,id,size,hex,text,size>shown ? " ..." : "");
+}
+static struct { char host[128]; } seen_hosts[64];
+static int seen_count;
+static int first_time_host(const char *host) {
+    int first=1;
+    pthread_mutex_lock(&net_lock);
+    for (int i=0;i<seen_count;++i) if (!strcmp(seen_hosts[i].host,host)) { first=0; break; }
+    if (first && seen_count<64) snprintf(seen_hosts[seen_count++].host,sizeof seen_hosts[0].host,"%s",host);
+    pthread_mutex_unlock(&net_lock);
+    return first;
+}
+
+/* ---- Native errors as PS4 (BSD) errno values ---- */
+static int native_error(void) {
+#ifdef _WIN32
+    const int e=WSAGetLastError();
+    return e>10000 && e<10100 ? e-10000 : E_INVAL; /* WSAExxx = 10000 + the BSD number */
+#else
+    switch (errno) {
+    case EAGAIN: return E_AGAIN;
+    case EINPROGRESS: return E_INPROGRESS;
+    case EALREADY: return E_ALREADY;
+    case ENOTSOCK: return E_NOTSOCK;
+    case EMSGSIZE: return E_MSGSIZE;
+    case EADDRINUSE: return E_ADDRINUSE;
+    case EADDRNOTAVAIL: return E_ADDRNOTAVAIL;
+    case ENETDOWN: return E_NETDOWN;
+    case ENETUNREACH: return E_NETUNREACH;
+    case ECONNABORTED: return E_CONNABORTED;
+    case ECONNRESET: return E_CONNRESET;
+    case ENOBUFS: return E_NOBUFS;
+    case EISCONN: return E_ISCONN;
+    case ENOTCONN: return E_NOTCONN;
+    case ETIMEDOUT: return E_TIMEDOUT;
+    case ECONNREFUSED: return E_CONNREFUSED;
+    case EHOSTUNREACH: return E_HOSTUNREACH;
+    case EINTR: return E_INTR;
+    case EBADF: return E_BADF;
+    case EPIPE: return E_PIPE;
+    case EACCES: return E_ACCES;
+    default: return E_INVAL;
+    }
+#endif
+}
+#ifndef _WIN32
+static int bsd_from_native_code(int e) { errno=e; return native_error(); }
+#else
+static int bsd_from_native_code(int e) { return e>10000 && e<10100 ? e-10000 : (e ? E_INVAL : 0); }
+#endif
+static __thread int32_t net_errno;
+static int32_t fail(int e) { net_errno=e; return NET_ERROR(e); }
+static void set_nonblocking(NativeSocket s, int on) {
+#ifdef _WIN32
+    u_long v=(u_long)on; ioctlsocket(s,FIONBIO,&v);
+#else
+    const int flags=fcntl(s,F_GETFL,0);
+    fcntl(s,F_SETFL,on ? flags|O_NONBLOCK : flags&~O_NONBLOCK);
+#endif
+}
+static void set_timeout(NativeSocket s, int option, uint32_t usec) {
+#ifdef _WIN32
+    DWORD ms=usec ? (usec+999)/1000 : 0;
+    setsockopt(s,SOL_SOCKET,option,(const char *)&ms,sizeof ms);
+#else
+    struct timeval t={usec/1000000,usec%1000000};
+    setsockopt(s,SOL_SOCKET,option,&t,sizeof t);
+#endif
+}
+static int wait_ready(NativeSocket s, int write, int timeout_ms) {
+    NativePollFd p={0};
+    p.fd=s; p.events=write ? POLLOUT : POLLIN;
+    return native_poll(&p,1,timeout_ms);
+}
+
+/* ---- Object table: sockets, epolls and resolvers share the id space, as on the console ---- */
+enum { OBJ_FREE, OBJ_SOCKET, OBJ_EPOLL, OBJ_RESOLVER };
+typedef struct { int id; uint32_t events; uint64_t data; int reported; } Watch;
+typedef struct {
+    int kind;
+    char name[32];
+    /* socket */
+    NativeSocket s;
+    int type, nbio, sent_logged, received_logged;
+    /* epoll */
+    Watch watch[64];
+    int watches;
+    volatile int abort_wait;
+    /* resolver */
+    volatile int resolved;
+} NetObj;
+#define MAX_OBJECTS 512
+static NetObj objects[MAX_OBJECTS];
+
+static int object_new(int kind, const char *name) {
+    pthread_mutex_lock(&net_lock);
+    for (int id=1; id<MAX_OBJECTS; ++id) if (objects[id].kind==OBJ_FREE) {
+        memset(&objects[id],0,sizeof objects[id]);
+        objects[id].kind=kind; objects[id].s=NATIVE_INVALID;
+        snprintf(objects[id].name,sizeof objects[id].name,"%s",name ? name : "");
+        pthread_mutex_unlock(&net_lock);
+        return id;
+    }
+    pthread_mutex_unlock(&net_lock);
+    return 0;
+}
+static NetObj *object(int id, int kind) {
+    return id>0 && id<MAX_OBJECTS && objects[id].kind==kind ? &objects[id] : NULL;
+}
+
+/* ---- Addresses ---- */
+static int to_native(const void *guest, uint32_t len, struct sockaddr_in *out) {
+    if (!guest || len<8) return E_INVAL;
+    PsSockaddrIn in;
+    memset(&in,0,sizeof in);
+    memcpy(&in,guest,len<sizeof in ? len : sizeof in);
+    if (in.family!=PS_AF_INET) return E_AFNOSUPPORT;
+    memset(out,0,sizeof *out);
+    out->sin_family=AF_INET; out->sin_port=in.port; out->sin_addr.s_addr=in.addr;
+    return 0;
+}
+static void from_native(const struct sockaddr_in *native, void *guest, uint32_t *len) {
+    if (!guest || !len) return;
+    PsSockaddrIn out;
+    memset(&out,0,sizeof out);
+    out.len=sizeof out; out.family=PS_AF_INET; out.port=native->sin_port; out.addr=native->sin_addr.s_addr;
+    memcpy(guest,&out,*len<sizeof out ? *len : sizeof out);
+    *len=sizeof out;
+}
+static const char *addr_text(const struct sockaddr_in *a, char *out, size_t size) {
+    char ip[32];
+    ip_text(a->sin_addr.s_addr,ip,sizeof ip);
+    snprintf(out,size,"%s:%u",ip,ntohs(a->sin_port));
+    return out;
+}
+
+/* ---- libSceNet: sockets ---- */
+static ABI int32_t net_init(void) { return 0; }
+static ABI int32_t net_term(void) { return 0; }
+static ABI int32_t *net_errno_loc(void) { return &net_errno; }
+static ABI int32_t net_pool_create(const char *name,int size,int flags) { (void)name; (void)size; (void)flags; return 1; }
+static ABI int32_t net_pool_destroy(int id) { (void)id; return 0; }
+static ABI int32_t net_pool_stats(int id,void *stats) { (void)id; if (stats) memset(stats,0,32); return 0; }
+
+static ABI int32_t net_socket(const char *name,int family,int type,int protocol) {
+    (void)protocol;
+    if (family!=PS_AF_INET) return fail(E_AFNOSUPPORT);
+    int native_type, native_protocol;
+    switch (type) {
+    case PS_SOCK_STREAM: case PS_SOCK_STREAM_P2P: native_type=SOCK_STREAM; native_protocol=IPPROTO_TCP; break;
+    case PS_SOCK_DGRAM: case PS_SOCK_DGRAM_P2P: native_type=SOCK_DGRAM; native_protocol=IPPROTO_UDP; break;
+    default: printf("Net: socket '%s' of type %d refused (raw sockets)\n",name ? name : "",type); return fail(E_PROTONOSUPPORT);
+    }
+    NativeSocket s=socket(AF_INET,native_type,native_protocol);
+    if (s==NATIVE_INVALID) return fail(native_error());
+    const int id=object_new(OBJ_SOCKET,name);
+    if (!id) { native_close(s); return fail(E_NOBUFS); }
+    objects[id].s=s; objects[id].type=type;
+    printf("Net: socket %d '%s' %s%s\n",id,name ? name : "",native_type==SOCK_STREAM ? "TCP" : "UDP",
+           type==PS_SOCK_DGRAM_P2P || type==PS_SOCK_STREAM_P2P ? " (P2P type: virtual port ignored)" : "");
+    return id;
+}
+static ABI int32_t net_socket_close(int id) {
+    pthread_mutex_lock(&net_lock);
+    NetObj *o=object(id,OBJ_SOCKET);
+    if (!o) { pthread_mutex_unlock(&net_lock); return fail(E_BADF); }
+    NativeSocket s=o->s;
+    o->kind=OBJ_FREE;
+    pthread_mutex_unlock(&net_lock);
+    native_close(s);
+    if (cfg.trace) printf("Net: socket %d closed\n",id);
+    return 0;
+}
+static ABI int32_t net_socket_abort(int id,int flags) {
+    (void)flags;
+    NetObj *o=object(id,OBJ_SOCKET);
+    if (!o) return fail(E_BADF);
+#ifdef _WIN32
+    shutdown(o->s,SD_BOTH);
+#else
+    shutdown(o->s,SHUT_RDWR);
+#endif
+    return 0;
+}
+#define SOCKET_OR_FAIL(o, id) NetObj *o=object(id,OBJ_SOCKET); if (!o) return fail(E_BADF)
+
+static ABI int32_t net_connect(int id,const void *addr,uint32_t len) {
+    SOCKET_OR_FAIL(o,id);
+    struct sockaddr_in to;
+    int e=to_native(addr,len,&to);
+    if (e) return fail(e);
+    char text[48];
+    addr_text(&to,text,sizeof text);
+    if (!allowed(to.sin_addr.s_addr)) {
+        printf("Net: connect %d '%s' to %s refused: not the private server\n",id,o->name,text);
+        return fail(E_NETUNREACH);
+    }
+    const int result=connect(o->s,(struct sockaddr *)&to,sizeof to);
+    if (result) {
+        e=native_error();
+        if (e==E_AGAIN) e=E_INPROGRESS; /* Winsock's non-blocking connect */
+        if (e!=E_INPROGRESS) printf("Net: connect %d '%s' to %s failed (errno %d)\n",id,o->name,text,e);
+        else printf("Net: connect %d '%s' to %s (in progress)\n",id,o->name,text);
+        return fail(e);
+    }
+    printf("Net: connect %d '%s' to %s\n",id,o->name,text);
+    return 0;
+}
+static ABI int32_t net_bind(int id,const void *addr,uint32_t len) {
+    SOCKET_OR_FAIL(o,id);
+    struct sockaddr_in at;
+    int e=to_native(addr,len,&at);
+    if (e) return fail(e);
+    if (bind(o->s,(struct sockaddr *)&at,sizeof at)) {
+        e=native_error();
+        printf("Net: bind %d '%s' to port %u failed (errno %d)\n",id,o->name,ntohs(at.sin_port),e);
+        return fail(e);
+    }
+    printf("Net: bind %d '%s' to port %u\n",id,o->name,ntohs(at.sin_port));
+    return 0;
+}
+static ABI int32_t net_listen(int id,int backlog) {
+    SOCKET_OR_FAIL(o,id);
+    if (listen(o->s,backlog)) return fail(native_error());
+    printf("Net: listen %d '%s'\n",id,o->name);
+    return 0;
+}
+static ABI int32_t net_accept(int id,void *addr,uint32_t *len) {
+    SOCKET_OR_FAIL(o,id);
+    struct sockaddr_in from;
+    socklen_t from_len=sizeof from;
+    NativeSocket s=accept(o->s,(struct sockaddr *)&from,&from_len);
+    if (s==NATIVE_INVALID) return fail(native_error());
+    char text[48];
+    addr_text(&from,text,sizeof text);
+    if (!allowed(from.sin_addr.s_addr)) {
+        printf("Net: accept on %d '%s' from %s refused: not the private server\n",id,o->name,text);
+        native_close(s);
+        return fail(E_CONNABORTED);
+    }
+    const int child=object_new(OBJ_SOCKET,o->name);
+    if (!child) { native_close(s); return fail(E_NOBUFS); }
+    objects[child].s=s; objects[child].type=o->type;
+    from_native(&from,addr,len);
+    printf("Net: accept on %d '%s': socket %d from %s\n",id,o->name,child,text);
+    return child;
+}
+/* MSG_DONTWAIT on a blocking socket: Winsock has no such flag, so readiness is checked first. */
+static int would_block(NetObj *o, int flags, int write) {
+    return (flags & PS_MSG_DONTWAIT) && !o->nbio && wait_ready(o->s,write,0)<=0;
+}
+static int native_flags(int flags) {
+    int f=0;
+    if (flags & PS_MSG_PEEK) f|=MSG_PEEK;
+    if (flags & PS_MSG_WAITALL) f|=MSG_WAITALL;
+#ifdef MSG_NOSIGNAL
+    f|=MSG_NOSIGNAL;
+#endif
+    return f;
+}
+static void log_packet(NetObj *o, int id, const char *what, const void *data, int64_t size, int *logged) {
+    if (size<=0 || (!cfg.trace && *logged)) return;
+    *logged=1;
+    char label[96];
+    snprintf(label,sizeof label,"%s '%s'",what,o->name);
+    hexdump(label,id,data,(size_t)size);
+}
+static ABI int32_t net_send(int id,const void *data,uint64_t size,int flags) {
+    SOCKET_OR_FAIL(o,id);
+    if (would_block(o,flags,1)) return fail(E_AGAIN);
+    const int n=send(o->s,data,(int)size,native_flags(flags & ~(PS_MSG_PEEK|PS_MSG_WAITALL)));
+    if (n<0) return fail(native_error());
+    log_packet(o,id,"send",data,n,&o->sent_logged);
+    return n;
+}
+static ABI int32_t net_recv(int id,void *data,uint64_t size,int flags) {
+    SOCKET_OR_FAIL(o,id);
+    if (would_block(o,flags,0)) return fail(E_AGAIN);
+    const int n=recv(o->s,data,(int)size,native_flags(flags));
+    if (n<0) return fail(native_error());
+    log_packet(o,id,"recv",data,n,&o->received_logged);
+    return n;
+}
+static ABI int32_t net_sendto(int id,const void *data,uint64_t size,int flags,const void *addr,uint32_t len) {
+    SOCKET_OR_FAIL(o,id);
+    if (!addr) return net_send(id,data,size,flags);
+    struct sockaddr_in to;
+    const int e=to_native(addr,len,&to);
+    if (e) return fail(e);
+    if (!allowed(to.sin_addr.s_addr)) {
+        char text[48];
+        printf("Net: sendto %d '%s' to %s refused: not the private server\n",id,o->name,addr_text(&to,text,sizeof text));
+        return fail(E_HOSTUNREACH);
+    }
+    if (would_block(o,flags,1)) return fail(E_AGAIN);
+    const int n=sendto(o->s,data,(int)size,native_flags(flags & ~(PS_MSG_PEEK|PS_MSG_WAITALL)),(struct sockaddr *)&to,sizeof to);
+    if (n<0) return fail(native_error());
+    if (!o->sent_logged || cfg.trace) {
+        char text[48];
+        printf("Net: sendto %d '%s' to %s\n",id,o->name,addr_text(&to,text,sizeof text));
+    }
+    log_packet(o,id,"sendto",data,n,&o->sent_logged);
+    return n;
+}
+static ABI int32_t net_recvfrom(int id,void *data,uint64_t size,int flags,void *addr,uint32_t *len) {
+    SOCKET_OR_FAIL(o,id);
+    if (would_block(o,flags,0)) return fail(E_AGAIN);
+    struct sockaddr_in from;
+    socklen_t from_len=sizeof from;
+    memset(&from,0,sizeof from);
+    const int n=recvfrom(o->s,data,(int)size,native_flags(flags & ~PS_MSG_WAITALL),(struct sockaddr *)&from,&from_len);
+    if (n<0) {
+#ifdef _WIN32
+        /* A UDP reply "port unreachable" resets the socket on Windows: report it as nothing. */
+        if (WSAGetLastError()==WSAECONNRESET) return fail(E_AGAIN);
+#endif
+        return fail(native_error());
+    }
+    from_native(&from,addr,len);
+    log_packet(o,id,"recvfrom",data,n,&o->received_logged);
+    return n;
+}
+static ABI int32_t net_shutdown(int id,int how) {
+    SOCKET_OR_FAIL(o,id);
+    return shutdown(o->s,how) ? fail(native_error()) : 0;
+}
+static ABI int32_t net_getsockname(int id,void *addr,uint32_t *len) {
+    SOCKET_OR_FAIL(o,id);
+    struct sockaddr_in me;
+    socklen_t me_len=sizeof me;
+    if (getsockname(o->s,(struct sockaddr *)&me,&me_len)) return fail(native_error());
+    from_native(&me,addr,len);
+    return 0;
+}
+static ABI int32_t net_getpeername(int id,void *addr,uint32_t *len) {
+    SOCKET_OR_FAIL(o,id);
+    struct sockaddr_in peer;
+    socklen_t peer_len=sizeof peer;
+    if (getpeername(o->s,(struct sockaddr *)&peer,&peer_len)) return fail(native_error());
+    from_native(&peer,addr,len);
+    return 0;
+}
+static int read_int(const void *value, uint32_t len) {
+    int v=0;
+    if (value && len>=1) memcpy(&v,value,len<sizeof v ? len : sizeof v);
+    return v;
+}
+static ABI int32_t net_setsockopt(int id,int level,int option,const void *value,uint32_t len) {
+    SOCKET_OR_FAIL(o,id);
+    const int v=read_int(value,len);
+    int native_level=-1, native_option=-1;
+    if (level==PS_SOL_SOCKET) {
+        switch (option) {
+        case 0x4: native_level=SOL_SOCKET; native_option=SO_REUSEADDR; break;
+        case 0x8: native_level=SOL_SOCKET; native_option=SO_KEEPALIVE; break;
+        case 0x20: native_level=SOL_SOCKET; native_option=SO_BROADCAST; break;
+        case 0x1001: native_level=SOL_SOCKET; native_option=SO_SNDBUF; break;
+        case 0x1002: native_level=SOL_SOCKET; native_option=SO_RCVBUF; break;
+        case 0x80: { /* linger: two ints on the console */
+            int pair[2]={0,0};
+            if (value && len>=8) memcpy(pair,value,8);
+            struct linger l;
+            l.l_onoff=(unsigned short)(pair[0]!=0); l.l_linger=(unsigned short)pair[1];
+            return setsockopt(o->s,SOL_SOCKET,SO_LINGER,(const char *)&l,sizeof l) ? fail(native_error()) : 0;
+        }
+        case 0x1105: set_timeout(o->s,SO_SNDTIMEO,(uint32_t)v); return 0;
+        case 0x1106: set_timeout(o->s,SO_RCVTIMEO,(uint32_t)v); return 0;
+        case 0x1200: o->nbio=v!=0; set_nonblocking(o->s,o->nbio); return 0;
+        default: /* REUSEPORT, ONESBCAST, crypto/signature (P2P), policy, name, priority, ... */
+            printf("Net: setsockopt %d '%s' option 0x%x = %d accepted (no host equivalent)\n",id,o->name,option,v);
+            return 0;
+        }
+    } else if (level==6) {
+        if (option!=1) return 0; /* TCP_MAXSEG / MSS: left to the host */
+        native_level=IPPROTO_TCP; native_option=TCP_NODELAY;
+    } else if (level==0) {
+        if (option==3) { native_level=IPPROTO_IP; native_option=IP_TOS; }
+        else if (option==4) { native_level=IPPROTO_IP; native_option=IP_TTL; }
+        else return 0;
+    } else {
+        printf("Net: setsockopt %d '%s' level %d option 0x%x accepted (unknown)\n",id,o->name,level,option);
+        return 0;
+    }
+    return setsockopt(o->s,native_level,native_option,(const char *)&v,sizeof v) ? fail(native_error()) : 0;
+}
+static ABI int32_t net_getsockopt(int id,int level,int option,void *value,uint32_t *len) {
+    SOCKET_OR_FAIL(o,id);
+    if (!value || !len || *len<4) return fail(E_INVAL);
+    int v=0;
+    socklen_t native_len=sizeof v;
+    if (level==PS_SOL_SOCKET && option==0x1007) {
+        getsockopt(o->s,SOL_SOCKET,SO_ERROR,(char *)&v,&native_len);
+        v=bsd_from_native_code(v);
+    } else if (level==PS_SOL_SOCKET && option==0x1008) v=o->type;
+    else if (level==PS_SOL_SOCKET && option==0x1200) v=o->nbio;
+    else if (level==PS_SOL_SOCKET && (option==0x1001 || option==0x1002))
+        getsockopt(o->s,SOL_SOCKET,option==0x1001 ? SO_SNDBUF : SO_RCVBUF,(char *)&v,&native_len);
+    else if (level==6 && option==1) getsockopt(o->s,IPPROTO_TCP,TCP_NODELAY,(char *)&v,&native_len);
+    else printf("Net: getsockopt %d '%s' level %d option 0x%x answered 0\n",id,o->name,level,option);
+    memcpy(value,&v,4); *len=4;
+    return 0;
+}
+
+/* ---- libSceNet: epoll (timeouts in microseconds) ---- */
+static ABI int32_t net_epoll_create(const char *name,int flags) {
+    if (flags) return fail(E_INVAL);
+    const int id=object_new(OBJ_EPOLL,name);
+    return id ? id : fail(E_NOBUFS);
+}
+static ABI int32_t net_epoll_destroy(int id) {
+    pthread_mutex_lock(&net_lock);
+    NetObj *o=object(id,OBJ_EPOLL);
+    if (o) o->kind=OBJ_FREE;
+    pthread_mutex_unlock(&net_lock);
+    return o ? 0 : fail(E_BADF);
+}
+static ABI int32_t net_epoll_control(int id,int op,int target,const PsEpollEvent *event) {
+    pthread_mutex_lock(&net_lock);
+    NetObj *o=object(id,OBJ_EPOLL);
+    int result=0, found=-1;
+    if (!o) { result=E_BADF; goto done; }
+    for (int i=0;i<o->watches;++i) if (o->watch[i].id==target) found=i;
+    if (op==1) {                                         /* ADD */
+        if (!event) { result=E_INVAL; goto done; }
+        if (found>=0) { result=E_EXIST; goto done; }
+        if (!object(target,OBJ_SOCKET) && !object(target,OBJ_RESOLVER)) { result=E_BADF; goto done; }
+        if (o->watches>=64) { result=E_NOSPC; goto done; }
+        o->watch[o->watches++]=(Watch){target,event->events,event->data,0};
+    } else if (op==2) {                                  /* MOD */
+        if (!event) { result=E_INVAL; goto done; }
+        if (found<0) { result=E_BADF; goto done; }
+        o->watch[found].events=event->events; o->watch[found].data=event->data;
+    } else if (op==3) {                                  /* DEL */
+        if (found<0) { result=E_BADF; goto done; }
+        o->watch[found]=o->watch[--o->watches];
+    } else result=E_INVAL;
+done:
+    pthread_mutex_unlock(&net_lock);
+    return result ? fail(result) : 0;
+}
+static ABI int32_t net_epoll_abort(int id,int flags) {
+    (void)flags;
+    NetObj *o=object(id,OBJ_EPOLL);
+    if (!o) return fail(E_BADF);
+    o->abort_wait=1;
+    return 0;
+}
+static void sleep_us(int64_t us) {
+#ifdef _WIN32
+    compat_sleep_ns((uint64_t)us*1000);
+#else
+    struct timespec t={(time_t)(us/1000000),(long)(us%1000000)*1000};
+    nanosleep(&t,NULL);
+#endif
+}
+static int64_t now_us(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC,&t);
+    return (int64_t)t.tv_sec*1000000+t.tv_nsec/1000;
+}
+static ABI int32_t net_epoll_wait(int id,PsEpollEvent *events,int max,int timeout) {
+    if (!events || max<=0) return fail(E_INVAL);
+    const int64_t deadline=timeout<0 ? -1 : now_us()+timeout;
+    for (;;) {
+        NativePollFd fds[64];
+        Watch sockets[64];
+        int count=0, ready=0;
+        pthread_mutex_lock(&net_lock);
+        NetObj *o=object(id,OBJ_EPOLL);
+        if (!o) { pthread_mutex_unlock(&net_lock); return fail(E_BADF); }
+        if (o->abort_wait) { o->abort_wait=0; pthread_mutex_unlock(&net_lock); return fail(E_INTR); }
+        for (int i=0;i<o->watches && ready<max;++i) {
+            Watch *w=&o->watch[i];
+            NetObj *r=object(w->id,OBJ_RESOLVER);
+            if (r && r->resolved) {                      /* an asynchronous resolution finished */
+                r->resolved=0;
+                events[ready++]=(PsEpollEvent){PS_EPOLLIN,0,(uint64_t)w->id,w->data};
+                continue;
+            }
+            NetObj *s=object(w->id,OBJ_SOCKET);
+            if (!s || !(w->events & (PS_EPOLLIN|PS_EPOLLOUT))) continue;
+            fds[count].fd=s->s; fds[count].revents=0;
+            fds[count].events=(short)(((w->events & PS_EPOLLIN) ? POLLIN : 0) | ((w->events & PS_EPOLLOUT) ? POLLOUT : 0));
+            sockets[count++]=*w;
+        }
+        pthread_mutex_unlock(&net_lock);
+        if (ready) return ready;
+        int64_t left=deadline<0 ? 20000 : deadline-now_us();
+        if (left<0) left=0;
+        const int slice_ms=(int)(left>20000 ? 20 : (left+999)/1000);
+        if (count) {
+            const int n=native_poll(fds,(unsigned long)count,slice_ms);
+            if (n<0) return fail(native_error());
+            for (int i=0;i<count && ready<max;++i) {
+                const short r=fds[i].revents;
+                if (!r) continue;
+                uint32_t e=0;
+                if (r & (POLLIN|POLLHUP)) e|=PS_EPOLLIN;
+                if (r & POLLOUT) e|=PS_EPOLLOUT;
+                if (r & (POLLERR|POLLNVAL)) e|=PS_EPOLLERR;
+                if (r & POLLHUP) e|=PS_EPOLLHUP;
+                e&=sockets[i].events|PS_EPOLLERR|PS_EPOLLHUP;
+                if (e) events[ready++]=(PsEpollEvent){e,0,(uint64_t)sockets[i].id,sockets[i].data};
+            }
+            if (ready) return ready;
+        } else if (slice_ms) sleep_us((int64_t)slice_ms*1000);
+        if (deadline>=0 && now_us()>=deadline) return 0;
+    }
+}
+
+/* ---- libSceNet: resolver. Every name answers the private server. ---- */
+static ABI int32_t net_resolver_create(const char *name,int pool,int flags) {
+    (void)pool; (void)flags;
+    const int id=object_new(OBJ_RESOLVER,name);
+    return id ? id : fail(E_NOBUFS);
+}
+static ABI int32_t net_resolver_destroy(int id) {
+    pthread_mutex_lock(&net_lock);
+    NetObj *o=object(id,OBJ_RESOLVER);
+    if (o) o->kind=OBJ_FREE;
+    pthread_mutex_unlock(&net_lock);
+    return o ? 0 : fail(E_BADF);
+}
+static ABI int32_t net_resolver_ntoa(int id,const char *host,uint32_t *addr,int timeout,int retry,int flags) {
+    (void)timeout; (void)retry;
+    NetObj *o=object(id,OBJ_RESOLVER);
+    if (!o) return fail(E_BADF);
+    if (!host || !addr) return fail(E_INVAL);
+    uint32_t literal;
+    if (!(flags & 0x10000) && parse_ipv4(host,&literal)) *addr=literal;
+    else {
+        *addr=cfg.server;
+        if (first_time_host(host)) printf("Net: resolve '%s' -> %s (private server)\n",host,cfg.server_text);
+    }
+    if (flags & 1) o->resolved=1;                        /* asynchronous: report through epoll */
+    return 0;
+}
+static ABI int32_t net_resolver_abort(int id,int flags) { (void)id; (void)flags; return 0; }
+
+/* ---- libSceNetCtl: connected by cable, address obtained ---- */
+typedef void (ABI *NetCtlCallback)(int event,void *arg);
+static struct { NetCtlCallback cb; void *arg; int fired; } netctl_callbacks[2][8];
+static ABI int32_t netctl_state(int32_t *state) { if (!state) return NET_CTL_INVALID_ADDR; *state=3; return 0; }
+static ABI int32_t netctl_info(int code,void *info) {
+    if (!info) return NET_CTL_INVALID_ADDR;
+    char *text=info;
+    uint32_t value=0;
+    switch (code) {
+    case 1: value=0; break;                                       /* device: wired */
+    case 2: { const unsigned char mac[6]={0x02,0x53,0x46,(unsigned char)(cfg.account_id>>16),(unsigned char)(cfg.account_id>>8),(unsigned char)cfg.account_id};
+              memcpy(info,mac,6); return 0; }
+    case 3: value=1500; break;                                    /* MTU */
+    case 4: value=1; break;                                       /* link connected */
+    case 11: value=0; break;                                      /* IP config: DHCP */
+    case 12: case 13: case 20: text[0]=0; return 0;               /* host names, proxy server */
+    case 14: ip_text(cfg.local_ip,text,16); return 0;
+    case 15: snprintf(text,16,"255.255.255.0"); return 0;
+    case 16: { uint32_t gateway=(cfg.local_ip & htonl(0xffffff00)) | htonl(1); ip_text(gateway,text,16); return 0; }
+    case 17: case 18: ip_text(cfg.server,text,16); return 0;     /* DNS: the private server */
+    case 19: value=0; break;                                      /* no proxy */
+    case 21: { uint16_t port=0; memcpy(info,&port,2); return 0; }
+    default: printf("Net: NetCtl info %d answered 0\n",code); value=0; break;
+    }
+    memcpy(info,&value,4);
+    return 0;
+}
+static int32_t netctl_register_in(int list,void *cb,void *arg,int32_t *cid) {
+    if (!cid || !cb) return NET_CTL_INVALID_ADDR;
+    pthread_mutex_lock(&net_lock);
+    for (int i=0;i<8;++i) if (!netctl_callbacks[list][i].cb) {
+        netctl_callbacks[list][i].cb=(NetCtlCallback)cb; netctl_callbacks[list][i].arg=arg; netctl_callbacks[list][i].fired=0;
+        pthread_mutex_unlock(&net_lock);
+        *cid=i; return 0;
+    }
+    pthread_mutex_unlock(&net_lock);
+    return (int32_t)0x80412102; /* CALLBACK_MAX */
+}
+/* Each callback hears "address obtained" once, on the first check after it registered. */
+static int32_t netctl_check_in(int list) {
+    for (int i=0;i<8;++i) {
+        pthread_mutex_lock(&net_lock);
+        NetCtlCallback cb=netctl_callbacks[list][i].cb;
+        void *arg=netctl_callbacks[list][i].arg;
+        const int fire=cb && !netctl_callbacks[list][i].fired;
+        if (fire) netctl_callbacks[list][i].fired=1;
+        pthread_mutex_unlock(&net_lock);
+        if (fire) cb(3,arg); /* IPOBTAINED */
+    }
+    return 0;
+}
+static int32_t netctl_unregister_in(int list,int cid) {
+    if (cid<0 || cid>=8) return (int32_t)0x80412103; /* ID_NOT_FOUND */
+    pthread_mutex_lock(&net_lock);
+    netctl_callbacks[list][cid].cb=NULL;
+    pthread_mutex_unlock(&net_lock);
+    return 0;
+}
+static ABI int32_t netctl_register(void *cb,void *arg,int32_t *cid) { return netctl_register_in(0,cb,arg,cid); }
+static ABI int32_t netctl_check(void) { return netctl_check_in(0); }
+static ABI int32_t netctl_unregister(int cid) { return netctl_unregister_in(0,cid); }
+static ABI int32_t netctl_register_toolkit(void *cb,void *arg,int32_t *cid) { return netctl_register_in(1,cb,arg,cid); }
+static ABI int32_t netctl_check_toolkit(void) { return netctl_check_in(1); }
+static ABI int32_t netctl_unregister_toolkit(int cid) { return netctl_unregister_in(1,cid); }
+static ABI int32_t netctl_nat(uint32_t *info) {
+    if (!info) return NET_CTL_INVALID_ADDR;
+    info[1]=1; info[2]=2; info[3]=cfg.local_ip; /* STUN ok, NAT type 2, mapped address */
+    return 0;
+}
+static ABI int32_t ok_void(void) { return 0; }
+static ABI int32_t lib_init_one(void) { return 1; }
+
+/* ---- NpManager / NpAuth: user 1 signed in ---- */
+static int user_signed_in(int32_t user) { return user==1; }
+typedef struct { char data[16]; int8_t term; int8_t dummy[3]; } NpOnlineId;
+typedef struct { NpOnlineId handle; uint8_t opt[8]; uint8_t reserved[8]; } NpId;
+static void fill_online_id(NpOnlineId *id) {
+    memset(id,0,sizeof *id);
+    memcpy(id->data,cfg.online_id,strlen(cfg.online_id));
+}
+static ABI int32_t np_state(int32_t user,int32_t *state) {
+    if (!state) return NP_INVALID_ARGUMENT;
+    *state=user_signed_in(user) ? 2 : 1; /* SIGNED_IN / SIGNED_OUT */
+    return 0;
+}
+static ABI int32_t np_online_id(int32_t user,NpOnlineId *id) {
+    if (!id) return NP_INVALID_ARGUMENT;
+    if (!user_signed_in(user)) return NP_SIGNED_OUT;
+    fill_online_id(id); return 0;
+}
+static ABI int32_t np_npid(int32_t user,NpId *id) {
+    if (!id) return NP_INVALID_ARGUMENT;
+    if (!user_signed_in(user)) return NP_SIGNED_OUT;
+    memset(id,0,sizeof *id);
+    fill_online_id(&id->handle); return 0;
+}
+static ABI int32_t np_account_id(int32_t user,uint64_t *id) {
+    if (!id) return NP_INVALID_ARGUMENT;
+    if (!user_signed_in(user)) { *id=0; return NP_SIGNED_OUT; }
+    *id=cfg.account_id; return 0;
+}
+static ABI int32_t np_user_by_account(uint64_t account,int32_t *user) {
+    if (!user || !account) return NP_INVALID_ARGUMENT;
+    if (account!=cfg.account_id) return (int32_t)0x80550009; /* USER_NOT_FOUND */
+    *user=1; return 0;
+}
+/* Requests (NpManager and NpAuth): everything completes at once. */
+static struct { int used, async; int32_t result; } requests[64];
+#define REQUEST_BASE 0x100
+static int32_t request_new(int async) {
+    pthread_mutex_lock(&net_lock);
+    for (int i=0;i<64;++i) if (!requests[i].used) {
+        requests[i].used=1; requests[i].async=async; requests[i].result=0;
+        pthread_mutex_unlock(&net_lock);
+        return REQUEST_BASE+i;
+    }
+    pthread_mutex_unlock(&net_lock);
+    return (int32_t)0x80550015; /* REQUEST_MAX */
+}
+static int request_index(int32_t id) { const int i=id-REQUEST_BASE; return i>=0 && i<64 && requests[i].used ? i : -1; }
+/* Sync requests return the result; async ones return 0 and keep it for PollAsync. */
+static int32_t request_complete(int32_t id,int32_t result) {
+    const int i=request_index(id);
+    if (i<0) return NP_REQUEST_NOT_FOUND;
+    requests[i].result=result;
+    return requests[i].async ? 0 : result;
+}
+static ABI int32_t np_create_request(void) { return request_new(0); }
+static ABI int32_t np_create_async(const void *param) { (void)param; return request_new(1); }
+static ABI int32_t np_delete_request(int32_t id) { const int i=request_index(id); if (i<0) return NP_REQUEST_NOT_FOUND; requests[i].used=0; return 0; }
+static ABI int32_t np_abort_request(int32_t id) { return request_index(id)<0 ? NP_REQUEST_NOT_FOUND : 0; }
+static ABI int32_t np_poll(int32_t id,int32_t *result) {
+    const int i=request_index(id);
+    if (i<0) return NP_REQUEST_NOT_FOUND;
+    if (result) *result=requests[i].result;
+    return 0; /* finished */
+}
+static ABI int32_t np_check_availability_a(int32_t req,int32_t user) {
+    return request_complete(req,user_signed_in(user) ? 0 : NP_SIGNED_OUT);
+}
+typedef struct { uint64_t size; int32_t user; uint8_t pad[4]; uint64_t features; uint8_t reserved[32]; } NpCheckPlusParameter;
+static ABI int32_t np_check_plus(int32_t req,const NpCheckPlusParameter *param,uint8_t *result) {
+    if (!param || !result) return NP_INVALID_ARGUMENT;
+    memset(result,0,33);
+    result[0]=user_signed_in(param->user);              /* PS Plus: authorized */
+    printf("Net: PSN: PS Plus check (features 0x%llx): granted\n",(unsigned long long)param->features);
+    return request_complete(req,user_signed_in(param->user) ? 0 : NP_SIGNED_OUT);
+}
+static ABI int32_t np_parental_a(int32_t req,int32_t user,int8_t *age,uint8_t *info) {
+    if (!age || !info) return NP_INVALID_ARGUMENT;
+    *age=30; memset(info,0,3);                           /* no restrictions */
+    return request_complete(req,user_signed_in(user) ? 0 : NP_SIGNED_OUT);
+}
+/* State callbacks: "signed in" for user 1, once, on the first check after registering. */
+typedef void (ABI *NpStateLegacy)(int32_t user,int32_t state,NpId *id,void *arg);
+typedef void (ABI *NpStateToolkit)(int32_t user,int32_t state,void *arg);
+static struct { void *cb, *arg; int fired; } np_legacy, np_toolkit;
+static ABI int32_t np_register_legacy(void *cb,void *arg) {
+    if (!cb) return NP_INVALID_ARGUMENT;
+    pthread_mutex_lock(&net_lock); np_legacy.cb=cb; np_legacy.arg=arg; np_legacy.fired=0; pthread_mutex_unlock(&net_lock);
+    return 1;
+}
+static ABI int32_t np_unregister_legacy(void) { pthread_mutex_lock(&net_lock); np_legacy.cb=NULL; pthread_mutex_unlock(&net_lock); return 0; }
+static ABI int32_t np_register_toolkit(void *cb,void *arg) {
+    if (!cb) return NP_INVALID_ARGUMENT;
+    pthread_mutex_lock(&net_lock); np_toolkit.cb=cb; np_toolkit.arg=arg; np_toolkit.fired=0; pthread_mutex_unlock(&net_lock);
+    return 0;
+}
+static ABI int32_t np_unregister_toolkit(void) { pthread_mutex_lock(&net_lock); np_toolkit.cb=NULL; pthread_mutex_unlock(&net_lock); return 0; }
+static ABI int32_t np_check_callback(void) {
+    pthread_mutex_lock(&net_lock);
+    void *legacy=np_legacy.fired ? NULL : np_legacy.cb, *legacy_arg=np_legacy.arg;
+    void *toolkit=np_toolkit.fired ? NULL : np_toolkit.cb, *toolkit_arg=np_toolkit.arg;
+    if (legacy) np_legacy.fired=1;
+    if (toolkit) np_toolkit.fired=1;
+    pthread_mutex_unlock(&net_lock);
+    if (legacy || toolkit) printf("Net: PSN: user 1 '%s' signed in\n",cfg.online_id);
+    if (legacy) { NpId id; memset(&id,0,sizeof id); fill_online_id(&id.handle); ((NpStateLegacy)legacy)(1,2,&id,legacy_arg); }
+    if (toolkit) ((NpStateToolkit)toolkit)(1,2,toolkit_arg);
+    return 0;
+}
+/* Authorization codes and ID tokens: made up, for the private server only. */
+typedef struct { uint64_t size; int32_t user; uint8_t pad[4]; const char *client_id; const char *scope; } NpAuthCodeParameterA;
+typedef struct { uint64_t size; int32_t user; uint8_t pad[4]; const char *client_id; const char *client_secret; const char *scope; } NpAuthTokenParameterA;
+static ABI int32_t np_auth_code_a(int32_t req,const NpAuthCodeParameterA *param,char *code,int32_t *issuer) {
+    if (!param || !code) return NP_AUTH_INVALID_ARGUMENT;
+    printf("Net: PSN: authorization code for client '%.129s', scope '%s'\n",param->client_id ? param->client_id : "",
+           param->scope ? param->scope : "");
+    memset(code,0,136);
+    snprintf(code,129,"SACREDFIRE-%s-%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
+    if (issuer) *issuer=256;
+    return request_complete(req,user_signed_in(param->user) ? 0 : NP_SIGNED_OUT);
+}
+static ABI int32_t np_id_token_a(int32_t req,const NpAuthTokenParameterA *param,char *token) {
+    if (!param || !token) return NP_AUTH_INVALID_ARGUMENT;
+    printf("Net: PSN: ID token for client '%.129s', scope '%s'\n",param->client_id ? param->client_id : "",
+           param->scope ? param->scope : "");
+    memset(token,0,4104);
+    snprintf(token,4097,"sacredfire.%s.%016llx",cfg.online_id,(unsigned long long)cfg.account_id);
+    return request_complete(req,user_signed_in(param->user) ? 0 : NP_SIGNED_OUT);
+}
+
+/* ---- libSceHttp: plain HTTP to the private server ---- */
+typedef struct { char *name, *value; } Header;
+typedef struct {
+    int kind;                       /* 0 free, 1 template, 2 connection, 3 request */
+    int parent;
+    char *url;
+    char method[16];
+    char user_agent[128];
+    Header headers[32];
+    int header_count;
+    uint32_t connect_timeout_us;
+    /* response */
+    int sent, status;
+    char *response_headers;
+    size_t response_headers_size;
+    char *body;
+    size_t body_size, body_read;
+    void *epoll;
+    void *user_arg;
+    int reported;
+} HttpObj;
+#define MAX_HTTP 256
+static HttpObj http[MAX_HTTP];
+static HttpObj *http_get(int id) { return id>0 && id<MAX_HTTP && http[id].kind ? &http[id] : NULL; }
+static int http_new(int kind,int parent) {
+    pthread_mutex_lock(&net_lock);
+    for (int id=1; id<MAX_HTTP; ++id) if (!http[id].kind) {
+        memset(&http[id],0,sizeof http[id]);
+        http[id].kind=kind; http[id].parent=parent;
+        pthread_mutex_unlock(&net_lock);
+        return id;
+    }
+    pthread_mutex_unlock(&net_lock);
+    return HTTP_OUT_OF_MEMORY;
+}
+static void http_free_response(HttpObj *h) {
+    free(h->response_headers); free(h->body);
+    h->response_headers=h->body=NULL; h->response_headers_size=h->body_size=h->body_read=0;
+    h->sent=0; h->status=0; h->reported=0;
+}
+static void http_free(HttpObj *h) {
+    for (int i=0;i<h->header_count;++i) { free(h->headers[i].name); free(h->headers[i].value); }
+    free(h->url);
+    http_free_response(h);
+    h->kind=0;
+}
+static char *dup_text(const char *s) { if (!s) s=""; char *d=malloc(strlen(s)+1); if (d) strcpy(d,s); return d; }
+static ABI int32_t http_init(int mem,int ssl,uint64_t pool) { (void)mem; (void)ssl; (void)pool; return 1; }
+static ABI int32_t http_template(int ctx,const char *agent,int version,int proxy) {
+    (void)ctx; (void)version; (void)proxy;
+    const int id=http_new(1,0);
+    if (id>0) snprintf(http[id].user_agent,sizeof http[id].user_agent,"%s",agent ? agent : "");
+    return id;
+}
+static ABI int32_t http_connection(int tmpl,const char *url,int keepalive) {
+    (void)keepalive;
+    if (!http_get(tmpl)) return HTTP_INVALID_ID;
+    const int id=http_new(2,tmpl);
+    if (id>0) http[id].url=dup_text(url);
+    return id;
+}
+static int32_t http_request_new(int conn,const char *method,const char *url) {
+    if (!http_get(conn)) return HTTP_INVALID_ID;
+    const int id=http_new(3,conn);
+    if (id>0) { http[id].url=dup_text(url); snprintf(http[id].method,sizeof http[id].method,"%s",method); }
+    return id;
+}
+static ABI int32_t http_request(int conn,int32_t method,const char *url,uint64_t length) {
+    (void)length;
+    static const char *const methods[]={"GET","POST","HEAD","OPTIONS","PUT","DELETE","TRACE","CONNECT"};
+    return http_request_new(conn,method>=0 && method<8 ? methods[method] : "GET",url);
+}
+static ABI int32_t http_request2(int conn,const char *method,const char *url,uint64_t length) {
+    (void)length;
+    return http_request_new(conn,method && *method ? method : "GET",url);
+}
+static ABI int32_t http_delete(int id) {
+    pthread_mutex_lock(&net_lock);
+    HttpObj *h=http_get(id);
+    if (h) http_free(h);
+    pthread_mutex_unlock(&net_lock);
+    return h ? 0 : HTTP_INVALID_ID;
+}
+static ABI int32_t http_add_header(int id,const char *name,const char *value,int32_t mode) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    if (!name || !value) return HTTP_INVALID_VALUE;
+    if (mode==0) for (int i=0;i<h->header_count;++i) if (!strcasecmp(h->headers[i].name,name)) {
+        free(h->headers[i].value); h->headers[i].value=dup_text(value); return 0;
+    }
+    if (h->header_count>=32) return HTTP_OUT_OF_MEMORY;
+    h->headers[h->header_count].name=dup_text(name);
+    h->headers[h->header_count++].value=dup_text(value);
+    return 0;
+}
+static ABI int32_t http_content_length(int id,uint64_t length) { (void)length; return http_get(id) ? 0 : HTTP_INVALID_ID; }
+static ABI int32_t http_connect_timeout(int id,uint32_t usec) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    h->connect_timeout_us=usec; return 0;
+}
+static ABI int32_t http_set_id_flag(int id,int value) { (void)value; return http_get(id) ? 0 : HTTP_INVALID_ID; }
+static ABI int32_t http_https_option(int id,uint32_t flags) { (void)flags; return http_get(id) ? 0 : HTTP_INVALID_ID; }
+static ABI int32_t http_ssl_callback(int id,void *cb,void *arg) { (void)cb; (void)arg; return http_get(id) ? 0 : HTTP_INVALID_ID; }
+static ABI int32_t http_pool_stats(int ctx,void *stats) { (void)ctx; if (stats) memset(stats,0,28); return 0; }
+
+/* scheme://host[:port]/path -> its parts (path keeps the query). */
+static int parse_url(const char *url,char *scheme,size_t scheme_size,char *host,size_t host_size,const char **path) {
+    const char *p=strstr(url,"://");
+    if (!p) return 0;
+    snprintf(scheme,scheme_size,"%.*s",(int)(p-url),url);
+    p+=3;
+    const char *end=p+strcspn(p,"/?#");
+    snprintf(host,host_size,"%.*s",(int)(end-p),p);
+    *path=*end ? end : "/";
+    return 1;
+}
+typedef struct { char *data; size_t size, capacity; } Buffer;
+static int buffer_add(Buffer *b,const void *data,size_t size) {
+    if (b->size+size+1>b->capacity) {
+        size_t capacity=b->capacity ? b->capacity*2 : 4096;
+        while (capacity<b->size+size+1) capacity*=2;
+        char *grown=realloc(b->data,capacity);
+        if (!grown) return 0;
+        b->data=grown; b->capacity=capacity;
+    }
+    memcpy(b->data+b->size,data,size); b->size+=size; b->data[b->size]=0;
+    return 1;
+}
+static void collect_headers(int id,Buffer *out,const char **skip,int skip_count,int depth) {
+    HttpObj *h=http_get(id);
+    if (!h || depth>3) return;
+    collect_headers(h->parent,out,skip,skip_count,depth+1); /* template, connection, then request */
+    for (int i=0;i<h->header_count;++i) {
+        int skipped=0;
+        for (int k=0;k<skip_count;++k) if (!strcasecmp(h->headers[i].name,skip[k])) skipped=1;
+        if (skipped) continue;
+        char line[1024];
+        const int n=snprintf(line,sizeof line,"%s: %s\r\n",h->headers[i].name,h->headers[i].value);
+        buffer_add(out,line,(size_t)(n<(int)sizeof line ? n : (int)sizeof line-1));
+    }
+}
+static const char *user_agent_of(int id) {
+    for (int depth=0; depth<3; ++depth) {
+        HttpObj *h=http_get(id);
+        if (!h) break;
+        if (h->user_agent[0]) return h->user_agent;
+        id=h->parent;
+    }
+    return "SacredFire";
+}
+/* Chunked transfer coding, decoded in place; returns the body's size. */
+static size_t dechunk(char *body,size_t size) {
+    size_t in=0, out=0;
+    while (in<size) {
+        char *end;
+        const unsigned long chunk=strtoul(body+in,&end,16);
+        const char *line=strstr(body+in,"\r\n");
+        if (!line || end==body+in) break;
+        in=(size_t)(line-body)+2;
+        if (!chunk) break;
+        if (in+chunk>size) { memmove(body+out,body+in,size-in); out+=size-in; break; }
+        memmove(body+out,body+in,chunk); out+=chunk; in+=chunk+2;
+    }
+    return out;
+}
+static ABI int32_t http_send(int id,const void *data,uint64_t size) {
+    HttpObj *h=http_get(id);
+    if (!h || h->kind!=3) return HTTP_INVALID_ID;
+    http_free_response(h);
+    char scheme[16], host[256];
+    const char *path;
+    if (!h->url || !parse_url(h->url,scheme,sizeof scheme,host,sizeof host,&path)) return HTTP_INVALID_URL;
+    Buffer request={0};
+    char line[2048];
+    int n=snprintf(line,sizeof line,"%s %s HTTP/1.1\r\nHost: %s\r\nX-SacredFire-Scheme: %s\r\nUser-Agent: %s\r\nConnection: close\r\n",
+                   h->method,path,host,scheme,user_agent_of(id));
+    buffer_add(&request,line,(size_t)(n<(int)sizeof line ? n : (int)sizeof line-1));
+    static const char *skip[]={"Host","Connection","Content-Length","User-Agent","Transfer-Encoding"};
+    collect_headers(id,&request,skip,5,0);
+    if (data || size || !strcmp(h->method,"POST") || !strcmp(h->method,"PUT")) {
+        n=snprintf(line,sizeof line,"Content-Length: %llu\r\n",(unsigned long long)size);
+        buffer_add(&request,line,(size_t)n);
+    }
+    buffer_add(&request,"\r\n",2);
+    if (data && size) buffer_add(&request,data,(size_t)size);
+    printf("Net: HTTP %s %s (%llu bytes) -> %s:%u\n",h->method,h->url,(unsigned long long)size,cfg.server_text,cfg.http_port);
+    if (data && size) hexdump("HTTP body",id,data,(size_t)size);
+
+    int32_t result=0;
+    Buffer response={0};
+    NativeSocket s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+    if (s==NATIVE_INVALID) { free(request.data); return HTTP_NETWORK; }
+    struct sockaddr_in to={0};
+    to.sin_family=AF_INET; to.sin_port=htons(cfg.http_port); to.sin_addr.s_addr=cfg.server;
+    int timeout_ms=h->connect_timeout_us ? (int)(h->connect_timeout_us/1000) : 10000;
+    for (int up=h->parent, depth=0; !h->connect_timeout_us && depth<2; ++depth) {
+        HttpObj *p=http_get(up);
+        if (!p) break;
+        if (p->connect_timeout_us) { timeout_ms=(int)(p->connect_timeout_us/1000); break; }
+        up=p->parent;
+    }
+    set_nonblocking(s,1);
+    int connected=!connect(s,(struct sockaddr *)&to,sizeof to);
+    if (!connected) {
+        const int e=native_error();
+        if ((e==E_INPROGRESS || e==E_AGAIN) && wait_ready(s,1,timeout_ms>0 ? timeout_ms : 10000)>0) {
+            int error=0;
+            socklen_t len=sizeof error;
+            getsockopt(s,SOL_SOCKET,SO_ERROR,(char *)&error,&len);
+            connected=!error;
+        }
+    }
+    set_nonblocking(s,0);
+    if (!connected) { result=HTTP_NETWORK; printf("Net: HTTP: the private server's port %u does not answer\n",cfg.http_port); goto done; }
+    set_timeout(s,SO_RCVTIMEO,15000000);
+    set_timeout(s,SO_SNDTIMEO,15000000);
+    for (size_t sent=0; sent<request.size;) {
+        const int k=send(s,request.data+sent,(int)(request.size-sent),0);
+        if (k<=0) { result=HTTP_NETWORK; goto done; }
+        sent+=(size_t)k;
+    }
+    for (;;) {
+        char chunk[8192];
+        const int k=recv(s,chunk,sizeof chunk,0);
+        if (k<0) { result=response.size ? 0 : HTTP_TIMEOUT; break; }
+        if (!k) break;
+        if (!buffer_add(&response,chunk,(size_t)k)) { result=HTTP_OUT_OF_MEMORY; break; }
+    }
+    if (!result) {
+        char *end=response.data ? strstr(response.data,"\r\n\r\n") : NULL;
+        if (!end || sscanf(response.data,"HTTP/%*s %d",&h->status)!=1) { result=HTTP_NETWORK; goto done; }
+        const size_t header_size=(size_t)(end-response.data)+4;
+        h->response_headers=malloc(header_size+1);
+        h->body=malloc(response.size-header_size+1);
+        if (!h->response_headers || !h->body) { result=HTTP_OUT_OF_MEMORY; goto done; }
+        memcpy(h->response_headers,response.data,header_size); h->response_headers[header_size]=0;
+        h->response_headers_size=header_size;
+        h->body_size=response.size-header_size;
+        memcpy(h->body,response.data+header_size,h->body_size); h->body[h->body_size]=0;
+        const char *te=NULL;
+        for (const char *p=h->response_headers; (p=strchr(p,'\n'))!=NULL; ++p)
+            if (!strncasecmp(p+1,"Transfer-Encoding:",18)) { te=p+19; break; }
+        if (te && strstr(te,"chunked") && strstr(te,"chunked")<strstr(te,"\n")) h->body_size=dechunk(h->body,h->body_size);
+        h->sent=1;
+        printf("Net: HTTP %s %s -> %d (%zu bytes)\n",h->method,h->url,h->status,h->body_size);
+        if (h->body_size) hexdump("HTTP reply",id,h->body,h->body_size);
+    }
+done:
+    native_close(s);
+    free(request.data); free(response.data);
+    if (result) http_free_response(h);
+    return result;
+}
+static ABI int32_t http_status(int id,int *status) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    if (!status) return HTTP_INVALID_VALUE;
+    if (!h->sent) return HTTP_BEFORE_SEND;
+    *status=h->status; return 0;
+}
+static ABI int32_t http_response_length(int id,int *result,uint64_t *length) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    if (!result || !length) return HTTP_INVALID_VALUE;
+    if (!h->sent) return HTTP_BEFORE_SEND;
+    *result=0; *length=h->body_size; /* the whole body is here: its length is known */
+    return 0;
+}
+static ABI int32_t http_read(int id,void *data,uint64_t size) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    if (!h->sent) return HTTP_BEFORE_SEND;
+    if (!data) return HTTP_INVALID_VALUE;
+    const size_t left=h->body_size-h->body_read, n=size<left ? (size_t)size : left;
+    memcpy(data,h->body+h->body_read,n);
+    h->body_read+=n;
+    return (int32_t)n;
+}
+static ABI int32_t http_all_headers(int id,char **header,uint64_t *size) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    if (!header || !size) return HTTP_INVALID_VALUE;
+    if (!h->sent) return HTTP_BEFORE_SEND;
+    *header=h->response_headers; *size=h->response_headers_size;
+    return 0;
+}
+static ABI int32_t http_parse_header(const char *header,uint64_t length,const char *field,const char **value,uint64_t *value_length) {
+    if (!header || !field || !value || !value_length) return HTTP_INVALID_VALUE;
+    const size_t field_length=strlen(field);
+    for (const char *line=header; line<header+length;) {
+        const char *next=memchr(line,'\n',(size_t)(header+length-line));
+        const char *end=next ? next : header+length;
+        if ((size_t)(end-line)>field_length && !strncasecmp(line,field,field_length) && line[field_length]==':') {
+            const char *v=line+field_length+1;
+            while (v<end && (*v==' ' || *v=='\t')) ++v;
+            const char *e=end;
+            while (e>v && (e[-1]=='\r' || e[-1]==' ')) --e;
+            *value=v; *value_length=(uint64_t)(e-v);
+            return 0;
+        }
+        if (!next) break;
+        line=next+1;
+    }
+    return HTTP_PARSE_NOT_FOUND;
+}
+static ABI int32_t http_uri_escape(char *out,uint64_t *require,uint64_t prepare,const char *in) {
+    if (!in) return HTTP_INVALID_VALUE;
+    size_t need=1;
+    for (const unsigned char *p=(const unsigned char *)in; *p; ++p)
+        need+=isalnum(*p) || strchr("-._~",*p) ? 1 : 3;
+    if (require) *require=need;
+    if (!out) return 0;
+    if (prepare<need) return HTTP_OUT_OF_MEMORY;
+    char *o=out;
+    for (const unsigned char *p=(const unsigned char *)in; *p; ++p) {
+        if (isalnum(*p) || strchr("-._~",*p)) *o++=(char)*p;
+        else { snprintf(o,4,"%%%02X",*p); o+=3; }
+    }
+    *o=0; return 0;
+}
+/* Non-blocking use: requests finish inside sceHttpSendRequest, so an epoll reports each request
+ * once as readable after it was sent. */
+static ABI int32_t http_create_epoll(int ctx,void **handle) {
+    (void)ctx;
+    if (!handle) return HTTP_INVALID_VALUE;
+    static int next=1;
+    *handle=(void *)(uintptr_t)(0x5f000000+next++); return 0;
+}
+static ABI int32_t http_set_epoll(int id,void *handle,void *arg) {
+    HttpObj *h=http_get(id);
+    if (!h) return HTTP_INVALID_ID;
+    h->epoll=handle; h->user_arg=arg; return 0;
+}
+static ABI int32_t http_unset_epoll(int id) { HttpObj *h=http_get(id); if (!h) return HTTP_INVALID_ID; h->epoll=NULL; return 0; }
+typedef struct { uint32_t events, detail; int32_t id; void *arg; } HttpEvent;
+static ABI int32_t http_wait(void *handle,HttpEvent *events,int32_t max,int64_t timeout) {
+    if (!events || max<=0) return HTTP_INVALID_VALUE;
+    int n=0;
+    pthread_mutex_lock(&net_lock);
+    for (int id=1; id<MAX_HTTP && n<max; ++id) {
+        HttpObj *h=&http[id];
+        if (h->kind==3 && h->epoll==handle && h->sent && !h->reported) {
+            h->reported=1;
+            events[n++]=(HttpEvent){1,0,id,h->user_arg};
+        }
+    }
+    pthread_mutex_unlock(&net_lock);
+    if (!n && timeout>0) sleep_us(timeout>100000 ? 100000 : timeout);
+    return n;
+}
+static ABI int32_t http_abort(int id) { return http_get(id) ? 0 : HTTP_INVALID_ID; }
+
+static const RuntimeExport exports[]={
+    {"sceNetInit",net_init}, {"sceNetTerm",net_term}, {"sceNetErrnoLoc",net_errno_loc},
+    {"sceNetPoolCreate",net_pool_create}, {"sceNetPoolDestroy",net_pool_destroy},
+    {"sceNetGetMemoryPoolStats",net_pool_stats},
+    {"sceNetSocket",net_socket}, {"sceNetSocketClose",net_socket_close}, {"sceNetSocketAbort",net_socket_abort},
+    {"sceNetConnect",net_connect}, {"sceNetBind",net_bind}, {"sceNetListen",net_listen}, {"sceNetAccept",net_accept},
+    {"sceNetSend",net_send}, {"sceNetRecv",net_recv}, {"sceNetSendto",net_sendto}, {"sceNetRecvfrom",net_recvfrom},
+    {"sceNetShutdown",net_shutdown}, {"sceNetGetsockname",net_getsockname}, {"sceNetGetpeername",net_getpeername},
+    {"sceNetSetsockopt",net_setsockopt}, {"sceNetGetsockopt",net_getsockopt},
+    {"sceNetEpollCreate",net_epoll_create}, {"sceNetEpollDestroy",net_epoll_destroy},
+    {"sceNetEpollControl",net_epoll_control}, {"sceNetEpollWait",net_epoll_wait}, {"sceNetEpollAbort",net_epoll_abort},
+    {"sceNetResolverCreate",net_resolver_create}, {"sceNetResolverDestroy",net_resolver_destroy},
+    {"sceNetResolverStartNtoa",net_resolver_ntoa}, {"sceNetResolverAbort",net_resolver_abort},
+    {"sceNetCtlInit",ok_void}, {"sceNetCtlTerm",ok_void},
+    {"sceNetCtlGetState",netctl_state}, {"sceNetCtlGetInfo",netctl_info}, {"sceNetCtlGetNatInfo",netctl_nat},
+    {"sceNetCtlRegisterCallback",netctl_register}, {"sceNetCtlCheckCallback",netctl_check},
+    {"sceNetCtlUnregisterCallback",netctl_unregister},
+    {"sceNetCtlRegisterCallbackForNpToolkit",netctl_register_toolkit},
+    {"sceNetCtlCheckCallbackForNpToolkit",netctl_check_toolkit},
+    {"sceNetCtlUnregisterCallbackForNpToolkit",netctl_unregister_toolkit},
+    {"sceSslInit",lib_init_one}, {"sceSslTerm",ok_void}, {"sceSslGetMemoryPoolStats",http_pool_stats},
+    {"sceHttpInit",http_init}, {"sceHttpTerm",ok_void}, {"sceHttpGetMemoryPoolStats",http_pool_stats},
+    {"sceHttpCreateTemplate",http_template}, {"sceHttpDeleteTemplate",http_delete},
+    {"sceHttpCreateConnectionWithURL",http_connection}, {"sceHttpDeleteConnection",http_delete},
+    {"sceHttpCreateRequestWithURL",http_request}, {"sceHttpCreateRequestWithURL2",http_request2},
+    {"sceHttpDeleteRequest",http_delete}, {"sceHttpAddRequestHeader",http_add_header},
+    {"sceHttpSetRequestContentLength",http_content_length}, {"sceHttpSetConnectTimeOut",http_connect_timeout},
+    {"sceHttpSetNonblock",http_set_id_flag}, {"sceHttpSetChunkedTransferEnabled",http_set_id_flag},
+    {"sceHttpsEnableOption",http_https_option}, {"sceHttpsDisableOption",http_https_option},
+    {"sceHttpsSetSslCallback",http_ssl_callback},
+    {"sceHttpSendRequest",http_send}, {"sceHttpAbortRequest",http_abort},
+    {"sceHttpGetStatusCode",http_status}, {"sceHttpGetResponseContentLength",http_response_length},
+    {"sceHttpReadData",http_read}, {"sceHttpGetAllResponseHeaders",http_all_headers},
+    {"sceHttpParseResponseHeader",http_parse_header}, {"sceHttpUriEscape",http_uri_escape},
+    {"sceHttpCreateEpoll",http_create_epoll}, {"sceHttpDestroyEpoll",ok_void},
+    {"sceHttpSetEpoll",http_set_epoll}, {"sceHttpUnsetEpoll",http_unset_epoll},
+    {"sceHttpWaitRequest",http_wait}, {"sceHttpAbortWaitRequest",ok_void},
+    {"sceNpGetState",np_state}, {"sceNpGetOnlineId",np_online_id}, {"sceNpGetNpId",np_npid},
+    {"sceNpGetAccountIdA",np_account_id}, {"sceNpGetUserIdByAccountId",np_user_by_account},
+    {"sceNpCreateRequest",np_create_request}, {"sceNpCreateAsyncRequest",np_create_async},
+    {"sceNpDeleteRequest",np_delete_request}, {"sceNpAbortRequest",np_abort_request}, {"sceNpPollAsync",np_poll},
+    {"sceNpCheckNpAvailabilityA",np_check_availability_a}, {"sceNpCheckPlus",np_check_plus},
+    {"sceNpGetParentalControlInfoA",np_parental_a},
+    {"sceNpRegisterStateCallback",np_register_legacy}, {"sceNpUnregisterStateCallback",np_unregister_legacy},
+    {"sceNpRegisterStateCallbackForToolkit",np_register_toolkit},
+    {"sceNpUnregisterStateCallbackForToolkit",np_unregister_toolkit},
+    {"sceNpCheckCallback",np_check_callback}, {"sceNpCheckCallbackForLib",np_check_callback},
+    {"sceNpAuthCreateRequest",np_create_request}, {"sceNpAuthCreateAsyncRequest",np_create_async},
+    {"sceNpAuthDeleteRequest",np_delete_request}, {"sceNpAuthAbortRequest",np_abort_request},
+    {"sceNpAuthPollAsync",np_poll},
+    {"sceNpAuthGetAuthorizationCodeA",np_auth_code_a}, {"sceNpAuthGetIdTokenA",np_id_token_a},
+};
+/* Online: these contracts replace runtime_services.c's offline ones. Offline: nothing here. */
+uintptr_t runtime_net_resolve(const char *name) {
+    if (!online()) return 0;
+    return RUNTIME_LOOKUP(exports,name);
+}

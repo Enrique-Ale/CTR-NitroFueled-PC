@@ -120,6 +120,19 @@ def apply_render_res(env, config):
     say(f'Internal resolution: {plan["label"]} ({path} rendering path)')
 
 
+# Online play (docs/sacredfire/15-online.md): off unless bbport.ini's online_server (or
+# BB_ONLINE_SERVER) names a private server. Every name the game resolves then answers that
+# server; nothing else is reachable. online_id is the PSN name shown to other players.
+def apply_online(env, config):
+    for key, variable in (('online_server', 'BB_ONLINE_SERVER'), ('online_http_port', 'BB_ONLINE_HTTP_PORT'),
+                          ('online_id', 'BB_ONLINE_ID'), ('online_allow', 'BB_ONLINE_ALLOW')):
+        value = ini_value(config, key)
+        if value and not env.get(variable):
+            env[variable] = value
+    if env.get('BB_ONLINE_SERVER'):
+        say(f'Online: private server {env["BB_ONLINE_SERVER"]} (official servers are never contacted)')
+
+
 def pump(stream):
     for raw in iter(stream.readline, b''):
         # The game writes CRLF; the log is a text file that adds its own CR.
@@ -202,6 +215,7 @@ def main():
                    '--dlc-dir', env.get('BB_DLC_DIR', data / 'dlc'))
         env.setdefault('BB_NEO', '0')
         apply_render_res(env, config)
+        apply_online(env, config)
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
