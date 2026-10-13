@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); AMD FSR 1; temporal upscaling with AMD FSR 3.1 or NVIDIA DLSS (experimental); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -45,12 +45,24 @@ in the background with the experimental switch.
 `CUSA13795-patch` (update 1.21) folders, press *Prepare the game* once (it merges them with hard
 links, no extra disk space) and then *Play*. Python is bundled; you only need a Vulkan 1.3 GPU.
 
-**Picture** (launcher: Settings > Display; in game: Insert): *Internal resolution* is the size
-the game draws its 3D scene at (480p and 720p for modest PCs, 1440p to 2160p output a 4K picture,
-which also smooths edges on a 1080p screen; needs a restart). *Temporal upscaling* rebuilds detail
-over several frames: **NVIDIA DLSS** on GeForce RTX cards (the files come in the package), **AMD FSR
-3** on any GPU, also as anti-aliasing at the same resolution. Experimental: turn it off if you see
-trails. *FSR 1* is the lighter spatial option.
+**Picture** (launcher: Settings > Display; in game: Insert):
+
+- *Internal resolution*: the size the game draws its 3D scene at. 480p and 720p for modest PCs;
+  1440p to 2160p output a 4K picture, which also smooths edges on a 1080p screen. Needs a restart
+  (the in-game menu does it).
+- *Upscaling*, one at a time, switched live:
+  - **AMD FSR 1** (default): a sharper spatial enlargement than the game's own stretch.
+  - **AMD FSR 3** (experimental, any GPU) and **NVIDIA DLSS** (experimental, GeForce RTX; the files
+    come in the package): temporal upscaling that rebuilds detail over several frames from the
+    game's depth and motion, and works as anti-aliasing at the same resolution. Turn them off if
+    you see trails.
+- With DLSS: *DLSS quality* (Auto follows the internal resolution; DLAA, Quality, Balanced,
+  Performance and Ultra Performance render at NVIDIA's share of the *DLSS output*, 1080p or 4K,
+  after a restart) and *DLSS model* (Transformer, recommended, or the lighter CNN).
+
+**Game language** (launcher: Settings > Console): the languages this build (CUSA13795, the
+Americas) has: English, Latin American Spanish, French and Brazilian Portuguese. Spain's Spanish is
+not in it.
 
 The launcher also has the game patches, FPS limit, display, monitor and controller settings, save
 backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
