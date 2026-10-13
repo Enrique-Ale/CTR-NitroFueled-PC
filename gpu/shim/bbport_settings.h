@@ -56,8 +56,8 @@ inline constexpr Effect GamePatches[] = {
 inline constexpr int GamePatchCount = int(sizeof(GamePatches) / sizeof(GamePatches[0]));
 /// SacredFire: bbport.ini render_res, the scene size CTR renders (through its PS4 Pro path above
 /// 1080p; scripts/patches.py and run.py apply it at start, docs/sacredfire/13-resolution.md).
-inline constexpr int RenderResHeights[] = {1080, 1440, 1620, 2160};
-inline constexpr int RenderResCount = 4;
+inline constexpr int RenderResHeights[] = {480, 720, 1080, 1440, 1620, 2160};
+inline constexpr int RenderResCount = 6;
 /// Live output resolutions: the upscaler's output and the UI host targets.
 inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
 inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};

@@ -38,10 +38,12 @@ GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
 # mode on for these), via the game's own render scale (docs/sacredfire/13-resolution.md).
 # 1080: the community 1080p Pro patch (as before v0.3). 1440: the Pro's own scale. Others: the
 # scale read at 0x17aa662 is replaced by a constant; 2160 also needs a larger GPU heap.
-RENDER_RESOLUTIONS=('1080','1440','1620','2160')
+RENDER_RESOLUTIONS=('480','720','1080','1440','1620','2160')
 RENDER_SCALE_SIGNATURE='41 8b 44 24 48 41 89 86 48 05 00 00'  # mov 0x48(%r12),%eax; mov %eax,0x548(%r14)
 GPU_HEAP_SIGNATURE='c7 45 c8 00 00 00 3c e9'                  # movl $0x3c000000,-0x38(%rbp); jmp
-RENDER_SCALES={'1620':1.5,'2160':2.0}
+RENDER_SCALES={'480':480/1080,'720':720/1080,'1620':1.5,'2160':2.0}
+# Below 1080p the picture stays 1920x1080: the Pro path's doubling of the output size is removed.
+OUTPUT_DOUBLE_SIGNATURE='01 c9 41 89 8e 40 05 00 00 45 8b 86 44 05 00 00 45 01 c0'
 
 
 def render_res(settings):
@@ -58,6 +60,11 @@ def render_patches(settings):
         value='b8'+struct.pack('<f',RENDER_SCALES[res]).hex()
         lines.append(dict(Type='bytes',Address='0x017aa662',Value=value,
                           Signature=RENDER_SCALE_SIGNATURE,SignatureOffset='0x0'))
+    if res in ('480','720'):
+        lines.append(dict(Type='bytes',Address='0x017aa648',Value='9090',
+                          Signature=OUTPUT_DOUBLE_SIGNATURE,SignatureOffset='0x0'))
+        lines.append(dict(Type='bytes',Address='0x017aa658',Value='909090',
+                          Signature=OUTPUT_DOUBLE_SIGNATURE,SignatureOffset='0x10'))
     if res=='2160':
         # 960 MiB -> 1792 MiB (0x70000000): native 4K with 2x MSAA does not fit the Pro's heap.
         lines.append(dict(Type='bytes',Address='0x01fbb93e',Value='70',

@@ -105,7 +105,7 @@ def ini_value(path, key):
 # MiB of direct memory.
 def apply_render_res(env, config):
     res = ini_value(config, 'render_res')
-    if res in ('1440', '1620', '2160'):
+    if res in ('480', '720', '1440', '1620', '2160'):
         env['BB_NEO'] = '1'
         if res == '2160' and int(env.get('BB_DMEM_MB') or 0) < 7168:
             env['BB_DMEM_MB'] = '7168'

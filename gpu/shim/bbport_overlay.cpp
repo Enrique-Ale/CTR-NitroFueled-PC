@@ -495,8 +495,8 @@ void Menu() {
                                               "Патчи игры (после перезапуска)"));
     // SacredFire: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox.
     {
-        static const char* labels[] = {"1920 x 1080", "2560 x 1440 (PS4 Pro)", "2880 x 1620",
-                                       "3840 x 2160 (4K)"};
+        static const char* labels[] = {"854 x 480", "1280 x 720", "1920 x 1080",
+                                       "2560 x 1440 (PS4 Pro)", "2880 x 1620", "3840 x 2160 (4K)"};
         const int current = s.render_res;
         const char* preview =
             current >= 0 ? labels[current]

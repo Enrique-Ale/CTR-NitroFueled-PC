@@ -1411,6 +1411,8 @@ struct RenderRes {
     const char* en;
 };
 constexpr RenderRes kRenderRes[] = {
+    {"480", "480p (854 x 480, PCs muy modestos)", "480p (854 x 480, very low-end PCs)"},
+    {"720", "720p (1280 x 720, PCs modestos)", "720p (1280 x 720, low-end PCs)"},
     {"1080", "1080p (1920 x 1080)", "1080p (1920 x 1080)"},
     {"1440", "1440p (2560 x 1440, PS4 Pro)", "1440p (2560 x 1440, PS4 Pro)"},
     {"1620", "1620p (2880 x 1620)", "1620p (2880 x 1620)"},
@@ -1443,10 +1445,12 @@ void RenderResCombo() {
     }
     HelpMarker(T("El tamaño al que el juego dibuja la escena 3D. Por encima de 1080p usa el modo PS4 Pro del juego "
                  "(se activa solo) y la imagen sale en 4K: en una pantalla 1080p eso quita los dientes de sierra. "
-                 "4K necesita una GPU potente (una RTX 3070 va a unos 100 FPS).",
+                 "4K necesita una GPU potente (una RTX 3070 va a unos 100 FPS); 720p y 480p alivian PCs modestos "
+                 "(la imagen sale a 1080p).",
                  "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path (turned "
                  "on automatically) and the picture is output at 4K: on a 1080p screen that removes jagged "
-                 "edges. 4K needs a strong GPU (an RTX 3070 runs it at about 100 FPS)."));
+                 "edges. 4K needs a strong GPU (an RTX 3070 runs it at about 100 FPS); 720p and 480p help low-end "
+                 "PCs (the picture is output at 1080p)."));
 }
 
 void SettingsTab() {
