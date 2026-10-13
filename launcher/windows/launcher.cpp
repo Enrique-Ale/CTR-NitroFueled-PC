@@ -1486,6 +1486,11 @@ void SettingsTab() {
 
     ImGui::SeparatorText(T("Pantalla", "Display"));
     RenderResCombo();
+    GameFlag("fsr1", T("Escalado FSR 1", "FSR 1 upscaling"), true,
+             T("Cuando la escena es más pequeña que la imagen (720p, 480p, y 1440p o 1620p en la imagen 4K), "
+               "AMD FSR 1 la agranda en vez del estirado simple del juego: bordes y detalles más nítidos.",
+               "When the scene is smaller than the picture (720p, 480p, and 1440p or 1620p in the 4K picture), "
+               "AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges and detail."));
     GameFlag("fullscreen", T("Pantalla completa", "Fullscreen"), false);
     GameFlag("show_fps", T("Contador de FPS en la esquina", "FPS counter in the corner"), false);
     {

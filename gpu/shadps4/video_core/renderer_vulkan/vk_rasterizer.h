@@ -16,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_bind_helper.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_constant_ring.h"
+#include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
@@ -620,6 +621,20 @@ private:
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
     bool scene_debug_frame = false; ///< BB_SCENE_DEBUG: this frame's passes are printed
     bool last_draw_display = false; ///< the previous draw targeted a display buffer
+    // SacredFire: FSR 1 in the display pass (bbport.ini fsr1). CTR stretches its finished scene
+    // (the last pass before the display pass) into the larger display buffer and draws the HUD
+    // on top; while the display pass samples that image it reads its FSR 1 upscale instead.
+    HostPasses::FsrPass display_fsr;
+    bool display_fsr_created = false;
+    bool fsr_pending = false; ///< in a display pass, fsr_source not yet replaced or replaced
+    bool fsr_done = false;    ///< fsr_view holds this frame's upscale
+    VideoCore::ImageId fsr_source{};
+    vk::ImageView fsr_view{};
+    [[nodiscard]] bool FsrRedirects(VideoCore::ImageId id) const {
+        return fsr_pending && id == fsr_source;
+    }
+    /// The upscaled view standing in for `id` (sampled through `game_view`), or null.
+    vk::ImageView DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view);
     u32 preupload_frame = ~0u; ///< bbport: frame of the last background pre-upload
     bool PendingWriteOverlaps(VAddr address, u64 size);
     /// Stage B: the ring bindings of the stages of the packet being recorded.

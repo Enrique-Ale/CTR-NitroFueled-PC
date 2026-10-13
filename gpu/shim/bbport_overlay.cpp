@@ -512,6 +512,13 @@ void Menu() {
             }
             ImGui::EndCombo();
         }
+        Checkbox(BbSettings::MenuText("FSR 1 upscaling", "Апскейл FSR 1"), s.fsr1);
+        Hint(BbSettings::MenuText(
+            "When the scene is smaller than the picture (720p, 480p, 1440p and 1620p on the 4K "
+            "picture), AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges "
+            "and text. Applies at once.",
+            "Когда сцена меньше кадра (720p, 480p, 1440p и 1620p в кадре 4K), её увеличивает AMD "
+            "FSR 1 вместо простого растяжения игры: чётче края. Применяется сразу."));
         Hint(BbSettings::MenuText(
             "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path "
             "and the picture is output at 4K; on a 1080p screen that smooths jagged edges. 4K needs "

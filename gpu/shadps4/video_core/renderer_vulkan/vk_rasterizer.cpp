@@ -32,7 +32,9 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
+#include <cmath>
 #include "bbport_threads.h"
+#include "bbport_settings.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
@@ -1473,6 +1475,14 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address());
     const bool display_start = display_draw && !last_draw_display;
     last_draw_display = display_draw;
+    if (display_start) {
+        // The previous draw's target is the finished scene the display pass stretches.
+        fsr_pending = BbSettings::Get().fsr1 && cb_descs[0].first;
+        fsr_source = cb_descs[0].first;
+        fsr_done = false;
+    } else if (!display_draw) {
+        fsr_pending = false;
+    }
     if (camera_motion->Enabled() && display_start) {
         scene_started = false;
         camera_motion->OnDisplayPass(cb_descs[0].first);
@@ -1833,6 +1843,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     buffer_cache.NewPacket();
     FrameCapture::Poll();
     gbuffer_draw = false;
+    fsr_pending = false;
 
     scheduler.PopPendingOperations();
 
@@ -1916,6 +1927,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
 void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr address,
                                         u32 size) {
     buffer_cache.NewPacket();
+    fsr_pending = false;
     scheduler.PopPendingOperations();
     const u32 offset = 0;
 
@@ -2072,7 +2084,7 @@ bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
             image = &texture_cache.GetImage(image_id);
         }
         if (image->binding.needs_rebind || !texture_cache.IsUpToDate(image_id) ||
-            scene_targets->Tracks(image->image_uid) ||
+            scene_targets->Tracks(image->image_uid) || FsrRedirects(image_id) ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
             return false;
         }
@@ -3051,7 +3063,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
             if (binding_proxy_ok[binding_index] && !is_storage && !binding.force_general &&
-                !binding.is_target &&
+                !binding.is_target && !FsrRedirects(image_id) &&
                 !(upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
                 if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
                     image.usage.texture = 1u;
@@ -3103,6 +3115,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             if (upscaler->Enabled()) {
                 // bbport: the display pass reads the upscaled frame (scaled presets).
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
+            }
+            if (FsrRedirects(image_id) && !is_storage && !image.info.props.is_depth) {
+                if (const auto upscaled = DisplayFsr(image_id, view)) {
+                    view = upscaled;
+                    layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                    set_ok = false;
+                }
             }
             image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
             if (set_ok && binding_index < resolved.size()) {
@@ -3281,6 +3300,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                                !scene_targets->ProxyCurrent(image, entry.range.base.level,
                                                             entry.range.extent.levels)
                          : image.scene_proxy && proxies_on) ||
+            FsrRedirects(entry.id) ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(entry.id))) {
             ++texture_set_why[2];
             ++texture_set_misses;
@@ -4368,6 +4388,41 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
                                          : std::string{"-"},
                            vs.pgm_hash, ps ? ps->pgm_hash : 0);
     });
+}
+
+vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view) {
+    if (fsr_done) {
+        return fsr_view;
+    }
+    fsr_done = true;
+    fsr_view = {};
+    const auto target = cb_descs[0].first;
+    if (!target) {
+        return {};
+    }
+    auto& source = texture_cache.GetImage(id);
+    const auto& display = texture_cache.GetImage(target);
+    const vk::Extent2D in{source.info.size.width, source.info.size.height};
+    const vk::Extent2D out{display.info.size.width, display.info.size.height};
+    // Only a smaller scene of the display's shape: no FSR at native size or for other images.
+    if (in.width >= out.width || in.height >= out.height || in.width * 4 < out.width ||
+        std::abs(double(in.width) / in.height - double(out.width) / out.height) > 0.02) {
+        return {};
+    }
+    if (!display_fsr_created) {
+        display_fsr.Create(instance.GetDevice(), instance.GetAllocator(), 3);
+        display_fsr_created = true;
+        std::printf("FSR 1: display pass upscale %ux%u -> %ux%u\n", in.width, in.height,
+                    out.width, out.height);
+    }
+    runtime.Transit(&source, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
+    runtime.FlushBarriers();
+    scheduler.EndRendering();
+    HostPasses::FsrPass::Settings settings{};
+    settings.rcas_attenuation = 0.25f;
+    fsr_view = display_fsr.Render(scheduler.CommandBuffer(), game_view, in, out, settings, false);
+    return fsr_view;
 }
 
 void Rasterizer::NoteFrameStart() {
