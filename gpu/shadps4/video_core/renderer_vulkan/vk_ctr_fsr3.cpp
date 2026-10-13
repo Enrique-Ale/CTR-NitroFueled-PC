@@ -27,28 +27,33 @@ namespace Vulkan {
 
 namespace {
 
-// The velocity decoding (shader push constants), from BB_FSR3_MV="sx,sy,bx,by,cx,cy" while it is
-// being worked out: pixels = (channel - bias) * s * render size. Default: G and B around 0.498.
+// Moving objects' velocity (CTR's velocity target, channel 2 marks them): from
+// BB_FSR3_MV="sx,sy,bias,mode,cx,cy" while its scale is worked out. pixels = v * s, with
+// e = channel - bias and v = e (mode 1) or sign(e) e^2 (mode 2); mode 0 (default) leaves them
+// still on the screen. BB_FSR3_MV=nocamera also drops the camera's motion (tests).
 struct Decode {
-    float sx = 1.0f, sy = 1.0f, bx = 127.0f / 255.0f, by = 127.0f / 255.0f;
-    u32 cx = 1, cy = 2;
-    bool off = false;
+    float sx = 0.0f, sy = 0.0f, bias = 127.0f / 255.0f;
+    u32 mode = 0, cx = 0, cy = 1;
+    bool camera = true;
 };
 
 const Decode& MotionDecode() {
     static const Decode decode = [] {
         Decode d;
         if (const char* env = std::getenv("BB_FSR3_MV")) {
-            if (std::strcmp(env, "off") == 0) {
-                d.off = true;
+            if (std::strcmp(env, "nocamera") == 0) {
+                d.camera = false;
             } else {
-                std::sscanf(env, "%f,%f,%f,%f,%u,%u", &d.sx, &d.sy, &d.bx, &d.by, &d.cx, &d.cy);
+                std::sscanf(env, "%f,%f,%f,%u,%u,%u", &d.sx, &d.sy, &d.bias, &d.mode, &d.cx, &d.cy);
                 d.cx &= 3;
                 d.cy &= 3;
+                d.mode = std::min(d.mode, 2u);
             }
         }
-        std::printf("FSR 3: velocity = (channel %u/%u - %.4f/%.4f) * %g/%g of the render size%s\n",
-                    d.cx, d.cy, d.bx, d.by, d.sx, d.sy, d.off ? " (off: zero motion)" : "");
+        std::printf("FSR 3: motion: camera %s; moving objects %s (channels %u/%u - %.4f) * %g/%g px\n",
+                    d.camera ? "reprojected" : "off",
+                    d.mode == 0 ? "still" : d.mode == 1 ? "linear" : "squared", d.cx, d.cy, d.bias,
+                    d.sx, d.sy);
         return d;
     }();
     return decode;
@@ -62,12 +67,79 @@ int DebugMode() {
     return mode;
 }
 
-/// BB_FSR3_DUMP_TRIGGER=<file>: creating it saves the next frame's FSR 3 inputs (BB_FSR3_DUMP_DIR,
-/// default the current folder) and prints the camera constants.
-bool DumpDue() {
+/// BB_FSR3_DUMP_TRIGGER=<file>: creating it saves the FSR 3 inputs of the next BB_FSR3_DUMP_FRAMES
+/// (3) frames (BB_FSR3_DUMP_DIR, default the current folder) and prints the camera constants.
+/// Returns the frame number to save or -1.
+int DumpFrame() {
     static const char* trigger = std::getenv("BB_FSR3_DUMP_TRIGGER");
     static u32 polls = 0;
-    return trigger && ++polls % 30 == 0 && std::remove(trigger) == 0;
+    static int remaining = 0, index = 0;
+    if (!trigger) {
+        return -1;
+    }
+    if (remaining == 0) {
+        if (++polls % 30 != 0 || std::remove(trigger) != 0) {
+            return -1;
+        }
+        const char* frames = std::getenv("BB_FSR3_DUMP_FRAMES");
+        remaining = frames ? std::clamp(std::atoi(frames), 1, 16) : 3;
+    }
+    --remaining;
+    return index++;
+}
+
+/// Column-major 4x4 matrices (the game's layout).
+using Mat4 = std::array<double, 16>;
+Mat4 Multiply(const Mat4& a, const Mat4& b) {
+    Mat4 r{};
+    for (int col = 0; col < 4; ++col) {
+        for (int row = 0; row < 4; ++row) {
+            double sum = 0.0;
+            for (int k = 0; k < 4; ++k) {
+                sum += a[k * 4 + row] * b[col * 4 + k];
+            }
+            r[col * 4 + row] = sum;
+        }
+    }
+    return r;
+}
+bool Invert(const Mat4& m, Mat4& out) {
+    // Gauss-Jordan on a row-major copy.
+    double a[4][8];
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            a[row][col] = m[col * 4 + row];
+            a[row][col + 4] = row == col ? 1.0 : 0.0;
+        }
+    }
+    for (int col = 0; col < 4; ++col) {
+        int pivot = col;
+        for (int row = col + 1; row < 4; ++row) {
+            if (std::abs(a[row][col]) > std::abs(a[pivot][col])) pivot = row;
+        }
+        if (std::abs(a[pivot][col]) < 1e-12) return false;
+        if (pivot != col) {
+            for (int k = 0; k < 8; ++k) std::swap(a[pivot][k], a[col][k]);
+        }
+        const double inv = 1.0 / a[col][col];
+        for (int k = 0; k < 8; ++k) a[col][k] *= inv;
+        for (int row = 0; row < 4; ++row) {
+            if (row == col) continue;
+            const double f = a[row][col];
+            for (int k = 0; k < 8; ++k) a[row][k] -= f * a[col][k];
+        }
+    }
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            out[col * 4 + row] = a[row][col + 4];
+        }
+    }
+    return true;
+}
+Mat4 Load(const float* f) {
+    Mat4 m{};
+    for (int i = 0; i < 16; ++i) m[i] = f[i];
+    return m;
 }
 
 float Halton(u32 index, u32 base) {
@@ -134,9 +206,11 @@ bool CtrFsr3::Enabled() const {
     return !failed && BbSettings::Get().fsr3;
 }
 
-void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity_) {
+void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity_,
+                            const Viewport& viewport_) {
     scene_depth = depth;
     velocity = velocity_;
+    viewport = viewport_;
     scene_this_frame = true;
 }
 
@@ -242,7 +316,7 @@ void CtrFsr3::CreatePipelines() {
         .bindingCount = u32(bindings.size()),
         .pBindings = bindings.data(),
     }));
-    const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 8 * sizeof(u32)};
+    const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 128};
     pipeline_layout = Check(device.createPipelineLayoutUnique({
         .setLayoutCount = 1,
         .pSetLayouts = &*desc_layout,
@@ -464,8 +538,9 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     runtime.FlushBarriers();
     const auto cmdbuf = scheduler.CommandBuffer();
 
-    // 1. Inputs: sample 0 of the depth and the decoded velocity.
-    const bool dump = DumpDue();
+    // 1. Inputs: sample 0 of the depth and the motion.
+    const int dump_frame = DumpFrame();
+    const bool dump = dump_frame >= 0;
     const int debug = DebugMode();
     const auto& decode = MotionDecode();
     const vk::ImageView depth_src =
@@ -489,12 +564,54 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
                          .pImageInfo = &infos[i]};
         }
         struct {
-            float sx, sy, bx, by;
-            u32 channels, debug, write_debug;
-            float pad;
-        } params{decode.off ? 0.0f : decode.sx * float(w), decode.off ? 0.0f : decode.sy * float(h),
-                 decode.bx, decode.by, decode.cx | (decode.cy << 2),
-                 u32(dump ? 3 : std::max(debug, 0)), u32(dump || debug > 0), 0.0f};
+            float prev[3][4];
+            float proj[4];
+            float viewport[4];
+            float depth_jitter[4];
+            float object[4];
+            u32 flags;
+        } params{};
+        // The camera: previous projection * previous view * inverse current view (floats 48, 64
+        // and 32 of the G-buffer constants).
+        bool camera_ok = false;
+        if (camera_valid && decode.camera && viewport.xscale != 0.0f && viewport.yscale != 0.0f &&
+            viewport.zscale != 0.0f) {
+            const Mat4 view = Load(&camera[32]), proj = Load(&camera[48]),
+                       prev_view = Load(&camera[64]);
+            Mat4 inverse{};
+            if (Invert(view, inverse)) {
+                const Mat4 m = Multiply(Multiply(proj, prev_view), inverse);
+                constexpr int rows[3] = {0, 1, 3};
+                for (int r = 0; r < 3; ++r) {
+                    for (int col = 0; col < 4; ++col) {
+                        params.prev[r][col] = float(m[col * 4 + rows[r]]);
+                    }
+                }
+                params.proj[0] = camera[48];
+                params.proj[1] = camera[48 + 5];
+                params.proj[2] = camera[48 + 10];
+                params.proj[3] = camera[48 + 14];
+                camera_ok = params.proj[0] != 0.0f && params.proj[1] != 0.0f;
+            }
+        }
+        params.viewport[0] = viewport.xscale;
+        params.viewport[1] = viewport.yscale;
+        params.viewport[2] = viewport.xoffset;
+        params.viewport[3] = viewport.yoffset;
+        params.depth_jitter[0] = viewport.zscale;
+        params.depth_jitter[1] = viewport.zoffset;
+        params.depth_jitter[2] = frame_jitter[0];
+        params.depth_jitter[3] = frame_jitter[1];
+        params.object[0] = decode.sx;
+        params.object[1] = decode.sy;
+        params.object[2] = decode.bias;
+        params.object[3] = float(decode.mode);
+        params.flags = decode.cx | (decode.cy << 2) | (u32(dump ? 3 : std::clamp(debug, 0, 15)) << 4) |
+                       (dump || debug > 0 ? 0x100u : 0u) | (camera_ok ? 0x200u : 0u);
+        if (!camera_ok && !camera_warned) {
+            camera_warned = true;
+            std::printf("FSR 3: no camera this frame: world motion left out\n");
+        }
         const vk::MemoryBarrier2 before{
             .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
             .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
@@ -516,7 +633,11 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
     }
     if (dump) {
-        Dump(cmdbuf);
+        Dump(cmdbuf, dump_frame, source);
+        runtime.Transit(&source, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.FlushBarriers();
     }
     if (debug > 0) {
         // The inputs instead of the upscaled frame (stretched by the display pass).
@@ -619,21 +740,35 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     return OutputView(view_format, mapping);
 }
 
-void CtrFsr3::Dump(vk::CommandBuffer cmdbuf) {
+void CtrFsr3::Dump(vk::CommandBuffer cmdbuf, int frame, VideoCore::Image& source) {
     static const std::string dir = [] {
         const char* env = std::getenv("BB_FSR3_DUMP_DIR");
         return std::string{env && env[0] ? env : "."};
     }();
-    static int index = 0;
-    const int frame = index++;
+    // The frame FSR 3 reads, for matching moving objects between frames.
+    runtime.Transit(&source, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
     struct Item {
         vk::Image image;
+        vk::ImageLayout layout;
         const char* name;
-        const char* format;
+        std::string format;
     };
-    const Item items[] = {{vk::Image(depth_image), "depth", "r32f"},
-                          {vk::Image(debug_image), "velocity", "rgba8"},
-                          {vk::Image(motion_image), "motion", "rg16f"}};
+    const Item items[] = {
+        {vk::Image(depth_image), vk::ImageLayout::eGeneral, "depth", "r32f"},
+        {vk::Image(debug_image), vk::ImageLayout::eGeneral, "velocity", "rgba8"},
+        {vk::Image(motion_image), vk::ImageLayout::eGeneral, "motion", "rg16f"},
+        {source.GetImage(), vk::ImageLayout::eTransferSrcOptimal, "color",
+         vk::to_string(source.info.pixel_format)},
+    };
+    const vk::MemoryBarrier2 before{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
     for (const auto& item : items) {
         const VkDeviceSize size = VkDeviceSize(width) * height * 4;
         const VkBufferCreateInfo buffer_ci{
@@ -656,10 +791,10 @@ void CtrFsr3::Dump(vk::CommandBuffer cmdbuf) {
             .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
             .imageExtent = {width, height, 1},
         };
-        cmdbuf.copyImageToBuffer(item.image, vk::ImageLayout::eGeneral, buffer, region);
+        cmdbuf.copyImageToBuffer(item.image, item.layout, buffer, region);
         char path[512];
         std::snprintf(path, sizeof(path), "%s/fsr3_f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
-                      item.name, width, height, item.format);
+                      item.name, width, height, item.format.c_str());
         scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation,
                                           alloc_info, size, file = std::string{path}] {
             vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
@@ -675,8 +810,11 @@ void CtrFsr3::Dump(vk::CommandBuffer cmdbuf) {
         .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
     };
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
-    std::printf("FSR 3 dump %d (%s), jitter %.4f %.4f, camera constants%s:\n", frame, dir.c_str(),
-                frame_jitter[0], frame_jitter[1], camera_valid ? "" : " (none)");
+    std::printf("FSR 3 dump %d (%s), jitter %.4f %.4f, viewport scale %g %g offset %g %g, depth "
+                "%g + %g ndc, camera constants%s:\n",
+                frame, dir.c_str(), frame_jitter[0], frame_jitter[1], viewport.xscale,
+                viewport.yscale, viewport.xoffset, viewport.yoffset, viewport.zoffset,
+                viewport.zscale, camera_valid ? "" : " (none)");
     for (u32 row = 0; camera_valid && row < camera.size() / 4; ++row) {
         std::printf("  [%3u] %12g %12g %12g %12g\n", row * 4, camera[row * 4], camera[row * 4 + 1],
                     camera[row * 4 + 2], camera[row * 4 + 3]);

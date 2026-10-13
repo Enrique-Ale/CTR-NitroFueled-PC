@@ -38,9 +38,15 @@ public:
     /// The setting is on and FSR 3 has not failed in this session.
     [[nodiscard]] bool Enabled() const;
 
-    /// A pass with the G-buffer's targets (four colors and depth): remembers the scene depth and
-    /// the velocity target of this frame.
-    void OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity);
+    /// The G-buffer pass's viewport transform: pixels = offset + scale * ndc, depth = zoffset +
+    /// zscale * ndc z.
+    struct Viewport {
+        float xscale = 0, yscale = 0, xoffset = 0, yoffset = 0, zscale = 0, zoffset = 0;
+    };
+    /// A pass with the G-buffer's targets (four colors and depth): remembers the scene depth, the
+    /// velocity target and the viewport of this frame.
+    void OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity,
+                       const Viewport& viewport);
     /// The vertex constants of the first G-buffer draw of a frame (528 bytes: view, projection
     /// and the previous frame's view at floats 32, 48 and 64).
     void OnCameraConstants(const float* data);
@@ -69,7 +75,7 @@ private:
     /// Logs why a frame is not upscaled, once per change of reason.
     void Skip(const char* reason);
     const char* last_skip = nullptr;
-    void Dump(vk::CommandBuffer cmdbuf);
+    void Dump(vk::CommandBuffer cmdbuf, int frame, VideoCore::Image& source);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -83,6 +89,8 @@ private:
     bool camera_this_frame = false;
     std::array<float, 132> camera{};
     bool camera_valid = false;
+    bool camera_warned = false;
+    Viewport viewport{};
 
     std::array<float, 2> jitter{};      ///< scene draws from now on
     std::array<float, 2> frame_jitter{}; ///< the scene that just finished

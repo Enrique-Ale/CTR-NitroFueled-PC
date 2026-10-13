@@ -596,7 +596,17 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     ctr_gbuffer_draw = std::popcount(key.mrt_mask) == 4 && db_desc.first && cb_descs[3].first &&
                        ctr_fsr3->Enabled();
     if (ctr_gbuffer_draw) {
-        ctr_fsr3->OnGBufferPass(db_desc.first, cb_descs[3].first);
+        const auto& vp = regs.viewports[0];
+        const auto& vp_ctl = regs.viewport_control;
+        CtrFsr3::Viewport viewport{
+            .xscale = vp_ctl.xscale_enable ? vp.xscale : 1.0f,
+            .yscale = vp_ctl.yscale_enable ? vp.yscale : 1.0f,
+            .xoffset = vp_ctl.xoffset_enable ? vp.xoffset : 0.0f,
+            .yoffset = vp_ctl.yoffset_enable ? vp.yoffset : 0.0f,
+            .zscale = vp_ctl.zscale_enable ? vp.zscale : 1.0f,
+            .zoffset = vp_ctl.zoffset_enable ? vp.zoffset : 0.0f,
+        };
+        ctr_fsr3->OnGBufferPass(db_desc.first, cb_descs[3].first, viewport);
     }
     if (upscaler->Enabled() && cb_descs[0].first) {
         upscaler->OnColorTarget(cb_descs[0].first);
