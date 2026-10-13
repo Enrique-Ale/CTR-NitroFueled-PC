@@ -1425,6 +1425,102 @@ static ABI int32_t webapi_parse_npid(const char *json,NpId *id) {
     return 0;
 }
 
+/* ---- libScePosix sockets (NpToolkit2 and the game may use them): the same sockets, POSIX
+ * returns (-1 and the guest's errno). Socket ids and file descriptors share one space here. ---- */
+static int64_t posix_result(int64_t r) {
+    if (r>=0) return r;
+    *runtime_errno()=net_errno;
+    return -1;
+}
+static ABI int32_t posix_socket(int family,int type,int protocol) { return (int32_t)posix_result(net_socket("posix",family,type,protocol)); }
+static ABI int32_t posix_connect(int s,const void *addr,uint32_t len) { return (int32_t)posix_result(net_connect(s,addr,len)); }
+static ABI int32_t posix_bind(int s,const void *addr,uint32_t len) { return (int32_t)posix_result(net_bind(s,addr,len)); }
+static ABI int32_t posix_listen(int s,int backlog) { return (int32_t)posix_result(net_listen(s,backlog)); }
+static ABI int32_t posix_accept(int s,void *addr,uint32_t *len) { return (int32_t)posix_result(net_accept(s,addr,len)); }
+static ABI int64_t posix_send(int s,const void *data,uint64_t size,int flags) { return posix_result(net_send(s,data,size,flags)); }
+static ABI int64_t posix_recv(int s,void *data,uint64_t size,int flags) { return posix_result(net_recv(s,data,size,flags)); }
+static ABI int32_t posix_setsockopt(int s,int level,int option,const void *value,uint32_t len) { return (int32_t)posix_result(net_setsockopt(s,level,option,value,len)); }
+static ABI int32_t posix_inet_pton(int af,const char *src,void *dst) {
+    if (af!=PS_AF_INET) { *runtime_errno()=E_AFNOSUPPORT; return -1; }
+    return inet_pton(AF_INET,src,dst);
+}
+static ABI const char *posix_inet_ntop(int af,const void *src,char *dst,uint32_t size) {
+    if (af!=PS_AF_INET) { *runtime_errno()=E_AFNOSUPPORT; return NULL; }
+    return inet_ntop(AF_INET,src,dst,size);
+}
+/* select: FreeBSD fd_set (1024 bits) over socket ids, timeval of two 64-bit fields. */
+typedef struct { uint64_t bits[16]; } GuestFdSet;
+typedef struct { int64_t sec, usec; } GuestTimeval;
+static ABI int32_t posix_select(int count,GuestFdSet *read,GuestFdSet *write,GuestFdSet *except,const GuestTimeval *timeout) {
+    if (count<0 || count>1024) { *runtime_errno()=E_INVAL; return -1; }
+    NativePollFd fds[64];
+    int ids[64], n=0;
+    for (int id=0; id<count && n<64; ++id) {
+        const uint64_t bit=1ull<<(id&63);
+        const int r=read && (read->bits[id>>6] & bit), w=write && (write->bits[id>>6] & bit), e=except && (except->bits[id>>6] & bit);
+        if (!r && !w && !e) continue;
+        NetObj *o=object(id,OBJ_SOCKET);
+        if (!o) { *runtime_errno()=E_BADF; return -1; }
+        fds[n].fd=o->s; fds[n].revents=0;
+        fds[n].events=(short)((r ? POLLIN : 0) | (w ? POLLOUT : 0));
+        ids[n++]=id;
+    }
+    const int ms=timeout ? (int)(timeout->sec*1000+(timeout->usec+999)/1000) : -1;
+    int ready=0;
+    if (n) {
+        ready=native_poll(fds,(unsigned long)n,ms);
+        if (ready<0) { *runtime_errno()=native_error(); return -1; }
+    } else if (ms>0) sleep_us((int64_t)ms*1000);
+    if (read) memset(read,0,sizeof *read);
+    if (write) memset(write,0,sizeof *write);
+    if (except) memset(except,0,sizeof *except);
+    int total=0;
+    for (int i=0;i<n;++i) {
+        const uint64_t bit=1ull<<(ids[i]&63);
+        const short r=fds[i].revents;
+        if (read && (r & (POLLIN|POLLHUP))) { read->bits[ids[i]>>6]|=bit; ++total; }
+        if (write && (r & POLLOUT)) { write->bits[ids[i]>>6]|=bit; ++total; }
+        if (except && (r & (POLLERR|POLLNVAL))) { except->bits[ids[i]>>6]|=bit; ++total; }
+    }
+    (void)ready;
+    return total;
+}
+
+/* ---- PSN services the private server does not offer yet: their calls fail like an
+ * unavailable service (cleanup calls succeed), logged once per service, instead of stopping
+ * the game. Score, TUS (title user storage), TSS, word filter, Matching2 (PSN rooms; CTR
+ * matches through Demonware), bandwidth test, in-game messages, Facebook. ---- */
+typedef struct { const char *prefix, *label; int32_t error; int logged; } Unavailable;
+static Unavailable unavailable[]={
+    {"sceNpScore","NpScore (rankings)",(int32_t)0x80550809,0},
+    {"sceNpTus","NpTus (title user storage)",(int32_t)0x80550809,0},
+    {"sceNpTss","NpTss (title small storage)",(int32_t)0x80550809,0},
+    {"sceNpWordFilter","NpWordFilter",(int32_t)0x80550809,0},
+    {"sceNpMatching2","NpMatching2 (PSN rooms)",(int32_t)0x80550D02,0},
+    {"sceNpBandwidthTest","NpBandwidthTest",(int32_t)0x80551F07,0},
+    {"sceNpInGameMessage","NpInGameMessage",(int32_t)0x80552B03,0},
+    {"sceNpSnsFacebook","NpSnsFacebook",(int32_t)0x80550809,0},
+};
+#define UNAVAILABLE(i) \
+    static ABI int32_t unavailable_##i(void) { \
+        if (!unavailable[i].logged) { unavailable[i].logged=1; printf("Net: PSN: %s is not offered by the private server yet: calls fail as unavailable\n",unavailable[i].label); } \
+        return unavailable[i].error; \
+    }
+UNAVAILABLE(0) UNAVAILABLE(1) UNAVAILABLE(2) UNAVAILABLE(3) UNAVAILABLE(4) UNAVAILABLE(5) UNAVAILABLE(6) UNAVAILABLE(7)
+typedef int32_t (ABI *UnavailableCall)(void);
+static const UnavailableCall unavailable_calls[]={unavailable_0,unavailable_1,unavailable_2,unavailable_3,
+                                                         unavailable_4,unavailable_5,unavailable_6,unavailable_7};
+static uintptr_t unavailable_service(const char *symbol) {
+    if (!symbol) return 0;
+    for (size_t i=0;i<sizeof unavailable/sizeof *unavailable;++i) {
+        if (strncmp(symbol,unavailable[i].prefix,strlen(unavailable[i].prefix))) continue;
+        if (strstr(symbol,"Delete") || strstr(symbol,"Abort") || strstr(symbol,"Terminate") || strstr(symbol,"Shutdown") ||
+            strstr(symbol,"Destroy") || strstr(symbol,"Unregister")) return (uintptr_t)ok_void;
+        return (uintptr_t)unavailable_calls[i];
+    }
+    return 0;
+}
+
 static const RuntimeExport exports[]={
     {"sceNetInit",net_init}, {"sceNetTerm",net_term}, {"sceNetErrnoLoc",net_errno_loc},
     {"sceNetPoolCreate",net_pool_create}, {"sceNetPoolDestroy",net_pool_destroy},
@@ -1490,9 +1586,15 @@ static const RuntimeExport exports[]={
     {"sceNpWebApiRegisterExtdPushEventCallbackA",webapi_register_push},
     {"sceNpWebApiUnregisterExtdPushEventCallback",ok_void},
     {"sceNpWebApiUtilityParseNpId",webapi_parse_npid},
+    {"socket",posix_socket}, {"connect",posix_connect}, {"bind",posix_bind}, {"listen",posix_listen},
+    {"accept",posix_accept}, {"send",posix_send}, {"recv",posix_recv}, {"setsockopt",posix_setsockopt},
+    {"select",posix_select}, {"inet_pton",posix_inet_pton}, {"inet_ntop",posix_inet_ntop},
 };
 /* Online: these contracts replace runtime_services.c's offline ones. Offline: nothing here. */
 uintptr_t runtime_net_resolve(const char *name) {
     if (!online()) return 0;
-    return RUNTIME_LOOKUP(exports,name);
+    const uintptr_t found=RUNTIME_LOOKUP(exports,name);
+    if (found) return found;
+    const char *library=strchr(name,'#');
+    return library && !strncmp(library+1,"libSceNp",8) ? unavailable_service(runtime_symbol(name)) : 0;
 }

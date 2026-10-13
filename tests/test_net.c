@@ -8,6 +8,10 @@ uintptr_t runtime_lookup(const RuntimeExport *table,size_t count,const char *nid
     return 0;
 }
 
+static int32_t guest_errno;
+int32_t *runtime_errno(void) { return &guest_errno; }
+const char *runtime_symbol(const char *nid) { return nid; } /* the tests name imports by symbol */
+
 static NativeSocket listen_on(uint16_t *port, int type) {
     NativeSocket s=socket(AF_INET,type,0);
     assert(s!=NATIVE_INVALID);
@@ -222,6 +226,21 @@ int main(int argc,char **argv) {
     unsigned char granted[33];
     const int32_t sync=np_create_request();
     assert(!np_check_plus(sync,&plus,granted) && granted[0]==1);
+    /* POSIX sockets: -1 and errno; PSN services not offered yet fail softly, cleanups succeed. */
+    const int ps=posix_socket(PS_AF_INET,PS_SOCK_STREAM,0);
+    assert(ps>0);
+    assert(posix_connect(ps,&outside,sizeof outside)==-1 && guest_errno==E_NETUNREACH);
+    GuestFdSet readable={{0}};
+    readable.bits[0]=1ull<<ps;
+    GuestTimeval none={0,0};
+    assert(posix_select(ps+1,&readable,NULL,NULL,&none)>=0);
+    net_socket_close(ps);
+    typedef int32_t (ABI *Call)(void);
+    Call tus=(Call)runtime_net_resolve("sceNpTusCreateNpTitleCtxA#libSceNpTus");
+    assert(tus && tus()==(int32_t)0x80550809);
+    Call tus_delete=(Call)runtime_net_resolve("sceNpTusDeleteNpTitleCtx#libSceNpTus");
+    assert(tus_delete && !tus_delete());
+    assert(!runtime_net_resolve("sceKernelFoo#libkernel"));
     puts("net-test: ok");
     return 0;
 }

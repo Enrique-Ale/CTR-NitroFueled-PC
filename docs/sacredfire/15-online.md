@@ -51,7 +51,11 @@ player names, and it is **off by default**.
   HTTPS request to the private server (Sony is never contacted); replies of 400 and above
   become `0x82f00000 | status` with the error body in the response information, as on the
   console.
-- NpMatching2, NpSignaling, NpScore keep the offline answers for now.
+- **POSIX sockets** (`socket`, `connect`, `select`, ...): the same sockets, -1 and errno.
+- PSN services the private server does not offer yet (NpScore, NpTus, NpTss, NpWordFilter,
+  NpMatching2, NpBandwidthTest, NpInGameMessage, NpSnsFacebook) fail like an unavailable
+  service, cleanup calls succeed, one log line per service: the game goes on instead of
+  stopping on an unknown import.
 
 ## First run (2026-10-13, discovery server on 127.0.0.1)
 
