@@ -34,6 +34,7 @@ typedef struct ThreadAttr {
     uint32_t magic;
     int detached, policy, prio, inherit;
     uint64_t stack, guard, affinity;
+    uint64_t stack_addr; /* SacredFire: the lowest stack address, from scePthreadAttrGet of the calling thread */
     struct ThreadAttr *next;
 } ThreadAttr;
 typedef struct GuestThread {
@@ -184,6 +185,22 @@ static ABI int32_t attr_get(void *thread,ThreadAttr **out) {
     ThreadAttr *next=a->next;
     *a=t->attr; a->magic=ATTR_MAGIC; a->next=next;
     a->detached=t->detached;
+    a->stack_addr=0;
+    if (t==current) { /* the caller's own stack, as the host thread has it */
+#ifdef _WIN32
+        ULONG_PTR low=0, high=0;
+        GetCurrentThreadStackLimits(&low,&high);
+        if (high>low) { a->stack_addr=(uint64_t)low; a->stack=(uint64_t)(high-low); }
+#else
+        pthread_attr_t host;
+        void *low=NULL;
+        size_t size=0;
+        if (!pthread_getattr_np(pthread_self(),&host)) {
+            if (!pthread_attr_getstack(&host,&low,&size) && size) { a->stack_addr=(uint64_t)(uintptr_t)low; a->stack=size; }
+            pthread_attr_destroy(&host);
+        }
+#endif
+    }
     return 0;
 }
 static ABI int32_t attr_set_stack(ThreadAttr **slot,uint64_t size) {
@@ -195,6 +212,13 @@ static ABI int32_t attr_get_stack(ThreadAttr **slot,uint64_t *size) {
     ThreadAttr *a=find_attr(slot);
     if (!a || !size) return ERR(22);
     *size=a->stack; return 0;
+}
+/* SacredFire: scePthreadAttrGetstack (NpToolkit2 checks its threads' stacks): the address is
+ * known for attributes read from the calling thread, else 0 (no stack set). */
+static ABI int32_t attr_get_stack_range(ThreadAttr **slot,void **addr,uint64_t *size) {
+    ThreadAttr *a=find_attr(slot);
+    if (!a || !addr || !size) return ERR(22);
+    *addr=(void *)(uintptr_t)a->stack_addr; *size=a->stack; return 0;
 }
 static ABI int32_t attr_set_detach(ThreadAttr **slot,int state) {
     ThreadAttr *a=find_attr(slot);
@@ -410,6 +434,7 @@ uintptr_t runtime_thread_resolve(const char *name) {
         {"4+h9EzwKF4I#libkernel",attr_set_policy}, {"DzES9hQF4f4#libkernel",attr_set_param},
         {"3qxgM4ezETA#libkernel",attr_set_affinity}, {"eXbUSpEaTsA#libkernel",attr_set_inherit},
         {"JaRMy+QcpeU#libkernel",attr_get_detach}, {"-fA+7ZlGDQs#libkernel",attr_get_stack},
+        {"-quPa4SEJUw#libkernel",attr_get_stack_range},
         {"FXPWHNk8Of0#libkernel",attr_get_param}, {"El+cQ20DynU#libkernel",attr_set_guard},
         {"6UgtwV+0zb4#libkernel",thread_create}, {"onNY9Byn-W8#libkernel",thread_join},
         {"4qGrR6eoP9Y#libkernel",thread_detach}, {"3kg7rT0NQIs#libkernel",thread_exit},
