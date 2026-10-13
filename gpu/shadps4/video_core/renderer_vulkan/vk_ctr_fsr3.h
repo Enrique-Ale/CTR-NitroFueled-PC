@@ -61,10 +61,10 @@ public:
                           vk::ImageLayout& layout);
 
 private:
-    bool EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool msaa);
+    bool EnsureResources(u32 w, u32 h, u32 ow, u32 oh);
     void CreatePipelines();
     vk::ImageView SourceView(const VideoCore::Image& image, vk::Format format,
-                             vk::ImageAspectFlags aspect, bool msaa, int slot);
+                             vk::ImageAspectFlags aspect, int slot);
     vk::ImageView OutputView(vk::Format format);
     void Dump(vk::CommandBuffer cmdbuf);
 
@@ -91,7 +91,6 @@ private:
 
     FfxVkPortableUpscaleContext* context = nullptr;
     u32 width = 0, height = 0, out_width = 0, out_height = 0;
-    bool resources_msaa = false;
     VideoCore::UniqueImage depth_image, motion_image, debug_image, output_image;
     vk::UniqueImageView depth_view, motion_view, debug_view;
     struct OutputViewEntry {
@@ -109,7 +108,8 @@ private:
 
     vk::UniqueDescriptorSetLayout desc_layout;
     vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline, pipeline_msaa;
+    /// By multisampling: bit 0 the depth, bit 1 the velocity.
+    std::array<vk::UniquePipeline, 4> pipelines;
 };
 
 } // namespace Vulkan

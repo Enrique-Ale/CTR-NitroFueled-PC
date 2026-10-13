@@ -13,7 +13,9 @@
 #include "bbport_settings.h"
 #include "ffx_vk_portable.h"
 #include "video_core/host_shaders/ctr_fsr3_inputs_comp.h"
-#include "video_core/host_shaders/ctr_fsr3_inputs_msaa_comp.h"
+#include "video_core/host_shaders/ctr_fsr3_inputs_d_comp.h"
+#include "video_core/host_shaders/ctr_fsr3_inputs_dv_comp.h"
+#include "video_core/host_shaders/ctr_fsr3_inputs_v_comp.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -166,7 +168,7 @@ std::array<float, 2> CtrFsr3::DrawJitter(VideoCore::ImageId depth, bool full_scr
 }
 
 vk::ImageView CtrFsr3::SourceView(const VideoCore::Image& image, vk::Format format,
-                                  vk::ImageAspectFlags aspect, bool msaa, int slot) {
+                                  vk::ImageAspectFlags aspect, int slot) {
     auto& entry = source_views[slot];
     const vk::Image handle = image.GetImage();
     if (entry.view && entry.image == handle && entry.uid == image.image_uid &&
@@ -185,7 +187,6 @@ vk::ImageView CtrFsr3::SourceView(const VideoCore::Image& image, vk::Format form
         .format = format,
         .subresourceRange = {aspect, 0, 1, 0, 1},
     }));
-    (void)msaa;
     return *entry.view;
 }
 
@@ -209,7 +210,7 @@ vk::ImageView CtrFsr3::OutputView(vk::Format format) {
 }
 
 void CtrFsr3::CreatePipelines() {
-    if (pipeline) {
+    if (pipelines[0]) {
         return;
     }
     const auto device = instance.GetDevice();
@@ -244,13 +245,14 @@ void CtrFsr3::CreatePipelines() {
         device.destroyShaderModule(module);
         return result;
     };
-    pipeline = compute(CTR_FSR3_INPUTS_COMP);
-    pipeline_msaa = compute(CTR_FSR3_INPUTS_MSAA_COMP);
+    pipelines[0] = compute(CTR_FSR3_INPUTS_COMP);
+    pipelines[1] = compute(CTR_FSR3_INPUTS_D_COMP);
+    pipelines[2] = compute(CTR_FSR3_INPUTS_V_COMP);
+    pipelines[3] = compute(CTR_FSR3_INPUTS_DV_COMP);
 }
 
-bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool msaa) {
+bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh) {
     if (context && w == width && h == height && ow == out_width && oh == out_height) {
-        resources_msaa = msaa;
         return true;
     }
     const auto device = instance.GetDevice();
@@ -263,7 +265,6 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool msaa) {
     height = h;
     out_width = ow;
     out_height = oh;
-    resources_msaa = msaa;
     reset = true;
 
     FfxVkPortableDeviceInfo device_info{};
@@ -370,8 +371,8 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool msaa) {
     FfxVkPortableMemoryUsage usage{};
     usage.structSize = sizeof(usage);
     ffxVkPortableUpscaleContextGetMemoryUsage(context, &usage);
-    std::printf("FSR 3: %ux%u -> %ux%u%s, %u jitter phases, %.1f MB\n", w, h, ow, oh,
-                msaa ? " (2x MSAA G-buffer)" : "", jitter_phases, usage.totalUsageInBytes / 1e6);
+    std::printf("FSR 3: %ux%u -> %ux%u, %u jitter phases, %.1f MB\n", w, h, ow, oh, jitter_phases,
+                usage.totalUsageInBytes / 1e6);
     return true;
 }
 
@@ -394,7 +395,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         vel.info.size.width != w || vel.info.size.height != h || out.width < w ||
         out.height < h || w * 4 < out.width ||
         std::abs(double(w) / h - double(out.width) / out.height) > 0.02 ||
-        depth.info.num_samples != vel.info.num_samples) {
+        !depth.info.props.is_depth) {
         if (!announced) {
             announced = true;
             std::printf("FSR 3: not used: frame %ux%u, depth %ux%u, velocity %ux%u, output %ux%u\n",
@@ -404,10 +405,10 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         reset = true;
         return {};
     }
-    const bool msaa = depth.info.num_samples > 1;
+    const u32 variant = (depth.info.num_samples > 1 ? 1u : 0u) | (vel.info.num_samples > 1 ? 2u : 0u);
     // Inside the display pass's draw: its rendering ends here (and resumes when it draws).
     scheduler.EndRendering();
-    if (!EnsureResources(w, h, out.width, out.height, msaa)) {
+    if (!EnsureResources(w, h, out.width, out.height)) {
         failed = true;
         std::printf("FSR 3: off for this session\n");
         return {};
@@ -438,9 +439,9 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     const int debug = DebugMode();
     const auto& decode = MotionDecode();
     const vk::ImageView depth_src =
-        SourceView(depth, depth.info.pixel_format, vk::ImageAspectFlagBits::eDepth, msaa, 0);
+        SourceView(depth, depth.info.pixel_format, vk::ImageAspectFlagBits::eDepth, 0);
     const vk::ImageView vel_src =
-        SourceView(vel, Linear(vel.info.pixel_format), vk::ImageAspectFlagBits::eColor, msaa, 1);
+        SourceView(vel, Linear(vel.info.pixel_format), vk::ImageAspectFlagBits::eColor, 1);
     {
         const vk::DescriptorImageInfo infos[5] = {
             {{}, depth_src, vk::ImageLayout::eShaderReadOnlyOptimal},
@@ -471,7 +472,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
             .dstAccessMask = vk::AccessFlagBits2::eShaderWrite,
         };
         cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, msaa ? *pipeline_msaa : *pipeline);
+        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *pipelines[variant]);
         cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipeline_layout, 0, writes);
         cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(params), &params);
@@ -575,8 +576,10 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
     if (!announced) {
         announced = true;
-        std::printf("FSR 3: upscaling %ux%u -> %ux%u (near %.2f, far %.0f, fov %.1f deg)\n", w, h,
-                    out.width, out.height, near_plane, far_plane, fov * 57.29578f);
+        std::printf("FSR 3: upscaling %ux%u -> %ux%u (near %.2f, far %.0f, fov %.1f deg; depth %ux, "
+                    "velocity %ux samples)\n",
+                    w, h, out.width, out.height, near_plane, far_plane, fov * 57.29578f,
+                    depth.info.num_samples, vel.info.num_samples);
     }
     layout = vk::ImageLayout::eGeneral;
     return OutputView(view_format);
