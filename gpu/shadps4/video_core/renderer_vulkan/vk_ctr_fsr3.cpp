@@ -205,7 +205,8 @@ CtrFsr3::~CtrFsr3() {
 }
 
 bool CtrFsr3::Enabled() const {
-    return !failed && BbSettings::Get().temporal != BbSettings::TemporalOff;
+    const int temporal = BbSettings::Get().temporal;
+    return !failed && (temporal == BbSettings::TemporalFsr3 || temporal == BbSettings::TemporalDlss);
 }
 
 void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity_,
@@ -560,10 +561,12 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     if (BbSettings::Get().temporal == BbSettings::TemporalDlss && !dlss_failed) {
         auto* dlss = DlssNgx::Get();
         if (dlss && dlss->IsAvailable()) {
-            static const u32 preset = [] {
-                const char* env = std::getenv("BB_DLSS_PRESET");
-                return env ? u32(std::atoi(env)) : 0u;
-            }();
+            // The model: NVIDIA's transformer presets (the DLL's defaults, K/L/M by mode) or the
+            // CNN one (preset E, deprecated by NVIDIA but still in DLSS 310). BB_DLSS_PRESET
+            // picks any preset number.
+            static const char* preset_env = std::getenv("BB_DLSS_PRESET");
+            const u32 preset = preset_env ? u32(std::atoi(preset_env))
+                               : BbSettings::Get().dlss_model == 1 ? 5u : 0u;
             const DlssNgx::FeatureDesc desc{w, h, out.width, out.height,
                                             DlssNgx::QualityForScale(float(out.width) / float(w)),
                                             false, preset, false};

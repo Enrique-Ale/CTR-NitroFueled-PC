@@ -493,57 +493,30 @@ void Menu() {
     // Bloodborne profile (removed 2026-10-09).
     ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
                                               "Патчи игры (после перезапуска)"));
-    // SacredFire: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox.
+    // SacredFire: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox; a
+    // DLSS quality mode sets it instead (scripts/patches.py render_plan).
+    const bool dlss_sized = s.temporal == BbSettings::TemporalDlss && s.dlss_quality > 0;
     {
         static const char* labels[] = {"854 x 480", "1280 x 720", "1920 x 1080",
                                        "2560 x 1440 (PS4 Pro)", "2880 x 1620", "3840 x 2160 (4K)"};
         const int current = s.render_res;
         const char* preview =
-            current >= 0 ? labels[current]
-                         : BbSettings::MenuText("(game patches decide)", "(решают патчи)");
+            dlss_sized    ? BbSettings::MenuText("(DLSS quality decides)", "(решает качество DLSS)")
+            : current >= 0 ? labels[current]
+                           : BbSettings::MenuText("(game patches decide)", "(решают патчи)");
+        ImGui::BeginDisabled(dlss_sized);
         if (ImGui::BeginCombo(BbSettings::MenuText("Internal resolution", "Внутреннее разрешение"),
                               preview)) {
             for (int r = 0; r < BbSettings::RenderResCount; ++r) {
                 if (ImGui::Selectable(labels[r], r == current)) {
-                    s.render_res = r;
+                    Store(s.render_res, r, r != current);
                     std::printf("Menu: render_res = %d (applies after the restart)\n",
                                 BbSettings::RenderResHeights[r]);
                 }
             }
             ImGui::EndCombo();
         }
-        Checkbox(BbSettings::MenuText("FSR 1 upscaling", "Апскейл FSR 1"), s.fsr1);
-        {
-            static constexpr const char* temporal_labels[BbSettings::TemporalCount] = {
-                "Off", "AMD FSR 3", "NVIDIA DLSS"};
-            const int current = std::clamp(s.temporal.load(), 0, BbSettings::TemporalCount - 1);
-            if (ImGui::BeginCombo(BbSettings::MenuText("Temporal upscaling (experimental)",
-                                                       "Временной апскейл (эксперимент)"),
-                                  temporal_labels[current])) {
-                for (int t = 0; t < BbSettings::TemporalCount; ++t) {
-                    if (ImGui::Selectable(temporal_labels[t], t == current)) {
-                        Store(s.temporal, t, t != current);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-        }
-        Hint(BbSettings::MenuText(
-            "Rebuilds detail over several frames from the game's depth and motion: sharper and "
-            "steadier than FSR 1, and smooths edges at the same resolution. DLSS needs an RTX GPU "
-            "and its files next to the game (FSR 3 runs otherwise). Experimental. Applies at once.",
-            "Восстанавливает детали за несколько кадров. DLSS нужна видеокарта RTX. "
-            "Экспериментально. Применяется сразу."));
-        if (s.temporal == BbSettings::TemporalFsr3) {
-            Slider(BbSettings::MenuText("FSR 3 sharpness", "Резкость FSR 3"), s.fsr3_sharpness,
-                   0.0f, 1.0f);
-        }
-        Hint(BbSettings::MenuText(
-            "When the scene is smaller than the picture (720p, 480p, 1440p and 1620p on the 4K "
-            "picture), AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges "
-            "and text. Applies at once.",
-            "Когда сцена меньше кадра (720p, 480p, 1440p и 1620p в кадре 4K), её увеличивает AMD "
-            "FSR 1 вместо простого растяжения игры: чётче края. Применяется сразу."));
+        ImGui::EndDisabled();
         Hint(BbSettings::MenuText(
             "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path "
             "and the picture is output at 4K; on a 1080p screen that smooths jagged edges. 4K needs "
@@ -551,6 +524,77 @@ void Menu() {
             "Размер, в котором игра рисует 3D-сцену. Выше 1080p используется режим PS4 Pro, кадр "
             "выводится в 4K; на экране 1080p это сглаживает края. Для 4K нужна мощная видеокарта."));
     }
+    // SacredFire: one upscaler at a time (bbport.ini temporal): FSR 1 (spatial) or the temporal
+    // ones, FSR 3 and DLSS (vk_ctr_fsr3). Live; DLSS's quality mode and output need a restart.
+    {
+        static constexpr const char* labels[BbSettings::TemporalCount] = {
+            "Off", "AMD FSR 1", "AMD FSR 3 (experimental)", "NVIDIA DLSS (experimental)"};
+        const int current = std::clamp(s.temporal.load(), 0, BbSettings::TemporalCount - 1);
+        if (ImGui::BeginCombo(BbSettings::MenuText("Upscaling", "Апскейл"), labels[current])) {
+            for (int t = 0; t < BbSettings::TemporalCount; ++t) {
+                if (ImGui::Selectable(labels[t], t == current)) {
+                    Store(s.temporal, t, t != current);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. "
+            "FSR 3 and DLSS rebuild detail over several frames from the game's depth and motion, "
+            "and smooth edges even at the same resolution. DLSS needs an NVIDIA RTX card (FSR 3 "
+            "runs otherwise). Applies at once.",
+            "FSR 1 увеличивает сцену чётче простого растяжения. FSR 3 и DLSS восстанавливают "
+            "детали за несколько кадров. DLSS нужна видеокарта RTX. Применяется сразу."));
+    }
+    if (s.temporal == BbSettings::TemporalDlss) {
+        static constexpr const char* qualities[BbSettings::DlssQualityCount] = {
+            "Auto (internal resolution)", "DLAA (native)", "Quality", "Balanced", "Performance",
+            "Ultra Performance"};
+        const int quality = std::clamp(s.dlss_quality.load(), 0, BbSettings::DlssQualityCount - 1);
+        if (ImGui::BeginCombo(BbSettings::MenuText("DLSS quality", "Качество DLSS"), qualities[quality])) {
+            for (int q = 0; q < BbSettings::DlssQualityCount; ++q) {
+                if (ImGui::Selectable(qualities[q], q == quality)) {
+                    Store(s.dlss_quality, q, q != quality);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "Auto keeps the internal resolution above. The others render at NVIDIA's share of the "
+            "DLSS output: Quality 67%, Balanced 58%, Performance 50%, Ultra Performance 33%, DLAA "
+            "100%. Applies after the restart.",
+            "Авто: внутреннее разрешение выше. Остальные: доля от вывода DLSS. После перезапуска."));
+        if (quality > 0) {
+            static constexpr const char* outputs[] = {"1920 x 1080", "3840 x 2160 (4K)"};
+            const int output = s.dlss_output ? 1 : 0;
+            if (ImGui::BeginCombo(BbSettings::MenuText("DLSS output", "Вывод DLSS"), outputs[output])) {
+                for (int o = 0; o < 2; ++o) {
+                    if (ImGui::Selectable(outputs[o], o == output)) {
+                        Store(s.dlss_output, o, o != output);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        static constexpr const char* models[] = {"Transformer (recommended)", "CNN"};
+        const int model = s.dlss_model ? 1 : 0;
+        if (ImGui::BeginCombo(BbSettings::MenuText("DLSS model", "Модель DLSS"), models[model])) {
+            for (int m = 0; m < 2; ++m) {
+                if (ImGui::Selectable(models[m], m == model)) {
+                    Store(s.dlss_model, m, m != model);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little heavier. "
+            "CNN: the older model (preset E), lighter; NVIDIA marks it deprecated. Applies at once.",
+            "Transformer: текущая модель NVIDIA. CNN: старая, легче. Применяется сразу."));
+    }
+    if (s.temporal == BbSettings::TemporalFsr3) {
+        Slider(BbSettings::MenuText("FSR 3 sharpness", "Резкость FSR 3"), s.fsr3_sharpness, 0.0f, 1.0f);
+    }
+
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         const auto& patch = BbSettings::GamePatches[g];
         if (std::strcmp(patch.key, "patch_pro_1080p") == 0) continue; // see Internal resolution
@@ -572,7 +616,7 @@ void Menu() {
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         restart |= s.game_patches[g] != s.startup_game_patches[g];
     }
-    restart |= s.render_res != s.startup_render_res;
+    restart |= BbSettings::RenderSizeNeedsRestart();
     if (restart) {
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
                            BbSettings::MenuText("Changes apply after restarting the game",

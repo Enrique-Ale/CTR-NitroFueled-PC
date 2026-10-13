@@ -100,19 +100,24 @@ def ini_value(path, key):
     return None
 
 
-# bbport.ini render_res above 1080 renders through the game's PS4 Pro path (scripts/patches.py,
-# docs/sacredfire/13-resolution.md); native 4K also takes a larger GPU heap, past the Pro's 5568
-# MiB of direct memory.
+# bbport.ini render_res (or a DLSS quality with temporal=dlss) picks the game's rendering path
+# (scripts/patches.py render_plan, docs/sacredfire/13-resolution.md): above 1080 and below it the
+# PS4 Pro path; the larger GPU heap of native 4K also takes more than the Pro's 5568 MiB of direct
+# memory.
 def apply_render_res(env, config):
-    res = ini_value(config, 'render_res')
-    if res in ('480', '720', '1440', '1620', '2160'):
-        env['BB_NEO'] = '1'
-        if res == '2160' and int(env.get('BB_DMEM_MB') or 0) < 7168:
-            env['BB_DMEM_MB'] = '7168'
-        say(f'Internal resolution: {res}p (PS4 Pro rendering path)')
-    elif res == '1080':
-        env['BB_NEO'] = '0'
-        say('Internal resolution: 1080p (base PS4 rendering path)')
+    sys.path.insert(0, str(PORT / 'scripts'))
+    try:
+        from patches import read_settings, render_plan
+    finally:
+        sys.path.pop(0)
+    plan = render_plan(read_settings(Path(config)))
+    if plan is None:
+        return
+    env['BB_NEO'] = '1' if plan['pro'] else '0'
+    if plan['heap'] and int(env.get('BB_DMEM_MB') or 0) < 7168:
+        env['BB_DMEM_MB'] = '7168'
+    path = 'PS4 Pro' if plan['pro'] else 'base PS4'
+    say(f'Internal resolution: {plan["label"]} ({path} rendering path)')
 
 
 def pump(stream):

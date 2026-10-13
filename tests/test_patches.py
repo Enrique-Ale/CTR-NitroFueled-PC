@@ -145,6 +145,22 @@ class RenderResTests(unittest.TestCase):
         self.assertEqual(writes, [(0x17aa662 - EBOOT_BASE, b'\xb8' + struct.pack('<f', 2.0)),
                                   (0x1fbb93e - EBOOT_BASE, b'\x70')])
 
+    def test_dlss_quality_picks_the_render_size(self):
+        plan = patches.render_plan
+        dlss = lambda q, out='1080': {'temporal': 'dlss', 'dlss_quality': q, 'dlss_output': out,
+                                       'render_res': '1440'}
+        self.assertEqual(plan(dlss('dlaa'))['pro'], False)          # native 1080p, base path
+        p = plan(dlss('performance'))                               # 540p to 1080p
+        self.assertAlmostEqual(p['scale'], 0.5)
+        self.assertTrue(p['pro'] and p['single'] and not p['heap'])
+        p = plan(dlss('quality', '2160'))                           # 1440p to 4K
+        self.assertAlmostEqual(p['scale'], 4 / 3)
+        self.assertTrue(p['pro'] and not p['single'] and not p['heap'])
+        self.assertTrue(plan(dlss('dlaa', '2160'))['heap'])         # native 4K
+        # Automatic (or another upscaler): render_res decides.
+        self.assertEqual(plan({**dlss('auto'), 'render_res': '720'})['label'], '720p')
+        self.assertEqual(plan({**dlss('quality'), 'temporal': 'fsr3'})['label'], '1440p')
+
 
 class GamePatchTests(unittest.TestCase):
     """The bundled CTR patches, chosen through bbport.ini patch_* keys (the in-game menu)."""

@@ -81,14 +81,24 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "fsr1") {
-        v.fsr1 = i != 0;
+        v.legacy_fsr1 = i != 0 ? 1 : 0; // v0.3 test builds: before fsr1 joined `temporal`
     } else if (key == "temporal") {
         for (int t = 0; t < TemporalCount; ++t) {
-            if (value == TemporalNames[t]) v.temporal = t;
+            if (value == TemporalNames[t]) {
+                v.temporal = t;
+                v.temporal_seen = true;
+            }
         }
     } else if (key == "fsr3") {
-        // Test builds before `temporal`.
-        if (i != 0 && v.temporal == TemporalOff) v.temporal = TemporalFsr3;
+        v.legacy_fsr3 = i != 0; // test builds before `temporal`
+    } else if (key == "dlss_quality") {
+        for (int q = 0; q < DlssQualityCount; ++q) {
+            if (value == DlssQualityNames[q]) v.dlss_quality = q;
+        }
+    } else if (key == "dlss_output") {
+        v.dlss_output = i == 2160 ? 1 : 0;
+    } else if (key == "dlss_model") {
+        v.dlss_model = value == "cnn" ? 1 : 0;
     } else if (key == "fsr3_sharpness") {
         v.fsr3_sharpness = Clamp(f, 0.0f, 1.0f);
     } else if (key == "render_res") {
@@ -192,6 +202,9 @@ void Load() {
     }
     // SacredFire: BB_FULLSCREEN=1 starts fullscreen; the menu toggles it later (window.cpp
     // applies the setting on the window thread, so the checkbox takes effect at once).
+    if (!v.temporal_seen) {
+        v.temporal = v.legacy_fsr3 ? TemporalFsr3 : v.legacy_fsr1 == 0 ? TemporalOff : TemporalFsr1;
+    }
     if (const char* fsr3 = std::getenv("BB_FSR3")) {
         v.temporal = fsr3[0] == '1' ? TemporalFsr3 : TemporalOff;
     }
@@ -214,8 +227,22 @@ void Load() {
     }
     v.startup_model_lod = v.model_lod;
     v.startup_render_res = v.render_res;
+    v.startup_temporal = v.temporal;
+    v.startup_dlss_quality = v.dlss_quality;
+    v.startup_dlss_output = v.dlss_output;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
+}
+
+bool RenderSizeNeedsRestart() {
+    const auto& v = Get();
+    // As scripts/patches.py render_plan: a DLSS quality mode decides, else render_res.
+    const auto key = [](int temporal, int quality, int output, int render_res) {
+        return temporal == TemporalDlss && quality > 0 ? 100 + quality * 2 + output : render_res;
+    };
+    return key(v.temporal, v.dlss_quality, v.dlss_output, v.render_res) !=
+           key(v.startup_temporal, v.startup_dlss_quality, v.startup_dlss_output,
+               v.startup_render_res);
 }
 
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
@@ -297,8 +324,10 @@ void Save() {
     }
     put("model_lod", std::to_string(v.model_lod.load()));
     if (v.render_res >= 0) put("render_res", std::to_string(RenderResHeights[v.render_res]));
-    put("fsr1", flag(v.fsr1));
     put("temporal", TemporalNames[std::clamp(v.temporal.load(), 0, TemporalCount - 1)]);
+    put("dlss_quality", DlssQualityNames[std::clamp(v.dlss_quality.load(), 0, DlssQualityCount - 1)]);
+    put("dlss_output", std::to_string(DlssOutputHeights[v.dlss_output ? 1 : 0]));
+    put("dlss_model", DlssModelNames[v.dlss_model ? 1 : 0]);
     put("fsr3_sharpness", fixed(v.fsr3_sharpness, 2));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));

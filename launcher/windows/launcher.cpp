@@ -507,11 +507,14 @@ struct Choice {
     const char* value;
 };
 
-// PS4 system language codes (BB_LANGUAGE), as in SacredFire's Linux launcher.
+// PS4 system language codes (BB_LANGUAGE) of the languages CUSA13795 (the Americas build) has:
+// English (1, US), Latin American Spanish (20), French (2) and Brazilian Portuguese (17). Other
+// codes (Spain's Spanish 3, German, Italian...) are not in this build and fall back to English.
 constexpr Choice kGameLanguages[] = {
-    {"Inglés", "English", "1"},   {"Español", "Spanish", "3"},  {"Francés", "French", "2"},
-    {"Alemán", "German", "4"},    {"Italiano", "Italian", "5"}, {"Japonés", "Japanese", "0"},
-    {"Ruso", "Russian", "8"},
+    {"Inglés", "English", "1"},
+    {"Español latinoamericano", "Spanish (Latin America)", "20"},
+    {"Francés", "French", "2"},
+    {"Portugués (Brasil)", "Portuguese (Brazil)", "17"},
 };
 constexpr Choice kPresentModes[] = {
     {"Mailbox (recomendado)", "Mailbox (recommended)", "Mailbox"},
@@ -741,7 +744,17 @@ void StartMerge(std::vector<fs::path> sources) {
     });
 }
 
-const char* DefaultGameLanguage() { return g_spanish ? "3" : "1"; }
+const char* DefaultGameLanguage() { return g_spanish ? "20" : "1"; }
+
+/// The game language to start with: the saved one when the build has it, else the default (older
+/// launchers saved codes this build lacks, such as 3 for Spain's Spanish).
+std::string GameLanguage() {
+    const std::string saved = g_app.launcher.Get("language");
+    for (const auto& c : kGameLanguages)
+        if (saved == c.value) return saved;
+    if (saved == "3") return "20"; // Spanish: the Latin American one this build has
+    return DefaultGameLanguage();
+}
 
 void SetEnv(const wchar_t* name, const std::string& value) {
     SetEnvironmentVariableW(name, value.empty() ? nullptr : Widen(value).c_str());
@@ -760,7 +773,7 @@ void StartGame() {
     }
     SetEnv(L"BB_GAME_DIR", PathText(a.game_dir));
     SetEnv(L"BB_NEO", EffectiveRenderRes() != "1080" ? "1" : "0");  // the resolution picks the path
-    SetEnv(L"BB_LANGUAGE", a.launcher.Get("language", DefaultGameLanguage()));
+    SetEnv(L"BB_LANGUAGE", GameLanguage());
     SetEnv(L"BB_DISPLAY", a.launcher.Get("display"));
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
     SetEnv(L"BB_GAMEPAD", a.launcher.Get("gamepad"));
@@ -1526,6 +1539,39 @@ std::string EffectiveRenderRes() {
     return "1080";
 }
 
+/// bbport.ini temporal (the upscaler), with the keys of v0.3 test builds before it: fsr3=1, fsr1=0.
+std::string GameTemporal() {
+    const Ini& game = g_app.game;
+    const std::string value = game.Get("temporal");
+    for (const char* known : {"off", "fsr1", "fsr3", "dlss"})
+        if (value == known) return value;
+    if (game.Flag("fsr3", false)) return "fsr3";
+    return game.Flag("fsr1", true) ? "fsr1" : "off";
+}
+
+/// A combo over a bbport.ini key; true when the player picked another value (already set).
+template <size_t N>
+bool GameChoiceCombo(const char* label, const char* key, const Choice (&choices)[N], const char* fallback,
+                     float width_em) {
+    App& a = g_app;
+    const std::string current = a.game.Get(key, fallback);
+    const Choice* selected = &choices[0];
+    for (const auto& c : choices)
+        if (current == c.value) selected = &c;
+    bool changed = false;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * width_em);
+    if (ImGui::BeginCombo(label, T(selected->es, selected->en))) {
+        for (const auto& c : choices) {
+            if (ImGui::Selectable(T(c.es, c.en), &c == selected) && &c != selected) {
+                a.game.Set(key, c.value);
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 void RenderResCombo() {
     App& a = g_app;
     const std::string current = EffectiveRenderRes();
@@ -1584,44 +1630,65 @@ void SettingsTab() {
                "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
     ImGui::SeparatorText(T("Pantalla", "Display"));
+    const std::string temporal = GameTemporal();
+    const bool dlss_sized = temporal == "dlss" && a.game.Get("dlss_quality", "auto") != "auto";
+    ImGui::BeginDisabled(dlss_sized);
     RenderResCombo();
-    GameFlag("fsr1", T("Escalado FSR 1", "FSR 1 upscaling"), true,
-             T("Cuando la escena es más pequeña que la imagen (720p, 480p, y 1440p o 1620p en la imagen 4K), "
-               "AMD FSR 1 la agranda en vez del estirado simple del juego: bordes y detalles más nítidos.",
-               "When the scene is smaller than the picture (720p, 480p, and 1440p or 1620p in the 4K picture), "
-               "AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges and detail."));
-    {
-        // temporal=off|fsr3|dlss (bbport.ini); fsr3=1 from test builds counts as fsr3.
-        static constexpr Choice kTemporal[] = {
-            {"Desactivado", "Off", "off"}, {"AMD FSR 3", "AMD FSR 3", "fsr3"}, {"NVIDIA DLSS", "NVIDIA DLSS", "dlss"}};
-        std::string current = a.game.Get("temporal", a.game.Flag("fsr3", false) ? "fsr3" : "off");
-        const Choice* selected = &kTemporal[0];
-        for (const auto& c : kTemporal)
-            if (current == c.value) selected = &c;
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-        if (ImGui::BeginCombo(T("Escalado temporal (experimental)", "Temporal upscaling (experimental)"),
-                              T(selected->es, selected->en))) {
-            for (const auto& c : kTemporal) {
-                if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
-                    a.game.Set("temporal", c.value);
-                    a.game.Erase("fsr3");
-                    SaveGameIni();
-                }
-            }
-            ImGui::EndCombo();
-        }
-        HelpMarker(T("Reconstruye el detalle a lo largo de varios cuadros con la profundidad y el movimiento del juego: "
-                     "más nítido y estable que FSR 1, y a la misma resolución también suaviza los bordes. DLSS necesita "
-                     "una tarjeta NVIDIA RTX y sus archivos junto al juego (si no, se usa FSR 3). Experimental: si ves "
-                     "estelas o parpadeos, desactívalo.",
-                     "Rebuilds detail over several frames from the game's depth and motion: sharper and steadier than "
-                     "FSR 1, and at the same resolution it also smooths edges. DLSS needs an NVIDIA RTX card and its "
-                     "files next to the game (FSR 3 runs otherwise). Experimental: turn it off if you see trails or "
-                     "shimmering."));
+    ImGui::EndDisabled();
+    if (dlss_sized) {
+        ImGui::SameLine();
+        ImGui::TextColored(kGrey, "%s", T("(la decide la calidad de DLSS)", "(set by the DLSS quality)"));
     }
-    if (a.game.Get("temporal", a.game.Flag("fsr3", false) ? "fsr3" : "off") == "fsr3") {
+    {
+        // temporal=off|fsr1|fsr3|dlss (bbport.ini): one upscaler at a time.
+        static constexpr Choice kTemporal[] = {{"Desactivado", "Off", "off"},
+                                               {"AMD FSR 1", "AMD FSR 1", "fsr1"},
+                                               {"AMD FSR 3 (experimental)", "AMD FSR 3 (experimental)", "fsr3"},
+                                               {"NVIDIA DLSS (experimental)", "NVIDIA DLSS (experimental)", "dlss"}};
+        if (GameChoiceCombo(T("Escalado", "Upscaling"), "temporal", kTemporal, temporal.c_str(), 16.0f)) {
+            a.game.Erase("fsr1");
+            a.game.Erase("fsr3");
+            SaveGameIni();
+        }
+        HelpMarker(T("FSR 1 agranda una escena más pequeña con bordes más nítidos que el estirado simple del juego. "
+                     "FSR 3 y DLSS reconstruyen el detalle a lo largo de varios cuadros con la profundidad y el movimiento "
+                     "del juego, y a la misma resolución también suavizan los bordes. DLSS necesita una tarjeta NVIDIA "
+                     "RTX (si no, se usa FSR 3). Experimentales: si ves estelas o parpadeos, cambia a FSR 1.",
+                     "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3 and DLSS "
+                     "rebuild detail over several frames from the game's depth and motion, and smooth edges even at the "
+                     "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise). Experimental: switch to "
+                     "FSR 1 if you see trails or shimmering."));
+    }
+    if (temporal == "dlss") {
+        static constexpr Choice kQuality[] = {
+            {"Automática (resolución interna)", "Auto (internal resolution)", "auto"},
+            {"DLAA (nativa)", "DLAA (native)", "dlaa"},
+            {"Calidad", "Quality", "quality"},
+            {"Equilibrado", "Balanced", "balanced"},
+            {"Rendimiento", "Performance", "performance"},
+            {"Ultra rendimiento", "Ultra Performance", "ultra_performance"}};
+        if (GameChoiceCombo(T("Calidad de DLSS", "DLSS quality"), "dlss_quality", kQuality, "auto", 16.0f)) SaveGameIni();
+        HelpMarker(T("Automática usa la resolución interna de arriba. Las demás dibujan la escena a la proporción de NVIDIA "
+                     "respecto a la salida de DLSS: Calidad 67 %, Equilibrado 58 %, Rendimiento 50 %, Ultra rendimiento "
+                     "33 %, DLAA 100 %.",
+                     "Auto uses the internal resolution above. The others draw the scene at NVIDIA's share of the DLSS "
+                     "output: Quality 67%, Balanced 58%, Performance 50%, Ultra Performance 33%, DLAA 100%."));
+        if (a.game.Get("dlss_quality", "auto") != "auto") {
+            static constexpr Choice kOutput[] = {{"1920 x 1080", "1920 x 1080", "1080"},
+                                                 {"3840 x 2160 (4K)", "3840 x 2160 (4K)", "2160"}};
+            if (GameChoiceCombo(T("Salida de DLSS", "DLSS output"), "dlss_output", kOutput, "1080", 16.0f)) SaveGameIni();
+        }
+        static constexpr Choice kModel[] = {{"Transformer (recomendado)", "Transformer (recommended)", "transformer"},
+                                            {"CNN", "CNN", "cnn"}};
+        if (GameChoiceCombo(T("Modelo de DLSS", "DLSS model"), "dlss_model", kModel, "transformer", 16.0f)) SaveGameIni();
+        HelpMarker(T("Transformer: el modelo actual de NVIDIA (DLSS 4), más nítido y estable, algo más pesado. CNN: el "
+                     "modelo anterior (preset E), más ligero; NVIDIA lo marca como obsoleto.",
+                     "Transformer: NVIDIA's current model (DLSS 4), sharper and steadier, a little heavier. CNN: the "
+                     "older model (preset E), lighter; NVIDIA marks it deprecated."));
+    }
+    if (temporal == "fsr3") {
         float sharp = float(std::atof(a.game.Get("fsr3_sharpness", "0.30").c_str()));
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
         if (ImGui::SliderFloat(T("Nitidez de FSR 3", "FSR 3 sharpness"), &sharp, 0.0f, 1.0f, "%.2f")) {
             char text[16];
             std::snprintf(text, sizeof text, "%.2f", sharp);
@@ -1697,8 +1764,13 @@ void SettingsTab() {
                                       "The keyboard always works too. Split-screen ports are assigned in the in-game menu."));
 
     ImGui::SeparatorText(T("Consola", "Console"));
+    if (a.launcher.Get("language") != GameLanguage()) a.launcher.Set("language", GameLanguage());
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
     ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
+    HelpMarker(T("Los idiomas que trae esta versión del juego (CUSA13795, América): inglés, español latinoamericano, "
+                 "francés y portugués de Brasil. El español de España no está en ella. Se aplica al pulsar Jugar.",
+                 "The languages this build of the game has (CUSA13795, the Americas): English, Latin American "
+                 "Spanish, French and Brazilian Portuguese. Spain's Spanish is not in it. Applied when you press Play."));
 }
 
 void PatchesTab() {

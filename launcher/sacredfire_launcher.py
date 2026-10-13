@@ -56,8 +56,9 @@ GAME = "Crash Team Racing: Nitro-Fueled"
 
 # Choices: (label, value); the first is the default.
 UI_LANGUAGES = [("System", ""), ("English", "en"), ("Русский", "ru"), ("Português (Brasil)", "pt_BR")]
-LANGUAGES = [("English", "1"), ("French", "2"), ("Spanish", "3"), ("German", "4"),
-             ("Italian", "5"), ("Japanese", "0"), ("Russian", "8")]
+# The languages CUSA13795 (the Americas build) has, as PS4 system language codes.
+LANGUAGES = [("English", "1"), ("Spanish (Latin America)", "20"), ("French", "2"),
+             ("Portuguese (Brazil)", "17")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
                  ("FIFO Relaxed", "FifoRelaxed"), ("Immediate", "Immediate")]
 # Game patches (patches/CrashTeamRacing.xml, scripts/patches.py; community patches by illusion and

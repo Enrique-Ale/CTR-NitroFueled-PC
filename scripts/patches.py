@@ -52,30 +52,61 @@ def render_res(settings):
     return value if value in RENDER_RESOLUTIONS else None
 
 
+# temporal=dlss with dlss_quality set: DLSS picks the render size from the output (dlss_output,
+# 1080 or 2160) and NVIDIA's quality ratios, as PC games do.
+DLSS_QUALITIES={'dlaa':1.0,'quality':2/3,'balanced':0.58,'performance':0.5,'ultra_performance':1/3}
+
+
+def render_plan(settings):
+    """How the game renders, from bbport.ini: a dict with `label`, `scale` (the render scale
+    relative to 1920x1080 patched at 0x17aa662, None for the game's own), `pro` (the PS4 Pro path,
+    BB_NEO=1), `single` (the Pro path's output doubling removed: a 1080p picture) and `heap` (the
+    larger GPU heap, needed above a 1.5 scale), or None when nothing is set."""
+    s=settings or {}
+    quality=s.get('dlss_quality')
+    if s.get('temporal')=='dlss' and quality in DLSS_QUALITIES:
+        out=2160 if s.get('dlss_output')=='2160' else 1080
+        scale=out/1080*DLSS_QUALITIES[quality]
+        label=f'DLSS {quality.replace("_"," ")}, {round(1080*scale)}p to {out}p'
+        if out==1080 and abs(scale-1.0)<1e-6:
+            return dict(label=label,scale=None,pro=False,single=False,heap=False)
+        return dict(label=label,scale=scale,pro=True,single=out==1080,heap=scale>1.5+1e-6)
+    res=render_res(s)
+    if res is None:
+        return None
+    if res=='1080':
+        return dict(label='1080p',scale=None,pro=False,single=False,heap=False)
+    return dict(label=f'{res}p',scale=RENDER_SCALES.get(res),pro=True,single=res in ('480','720'),
+                heap=res=='2160')
+
+
 def render_patches(settings):
-    """Built-in patch elements for render_res (a list of (key, None, Metadata element))."""
-    res=render_res(settings)
+    """Built-in patch elements for the render plan (a list of (key, None, Metadata element))."""
+    plan=render_plan(settings)
+    if plan is None:
+        return []
     lines=[]
-    if res in RENDER_SCALES:
-        value='b8'+struct.pack('<f',RENDER_SCALES[res]).hex()
+    if plan['scale'] is not None:
+        value='b8'+struct.pack('<f',plan['scale']).hex()
         lines.append(dict(Type='bytes',Address='0x017aa662',Value=value,
                           Signature=RENDER_SCALE_SIGNATURE,SignatureOffset='0x0'))
-    if res in ('480','720'):
+    if plan['single']:
         lines.append(dict(Type='bytes',Address='0x017aa648',Value='9090',
                           Signature=OUTPUT_DOUBLE_SIGNATURE,SignatureOffset='0x0'))
         lines.append(dict(Type='bytes',Address='0x017aa658',Value='909090',
                           Signature=OUTPUT_DOUBLE_SIGNATURE,SignatureOffset='0x10'))
-    if res=='2160':
+    if plan['heap']:
         # 960 MiB -> 1792 MiB (0x70000000): native 4K with 2x MSAA does not fit the Pro's heap.
         lines.append(dict(Type='bytes',Address='0x01fbb93e',Value='70',
                           Signature=GPU_HEAP_SIGNATURE,SignatureOffset='0x6'))
     if not lines:
         return []
-    meta=ET.Element('Metadata',Name=f'Render resolution {res}p',AppVer=APP_VERSION,AppElf='eboot.bin')
+    meta=ET.Element('Metadata',Name=f'Render resolution {plan["label"]}',AppVer=APP_VERSION,
+                    AppElf='eboot.bin')
     patch_list=ET.SubElement(meta,'PatchList')
     for line in lines:
         ET.SubElement(patch_list,'Line',**line)
-    return [(f'render_res/{res}p',None,meta)]
+    return [(f'render/{plan["label"]}',None,meta)]
 
 
 def read_settings(path):
@@ -180,7 +211,7 @@ def external_selection(found, config, ini=None):
     pro_1080p=GAME_PATCH_KEYS['patch_pro_1080p']
     # With render_res the Pro mode follows it (run.py): 1080p runs the base PS4 path, so the
     # 1080p Pro patch is never needed (on the base path its flipped branch would take the Pro one).
-    if render_res(ini): enabled.discard(pro_1080p); disabled.add(pro_1080p)
+    if render_plan(ini): enabled.discard(pro_1080p); disabled.add(pro_1080p)
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 

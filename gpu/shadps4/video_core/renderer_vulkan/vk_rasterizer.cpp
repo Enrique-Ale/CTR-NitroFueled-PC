@@ -1495,7 +1495,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     last_draw_display = display_draw;
     if (display_start) {
         // The previous draw's target is the finished scene the display pass stretches.
-        fsr_pending = (BbSettings::Get().fsr1 || ctr_fsr3->Enabled()) && cb_descs[0].first;
+        fsr_pending = (BbSettings::Get().temporal == BbSettings::TemporalFsr1 || ctr_fsr3->Enabled()) &&
+                      cb_descs[0].first;
         fsr_source = cb_descs[0].first;
         fsr_done = false;
         ctr_fsr3->OnFrameEnd();
@@ -4453,7 +4454,7 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
         }
         fsr_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     }
-    if (!BbSettings::Get().fsr1) {
+    if (BbSettings::Get().temporal != BbSettings::TemporalFsr1) {
         return {};
     }
     // Only a smaller scene of the display's shape: no FSR at native size or for other images.

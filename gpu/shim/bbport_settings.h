@@ -67,9 +67,21 @@ inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 /// SacredFire: controller ports for split screen (bbport.ini port.1..4: SDL GUID or part of the
 /// gamepad name; the runtime re-reads the file when the menu saves it).
 constexpr int ControllerPorts = 4;
-/// SacredFire: `temporal` values (bbport.ini temporal=off|fsr3|dlss).
-enum Temporal : int { TemporalOff = 0, TemporalFsr3 = 1, TemporalDlss = 2, TemporalCount = 3 };
-inline constexpr const char* TemporalNames[TemporalCount] = {"off", "fsr3", "dlss"};
+/// SacredFire: the upscaler (bbport.ini temporal=off|fsr1|fsr3|dlss): FSR 1 (spatial, the
+/// display pass's stretch) or temporal upscaling/AA of the finished frame (vk_ctr_fsr3; FSR 3
+/// where DLSS cannot run).
+enum Temporal : int { TemporalOff = 0, TemporalFsr1 = 1, TemporalFsr3 = 2, TemporalDlss = 3,
+                      TemporalCount = 4 };
+inline constexpr const char* TemporalNames[TemporalCount] = {"off", "fsr1", "fsr3", "dlss"};
+/// bbport.ini dlss_quality: auto (render_res decides the render size) or one of NVIDIA's modes,
+/// which set the render size from dlss_output (scripts/patches.py render_plan; at start).
+inline constexpr const char* DlssQualityNames[] = {"auto", "dlaa", "quality", "balanced",
+                                                   "performance", "ultra_performance"};
+inline constexpr int DlssQualityCount = 6;
+/// bbport.ini dlss_output: the picture DLSS outputs with a quality mode (1080p or 4K).
+inline constexpr int DlssOutputHeights[] = {1080, 2160};
+/// bbport.ini dlss_model: transformer (NVIDIA's default presets K/L/M) or cnn (preset E).
+inline constexpr const char* DlssModelNames[] = {"transformer", "cnn"};
 
 struct Values {
     std::array<std::array<char, 64>, ControllerPorts> ports{}; ///< guarded by PortsMutex()
@@ -108,10 +120,15 @@ struct Values {
     std::atomic<bool> game_patches[GamePatchCount]{}; ///< SacredFire: see GamePatches
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> render_res{-1}; ///< index into RenderResHeights, -1 when not set
-    std::atomic<bool> fsr1{true}; ///< SacredFire: FSR 1 for the game's scene-to-display stretch
-    /// SacredFire: temporal upscaling/AA of the finished frame (vk_ctr_fsr3; experimental):
-    /// TemporalOff, TemporalFsr3 or TemporalDlss (FSR 3 where DLSS cannot run).
-    std::atomic<int> temporal{0};
+    /// SacredFire: the upscaler (Temporal: off, FSR 1, FSR 3, DLSS).
+    std::atomic<int> temporal{TemporalFsr1};
+    std::atomic<int> dlss_quality{0}; ///< index into DlssQualityNames (at start)
+    std::atomic<int> dlss_output{0};  ///< index into DlssOutputHeights (at start)
+    std::atomic<int> dlss_model{0};   ///< index into DlssModelNames (live)
+    // Older keys while loading (fsr1=, fsr3= before temporal=).
+    bool temporal_seen = false;
+    int legacy_fsr1 = -1;
+    bool legacy_fsr3 = false;
     std::atomic<float> fsr3_sharpness{0.3f}; ///< FSR 3's RCAS, 0 off .. 1
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
@@ -129,9 +146,14 @@ struct Values {
     bool startup_game_patches[GamePatchCount]{};
     int startup_model_lod = 0;
     int startup_render_res = -1;
+    int startup_temporal = TemporalFsr1, startup_dlss_quality = 0, startup_dlss_output = 0;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
 };
+
+/// SacredFire: whether the render size the settings ask for differs from the one the game
+/// started with (render_res, or a DLSS quality mode and output): a restart applies it.
+bool RenderSizeNeedsRestart();
 
 Values& Get();
 std::mutex& PortsMutex();
