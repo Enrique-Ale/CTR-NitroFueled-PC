@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """The game files this port runs, keyed on the executable's loaded image.
 
-Profile: Crash Team Racing Nitro-Fueled CUSA13795 with the 1.21 update merged in (the patches in
-patches/CrashTeamRacing.xml use that executable's addresses). The check compares the loaded
-executable image, whose hash is the same whatever tool dumped it (the SELF headers around it
-differ). BB_SKIP_GAME_CHECK=1 skips it. bbport's Bloodborne profile was removed on 2026-10-09.
+Profile: Crash Team Racing Nitro-Fueled CUSA13795 with the 1.21 update merged in. The check
+compares the loaded executable image, whose hash is the same whatever tool dumped it (the SELF
+headers around it differ). BB_SKIP_GAME_CHECK=1 skips it. bbport's Bloodborne profile was removed
+on 2026-10-09.
+
+Two builds of the 1.21 update exist: the one rebuilt for firmware 5.05 (sdk_ver=05050000 in
+param.sfo; the image in SUPPORTED, which the port was developed on) and the original one for
+firmware 6.72+. Same game, different executable. A 1.21 executable that is not a known old one is
+accepted as `variant='6.72+'`: patches.py finds its patch sites by signature instead of address,
+and the log says it is the less-tested build.
 """
 import hashlib
 import os
@@ -20,6 +26,11 @@ SUPPORTED = {
         modules=('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'), patches=True),
 }
 BY_TITLE = {p['title']: p for p in SUPPORTED.values()}
+# Images that are known NOT to be 1.21: the base game's executable (1.00). With a 1.21 param.sfo
+# these mean the update's eboot.bin was not copied in.
+OLD_IMAGES = {
+    'a9cdc80f2170624e08bdddab128fc9cdaf5c71aa90c00fc669d830e366ba6833': '01.00',
+}
 SUPPORTED_TITLE = 'CUSA13795'
 SUPPORTED_VERSION = '01.21'
 SUPPORTED_IMAGE = '2f2115893ac6656925d20a0221f118cff398fbd754cb9c10154451411dbcf8e6'
@@ -40,17 +51,30 @@ def profile(game, image_hash=None):
     """The profile dict for a supported game folder, else None (BB_SKIP_GAME_CHECK=1: a profile
     guessed from param.sfo's TITLE_ID when one exists, so run.sh can still branch)."""
     try:
-        found = SUPPORTED.get(image_hash or image_sha256(game))
+        image_hash = image_hash or image_sha256(game)
     except (OSError, ValueError, IndexError, StopIteration, KeyError):
-        found = None
-    if found or os.environ.get('BB_SKIP_GAME_CHECK') != '1':
-        return found
+        image_hash = None
+    if image_hash in SUPPORTED:
+        return dict(SUPPORTED[image_hash], variant='5.05')
+    if image_hash and problem(game, image_hash) is None and os.environ.get('BB_SKIP_GAME_CHECK') != '1':
+        info = sfo_info(game)
+        return dict(BY_TITLE[info['TITLE_ID']], variant='6.72+')
+    if os.environ.get('BB_SKIP_GAME_CHECK') != '1':
+        return None
     from prepare import sfo
     try:
         info = sfo((Path(game) / 'sce_sys/param.sfo').read_bytes())
     except (OSError, ValueError, IndexError):
         return None
     return BY_TITLE.get(info.get('TITLE_ID'))
+
+
+def sfo_info(game):
+    from prepare import sfo
+    try:
+        return sfo((Path(game) / 'sce_sys/param.sfo').read_bytes())
+    except (OSError, ValueError, IndexError):
+        return {}
 
 
 def problem(game, image_hash=None):
@@ -66,15 +90,18 @@ def problem(game, image_hash=None):
         info = {}
     title, version = info.get('TITLE_ID', '?'), info.get('APP_VER', '?')
     try:
-        if (image_hash or image_sha256(game)) in SUPPORTED:
-            return None
+        image_hash = image_hash or image_sha256(game)
     except (OSError, ValueError, IndexError, StopIteration, KeyError):
         return 'unreadable', title, version
+    if image_hash in SUPPORTED:
+        return None
     if title not in BY_TITLE:
         return 'other_title', title, version
     if version != BY_TITLE[title]['version']:
         return 'missing_update', title, version
-    return 'wrong_eboot', title, version
+    if image_hash in OLD_IMAGES:
+        return 'wrong_eboot', title, version
+    return None  # another 1.21 build (6.72+): accepted, see the module docstring
 
 
 def explain(kind, title, version):
@@ -102,3 +129,4 @@ if __name__ == '__main__':
         sys.exit('Unsupported game files: ' + explain(*found))
     p = profile(game)
     print(p['name'] if p else 'unknown')
+

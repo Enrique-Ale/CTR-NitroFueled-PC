@@ -270,6 +270,11 @@ def prepare(game, out):
                   status='Prepared only; execution and Vulkan are tested separately.')
     (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(f"{report['sfo'].get('TITLE')} | entry={header[4]:#x} | image={size:,} bytes")
+    if game_profile and game_profile.get('variant'):
+        sdk = next((f.split('=', 1)[1] for f in str(report['sfo'].get('PUBTOOLINFO', '')).split(',')
+                    if f.startswith('sdk_ver=')), '?')
+        print(f"Update build: {game_profile['version']} for firmware {game_profile['variant']} (param.sfo sdk_ver={sdk})"
+              + ('' if game_profile['variant'] == '5.05' else '; patch sites are found by signature'))
     print(f"{len(names)} imported symbols; {sum(counts.values()):,} relocations; {len(report['needed'])} required modules")
     if missing:
         print(f"Unavailable non-loadable metadata headers: {missing}; not a byte-exact ELF reconstruction")
