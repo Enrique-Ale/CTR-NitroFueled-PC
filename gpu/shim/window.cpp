@@ -69,6 +69,16 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     const SDL_DisplayID display = ChooseDisplay();
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(display));
+    // SacredFire: the window starts at the display buffer's size (3840x2160 with a 4K internal
+    // resolution). Larger than the screen, the window mode had its borders off screen and looked
+    // like fullscreen: the windowed size is kept within 80% of the display's usable area.
+    SDL_Rect usable{};
+    if (SDL_GetDisplayUsableBounds(display, &usable) && usable.w > 0 && usable.h > 0 &&
+        (width_ > usable.w * 9 / 10 || height_ > usable.h * 9 / 10)) {
+        const double scale = std::min(usable.w * 0.8 / width_, usable.h * 0.8 / height_);
+        width_ = std::max(640, int(width_ * scale));
+        height_ = std::max(360, int(height_ * scale));
+    }
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
