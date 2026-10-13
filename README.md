@@ -15,7 +15,7 @@ of it: see [packaging/windows/README.md](packaging/windows/README.md).
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
 > Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
-> 6.72+ (experimental since v0.2.1: if it fails, open an issue with your `last_run.log`).
+> 6.72+ (since v0.2.1).
 > Not affiliated with or endorsed by Sony Interactive Entertainment, Activision or Beenox.
 > *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their owners, named
 > here only to identify the game this software runs.
@@ -30,7 +30,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature; experimental); keyboard page in the launcher to rebind keys |
+| [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
 
@@ -88,7 +88,7 @@ Developed and tested on a Steam Deck.
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
 > Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
-> 6.72+ (experimental since v0.2.1: if it fails, open an issue with your `last_run.log`).
+> 6.72+ (since v0.2.1).
 > This project is not affiliated with or endorsed by Sony Interactive Entertainment, Activision
 > or Beenox. *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their
 > owners, named here only to identify the game this software runs.
