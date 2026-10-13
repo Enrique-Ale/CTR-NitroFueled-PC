@@ -3389,6 +3389,21 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     }();
     if (std::popcount(key.mrt_mask & 0x7f) >= gbuffer_mrt && db_desc.first &&
         scene_targets->EligibleScene(texture_cache.GetImage(db_desc.first))) scene_started = true;
+    // BB_SCENE_DEBUG frame: why a multi-target pass does or does not start the scene.
+    if (scene_debug_frame && !scene_started && std::popcount(key.mrt_mask & 0x7f) >= 3) {
+        std::string depth = "none";
+        if (db_desc.first) {
+            const auto& d = texture_cache.GetImage(db_desc.first);
+            depth = fmt::format("{} {}x{} levels {} block {} eligible {} scene {}",
+                                vk::to_string(d.backing ? d.backing->image.image_ci.format
+                                                        : vk::Format::eUndefined),
+                                d.info.size.width, d.info.size.height, d.info.resources.levels,
+                                u32(d.info.props.is_block), scene_targets->Eligible(d),
+                                scene_targets->EligibleScene(d));
+        }
+        std::printf("Scene start check: mrt %#x (%d targets, need %d) depth [%s]\n",
+                    key.mrt_mask, std::popcount(key.mrt_mask & 0x7f), gbuffer_mrt, depth.c_str());
+    }
     // A proxy attachment cannot represent MSAA or a feedback loop that reads the
     // same image through the guest's native descriptor during this draw.
     bool reduced = scene_started && upscaler->RasterScaling() && key.num_samples == 1;
