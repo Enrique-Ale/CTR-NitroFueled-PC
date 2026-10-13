@@ -85,6 +85,7 @@ private:
     bool failed = false;
     bool announced = false;
     VideoCore::ImageId scene_depth{}, velocity{};
+    u64 scene_depth_uid = 0, velocity_uid = 0;
     bool scene_this_frame = false;
     bool camera_this_frame = false;
     std::array<float, 132> camera{};

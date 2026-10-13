@@ -210,6 +210,10 @@ void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocit
                             const Viewport& viewport_) {
     scene_depth = depth;
     velocity = velocity_;
+    // The texture cache may delete either before the display pass (loading screens reuse their
+    // memory): the ids are only trusted with these uids.
+    scene_depth_uid = texture_cache.GetImage(depth).image_uid;
+    velocity_uid = texture_cache.GetImage(velocity_).image_uid;
     viewport = viewport_;
     scene_this_frame = true;
 }
@@ -484,9 +488,17 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         Skip("no 3D scene this frame");
         return {};
     }
+    VideoCore::Image* depth_ptr = texture_cache.TryGetImage(scene_depth, scene_depth_uid);
+    VideoCore::Image* vel_ptr = texture_cache.TryGetImage(velocity, velocity_uid);
+    constexpr auto registered = VideoCore::ImageFlagBits::Registered;
+    if (!depth_ptr || !vel_ptr || False(depth_ptr->flags & registered) ||
+        False(vel_ptr->flags & registered)) {
+        Skip("the G-buffer was released");
+        return {};
+    }
     auto& source = texture_cache.GetImage(source_id);
-    auto& depth = texture_cache.GetImage(scene_depth);
-    auto& vel = texture_cache.GetImage(velocity);
+    auto& depth = *depth_ptr;
+    auto& vel = *vel_ptr;
     const u32 w = source.info.size.width, h = source.info.size.height;
     // The finished frame, the depth and the velocity share the render size; FSR 3 does not
     // downscale.

@@ -74,6 +74,8 @@ void main() {
         // the screen, which is closer than the world's motion behind it.
         motion = vec2(0.0);
     }
+    // No infinities or NaNs into FSR 3 (sky, odd cameras in menus).
+    motion = any(isnan(motion)) ? vec2(0.0) : clamp(motion, vec2(-2048.0), vec2(2048.0));
     imageStore(motion_img, pixel, vec4(motion, 0.0, 0.0));
 
     if ((params.flags & 0x100u) == 0u) {
