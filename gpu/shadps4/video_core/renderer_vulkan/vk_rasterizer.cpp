@@ -4395,7 +4395,7 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
         return fsr_view;
     }
     fsr_done = true;
-    fsr_view = {};
+    fsr_view = vk::ImageView{};
     const auto target = cb_descs[0].first;
     if (!target) {
         return {};
