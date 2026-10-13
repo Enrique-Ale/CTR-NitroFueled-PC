@@ -60,3 +60,12 @@ default is set at 0x1fbb938: `movl $0x3c000000,-0x38(%rbp)`, 960 MiB). The size 
 with movslq, so it must stay below 0x80000000. Native 4K with 2x MSAA did not fit in 960 MiB;
 0x70000000 (1792 MiB, byte 0x70 at 0x1fbb93e) does. More direct memory than the Pro's 5568 MiB
 is given with BB_DMEM_MB.
+
+## Internal resolution setting (render_res)
+
+bbport.ini `render_res` (launcher: Settings > Display > Internal resolution; in-game menu:
+Internal resolution + Apply and restart) picks 480, 720, 1080, 1440, 1620 or 2160. Above 1080 it
+runs the Pro path with the scales above and a 4K output; 720 and 480 use scales 2/3 and 4/9 and
+also drop the Pro path's output doubling (`add %ecx,%ecx` at 0x17aa648 and `add %r8d,%r8d` at
+0x17aa658 become NOPs), so the picture stays 1920x1080. All six tested on an RTX 3070
+(2026-10-12). The game sizes its targets at start, so a change needs a restart (the menu does it).
