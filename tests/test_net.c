@@ -30,6 +30,8 @@ static PsSockaddrIn guest_addr(const char *ip, uint16_t port) {
 
 /* A one-request HTTP server: answers chunked, keeps what it received. */
 static char http_seen[4096];
+static const char *http_reply="HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
+                              "5\r\n{\"ok\"\r\n6\r\n:true}\r\n0\r\n\r\n";
 static void *http_server(void *arg) {
     NativeSocket listener=*(NativeSocket *)arg;
     NativeSocket c=accept(listener,NULL,NULL);
@@ -39,11 +41,10 @@ static void *http_server(void *arg) {
         if (k<=0) break;
         got+=(size_t)k; http_seen[got]=0;
         const char *end=strstr(http_seen,"\r\n\r\n");
-        if (end && strstr(http_seen,"\r\n\r\nping")) break;
+        if (end && (strstr(http_seen,"\r\n\r\nping") || !strstr(http_seen,"Content-Length"))) break;
     }
-    const char reply[]="HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"
-                       "5\r\n{\"ok\"\r\n6\r\n:true}\r\n0\r\n\r\n";
-    send(c,reply,(int)strlen(reply),0);
+    memset(http_seen+got,0,sizeof http_seen-got);
+    send(c,http_reply,(int)strlen(http_reply),0);
     native_close(c);
     return NULL;
 }
@@ -168,6 +169,30 @@ int main(int argc,char **argv) {
     uint64_t need=0;
     assert(!http_uri_escape(escaped,&need,sizeof escaped,"a b/c") && !strcmp(escaped,"a%20b%2Fc") && need==10);
     assert(!http_delete(req) && !http_delete(conn) && !http_delete(tmpl));
+
+    /* NpWebApi: PSN services as HTTPS to the private server; errors as 0x82f00000 | status. */
+    http_reply="HTTP/1.1 404 Not Found\r\nX-Np-Error: 1\r\nContent-Length: 13\r\n\r\n{\"error\":404}";
+    pthread_create(&server,NULL,http_server,&http_listener);
+    const int lib=webapi_init(1,0);
+    const int user_ctx=webapi_create_context_a(lib,1);
+    assert(user_ctx>0 && webapi_create_context_a(lib,2)==WEBAPI_NOT_SIGNED_IN);
+    int64_t web=0;
+    assert(!webapi_create_request(user_ctx,"userProfile","/v1/users/me/friendList",0,NULL,&web) && web>0);
+    assert(!webapi_add_header(web,"Accept-Language","es"));
+    char error[64];
+    WebApiResponseInfo info={0,error,sizeof error,0};
+    assert(webapi_send2(web,NULL,0,&info)==(int32_t)0x82f00194);
+    pthread_join(server,NULL);
+    assert(strstr(http_seen,"GET /v1/users/me/friendList HTTP/1.1\r\nHost: userProfile.np.community.playstation.net\r\n"));
+    assert(strstr(http_seen,"Accept-Language: es\r\n"));
+    assert(info.status==404 && info.data_size==13 && !strcmp(error,"{\"error\":404}"));
+    uint64_t header_length=0;
+    char header_value[8];
+    assert(!webapi_header_length(web,"X-Np-Error",&header_length) && header_length==1);
+    assert(!webapi_header_value(web,"x-np-error",header_value,sizeof header_value) && !strcmp(header_value,"1"));
+    assert(!webapi_delete_request(web) && webapi_delete_request(web)==WEBAPI_REQUEST_NOT_FOUND);
+    NpId parsed;
+    assert(!webapi_parse_npid("U2VyZ2lvQGIxLmV1",&parsed) && !strcmp(parsed.handle.data,"Sergio")); /* Sergio@b1.eu */
     native_close(http_listener);
 
     /* NetCtl and PSN: connected, user 1 signed in, each callback told once. */

@@ -46,7 +46,28 @@ player names, and it is **off by default**.
   Plus granted, no parental restrictions, state callbacks told "signed in" once; authorization
   codes `SACREDFIRE-<online id>-<account>` (issuer 256) and ID tokens
   `sacredfire.<online id>.<account>`, with the client id and scope the game asks for logged.
-- NpWebApi, NpMatching2, NpSignaling, NpScore keep the offline answers for now.
+- **NpWebApi** (NpToolkit2 calls it once signed in: friends, profiles, sessions): a request to
+  API group G and path P is `https://G.np.community.playstation.net/P`, sent like any other
+  HTTPS request to the private server (Sony is never contacted); replies of 400 and above
+  become `0x82f00000 | status` with the error body in the response information, as on the
+  console.
+- NpMatching2, NpSignaling, NpScore keep the offline answers for now.
+
+## First run (2026-10-13, discovery server on 127.0.0.1)
+
+- UDP socket bound to port 3074; `stun.us.demonware.net` resolved (NAT discovery).
+- SSDP to 239.255.255.250:1900 (UPnP, "DemonwarePortMapping"): refused, as everything outside
+  the private server.
+- NpToolkit2, once signed in, called `sceNpWebApiCreateContextA` (not implemented then: the
+  game stopped; implemented since).
+- PSN ID token asked for client `94b26225-0bc0-4d10-a8a8-0e4d94381dfc`, scope
+  `openid,openid:duid`.
+- **Demonware authentication** (bdHTTPPS4 thread): `POST
+  https://lavender-ps4-auth3.prod.demonware.net:443/auth/`, `User-Agent: SCE-PS4`,
+  `Content-Type: application/json`, `X-TransactionID`, body
+  `{"auth_task":"46","iv_seed":"...","title_id":"5760","identity":"...","extra_data":"{\"version\":\"0\",\"token\":\"{\\\"scope\\\":\\\"openid,openid:duid\\\",\\\"id_token\\\":\\\"<PSN ID token>\\\"}\",\"extended_data\":true}"}`.
+  Demonware's title id for CTR is 5760; the PSN ID token is what the official server checked
+  with Sony, so a private server accepts whatever it likes.
 
 The game's strings for Demonware are obfuscated in the eboot (a scan finds only the UPnP
 template "DemonwarePortMapping"), so its hosts, ports and messages are learned at run time.

@@ -1298,6 +1298,133 @@ static ABI int32_t http_wait(void *handle,HttpEvent *events,int32_t max,int64_t 
 }
 static ABI int32_t http_abort(int id) { return http_get(id) ? 0 : HTTP_INVALID_ID; }
 
+/* ---- libSceNpWebApi: PSN's web services (friends, profiles, sessions), which NpToolkit2 uses
+ * once the user is signed in. A request to API group G and path P is the HTTPS request
+ * https://G.np.community.playstation.net/P, sent like any other to the private server (Sony is
+ * never contacted); replies of 400 and above become 0x82f00000 | status, as on the console. ---- */
+#define WEBAPI_INVALID_ARGUMENT ((int32_t)0x80552902)
+#define WEBAPI_NOT_SIGNED_IN ((int32_t)0x80552907)
+#define WEBAPI_REQUEST_NOT_FOUND ((int32_t)0x80552906)
+static int webapi_next_id=1;
+static int webapi_template;
+static int webapi_id(void) { pthread_mutex_lock(&net_lock); const int id=webapi_next_id++; pthread_mutex_unlock(&net_lock); return id; }
+static ABI int32_t webapi_init(int http_ctx,uint64_t pool) { (void)http_ctx; (void)pool; return webapi_id(); }
+static ABI int32_t webapi_create_context_a(int lib,int32_t user) {
+    (void)lib;
+    if (!user_signed_in(user)) return WEBAPI_NOT_SIGNED_IN;
+    return 0x1000+webapi_id();
+}
+typedef struct { uint64_t length; const char *type; uint8_t reserved[16]; } WebApiContent;
+static ABI int32_t webapi_create_request(int ctx,const char *group,const char *path,int32_t method,const WebApiContent *content,int64_t *id) {
+    (void)ctx;
+    static const char *const methods[]={"GET","POST","PUT","DELETE","PATCH"};
+    if (!group || !path || !id || method<0 || method>4) return WEBAPI_INVALID_ARGUMENT;
+    if (!http_get(webapi_template)) webapi_template=http_template(1,"libsceNpWebApi",1,0);
+    char url[1024];
+    snprintf(url,sizeof url,"https://%s.np.community.playstation.net%s%s",group,path[0]=='/' ? "" : "/",path);
+    const int conn=http_connection(webapi_template,url,1);
+    if (conn<0) return conn;
+    const int req=http_request_new(conn,methods[method],url);
+    if (req<0) { http_delete(conn); return req; }
+    if (content && content->type) http_add_header(req,"Content-Type",content->type,0);
+    *id=req;
+    return 0;
+}
+static HttpObj *webapi_request(int64_t id) { HttpObj *h=id>0 && id<MAX_HTTP ? http_get((int)id) : NULL; return h && h->kind==3 ? h : NULL; }
+static ABI int32_t webapi_add_header(int64_t id,const char *name,const char *value) {
+    if (!name || !value) return WEBAPI_INVALID_ARGUMENT;
+    return webapi_request(id) ? http_add_header((int)id,name,value,0) : WEBAPI_REQUEST_NOT_FOUND;
+}
+typedef struct { int32_t status; char *error; uint64_t error_size; uint64_t data_size; } WebApiResponseInfo;
+static ABI int32_t webapi_send2(int64_t id,const void *data,uint64_t size,WebApiResponseInfo *info) {
+    HttpObj *h=webapi_request(id);
+    if (!h) return WEBAPI_REQUEST_NOT_FOUND;
+    const int32_t sent=http_send((int)id,data,size);
+    if (sent) return sent;
+    if (info) info->status=h->status;
+    if (h->status<400) return 0;
+    if (info) {
+        info->data_size=h->body_size;
+        if (info->error && info->error_size) {
+            const size_t n=h->body_size<info->error_size-1 ? h->body_size : (size_t)info->error_size-1;
+            memcpy(info->error,h->body,n); info->error[n]=0;
+        }
+    }
+    h->body_read=h->body_size;
+    return (int32_t)(0x82f00000u | (uint32_t)h->status);
+}
+static ABI int32_t webapi_send(int64_t id,const void *data,uint64_t size) { return webapi_send2(id,data,size,NULL); }
+static ABI int32_t webapi_read(int64_t id,void *data,uint64_t size) {
+    if (!data || !size) return WEBAPI_INVALID_ARGUMENT;
+    return webapi_request(id) ? http_read((int)id,data,size) : WEBAPI_REQUEST_NOT_FOUND;
+}
+static ABI int32_t webapi_status(int64_t id,int32_t *status) {
+    if (!status) return WEBAPI_INVALID_ARGUMENT;
+    return webapi_request(id) ? http_status((int)id,status) : WEBAPI_REQUEST_NOT_FOUND;
+}
+static int32_t webapi_header(int64_t id,const char *name,char *value,uint64_t size,uint64_t *length) {
+    HttpObj *h=webapi_request(id);
+    if (!h) return WEBAPI_REQUEST_NOT_FOUND;
+    if (!name) return WEBAPI_INVALID_ARGUMENT;
+    if (!h->sent) return HTTP_BEFORE_SEND;
+    const char *found;
+    uint64_t found_size;
+    const int32_t r=http_parse_header(h->response_headers,h->response_headers_size,name,&found,&found_size);
+    if (r) return r;
+    if (length) *length=found_size;
+    if (value) {
+        if (size<=found_size) return (int32_t)0x80552901; /* buffer too small */
+        memcpy(value,found,found_size); value[found_size]=0;
+    }
+    return 0;
+}
+static ABI int32_t webapi_header_length(int64_t id,const char *name,uint64_t *length) {
+    if (!length) return WEBAPI_INVALID_ARGUMENT;
+    return webapi_header(id,name,NULL,0,length);
+}
+static ABI int32_t webapi_header_value(int64_t id,const char *name,char *value,uint64_t size) {
+    if (!value || !size) return WEBAPI_INVALID_ARGUMENT;
+    return webapi_header(id,name,value,size,NULL);
+}
+static ABI int32_t webapi_delete_request(int64_t id) {
+    HttpObj *h=webapi_request(id);
+    if (!h) return WEBAPI_REQUEST_NOT_FOUND;
+    const int conn=h->parent;
+    http_delete((int)id); http_delete(conn);
+    return 0;
+}
+static ABI int32_t webapi_abort_request(int64_t id) { return webapi_request(id) ? 0 : WEBAPI_REQUEST_NOT_FOUND; }
+static ABI int32_t webapi_new_id(void) { return webapi_id(); }
+static ABI int32_t webapi_filter(int lib,int handle,const char *service,uint32_t label,const void *param,uint64_t count) {
+    (void)lib; (void)handle; (void)label;
+    if (!param || !count) return WEBAPI_INVALID_ARGUMENT;
+    if (service) printf("Net: PSN: push event filter for service '%s' (no push events from the private server yet)\n",service);
+    return webapi_id();
+}
+static ABI int32_t webapi_register_push(int ctx,int filter,void *cb,void *arg) {
+    (void)ctx; (void)filter; (void)arg;
+    return cb ? webapi_id() : WEBAPI_INVALID_ARGUMENT;
+}
+/* "<online id>@<platform>..." in base64 -> NpId (online id, opt left zero). */
+static ABI int32_t webapi_parse_npid(const char *json,NpId *id) {
+    if (!json || !id) return NP_INVALID_ARGUMENT;
+    static const char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char decoded[64]={0};
+    size_t n=0;
+    uint32_t bits=0;
+    int count=0;
+    for (const char *p=json; *p && *p!='"' && n<sizeof decoded-1; ++p) {
+        const char *at=strchr(alphabet,*p);
+        if (!at || !*p) continue;
+        bits=bits<<6 | (uint32_t)(at-alphabet);
+        if ((count+=6)>=8) { count-=8; decoded[n++]=(char)(bits>>count & 0xff); }
+    }
+    memset(id,0,sizeof *id);
+    const size_t handle=strcspn(decoded,"@");
+    memcpy(id->handle.data,decoded,handle<16 ? handle : 16);
+    return 0;
+}
+
 static const RuntimeExport exports[]={
     {"sceNetInit",net_init}, {"sceNetTerm",net_term}, {"sceNetErrnoLoc",net_errno_loc},
     {"sceNetPoolCreate",net_pool_create}, {"sceNetPoolDestroy",net_pool_destroy},
@@ -1349,6 +1476,20 @@ static const RuntimeExport exports[]={
     {"sceNpAuthDeleteRequest",np_delete_request}, {"sceNpAuthAbortRequest",np_abort_request},
     {"sceNpAuthPollAsync",np_poll},
     {"sceNpAuthGetAuthorizationCodeA",np_auth_code_a}, {"sceNpAuthGetIdTokenA",np_id_token_a},
+    {"sceNpWebApiInitialize",webapi_init}, {"sceNpWebApiTerminate",ok_void},
+    {"sceNpWebApiGetMemoryPoolStats",http_pool_stats},
+    {"sceNpWebApiCreateContextA",webapi_create_context_a}, {"sceNpWebApiDeleteContext",ok_void},
+    {"sceNpWebApiCreateHandle",webapi_new_id}, {"sceNpWebApiDeleteHandle",ok_void},
+    {"sceNpWebApiCreateRequest",webapi_create_request}, {"sceNpWebApiDeleteRequest",webapi_delete_request},
+    {"sceNpWebApiAbortRequest",webapi_abort_request}, {"sceNpWebApiAddHttpRequestHeader",webapi_add_header},
+    {"sceNpWebApiSendRequest",webapi_send}, {"sceNpWebApiSendRequest2",webapi_send2},
+    {"sceNpWebApiReadData",webapi_read}, {"sceNpWebApiGetHttpStatusCode",webapi_status},
+    {"sceNpWebApiGetHttpResponseHeaderValueLength",webapi_header_length},
+    {"sceNpWebApiGetHttpResponseHeaderValue",webapi_header_value},
+    {"sceNpWebApiCreateExtdPushEventFilter",webapi_filter}, {"sceNpWebApiDeleteExtdPushEventFilter",ok_void},
+    {"sceNpWebApiRegisterExtdPushEventCallbackA",webapi_register_push},
+    {"sceNpWebApiUnregisterExtdPushEventCallback",ok_void},
+    {"sceNpWebApiUtilityParseNpId",webapi_parse_npid},
 };
 /* Online: these contracts replace runtime_services.c's offline ones. Offline: nothing here. */
 uintptr_t runtime_net_resolve(const char *name) {
