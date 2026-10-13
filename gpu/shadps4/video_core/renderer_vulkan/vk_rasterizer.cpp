@@ -3380,7 +3380,14 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     std::pair<vk::ImageView, vk::ImageLayout> original_color{};
     const auto& regs = Regs();
     const auto& key = pipeline->GetGraphicsKey();
-    if (std::popcount(key.mrt_mask & 0x7f) >= 5 && db_desc.first &&
+    // The G-buffer pass starts the scene: 5+ color targets in Bloodborne, 4 in CTR
+    // (BB_GBUFFER_MRT, run.py sets it from the game profile).
+    static const int gbuffer_mrt = [] {
+        const char* env = std::getenv("BB_GBUFFER_MRT");
+        const int n = env ? std::atoi(env) : 5;
+        return n >= 1 && n <= 8 ? n : 5;
+    }();
+    if (std::popcount(key.mrt_mask & 0x7f) >= gbuffer_mrt && db_desc.first &&
         scene_targets->EligibleScene(texture_cache.GetImage(db_desc.first))) scene_started = true;
     // A proxy attachment cannot represent MSAA or a feedback loop that reads the
     // same image through the guest's native descriptor during this draw.
