@@ -1480,6 +1480,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         NoteFrameStart();
         static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
         scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
+        if (scene_debug_frame) {
+            std::printf("Scene debug: frame armed\n");
+            std::fflush(stdout);
+        }
         scene_targets->debug = scene_debug_frame;
     }
     bind_prepared = used_prepared;
@@ -3390,7 +3394,10 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     if (std::popcount(key.mrt_mask & 0x7f) >= gbuffer_mrt && db_desc.first &&
         scene_targets->EligibleScene(texture_cache.GetImage(db_desc.first))) scene_started = true;
     // BB_SCENE_DEBUG frame: why a multi-target pass does or does not start the scene.
-    if (scene_debug_frame && !scene_started && std::popcount(key.mrt_mask & 0x7f) >= 3) {
+    static int start_checks_left = 6; // the first multi-target passes, then debug frames only
+    if ((scene_debug_frame || start_checks_left > 0) &&
+        std::popcount(key.mrt_mask & 0x7f) >= 3) {
+        if (start_checks_left > 0) --start_checks_left;
         std::string depth = "none";
         if (db_desc.first) {
             const auto& d = texture_cache.GetImage(db_desc.first);
@@ -3401,8 +3408,12 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                                 u32(d.info.props.is_block), scene_targets->Eligible(d),
                                 scene_targets->EligibleScene(d));
         }
-        std::printf("Scene start check: mrt %#x (%d targets, need %d) depth [%s]\n",
-                    key.mrt_mask, std::popcount(key.mrt_mask & 0x7f), gbuffer_mrt, depth.c_str());
+        std::printf("Scene start check: mrt %#x (%d targets, need %d) started %d size %ux%u "
+                    "depth [%s]\n",
+                    key.mrt_mask, std::popcount(key.mrt_mask & 0x7f), gbuffer_mrt,
+                    int(scene_started), scene_targets->Size().width,
+                    scene_targets->Size().height, depth.c_str());
+        std::fflush(stdout);
     }
     // A proxy attachment cannot represent MSAA or a feedback loop that reads the
     // same image through the guest's native descriptor during this draw.
