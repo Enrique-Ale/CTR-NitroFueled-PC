@@ -111,7 +111,8 @@ def apply_render_res(env, config):
             env['BB_DMEM_MB'] = '7168'
         say(f'Internal resolution: {res}p (PS4 Pro rendering path)')
     elif res == '1080':
-        say('Internal resolution: 1080p')
+        env['BB_NEO'] = '0'
+        say('Internal resolution: 1080p (base PS4 rendering path)')
 
 
 def pump(stream):

@@ -36,7 +36,7 @@ GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
 
 # bbport.ini render_res: the scene size the game renders in PS4 Pro mode (run.py turns the Pro
 # mode on for these), via the game's own render scale (docs/sacredfire/13-resolution.md).
-# 1080: the community 1080p Pro patch (as before v0.3). 1440: the Pro's own scale. Others: the
+# 1080: the base PS4 path. 1440: the Pro's own scale. Others: the
 # scale read at 0x17aa662 is replaced by a constant; 2160 also needs a larger GPU heap.
 RENDER_RESOLUTIONS=('480','720','1080','1440','1620','2160')
 RENDER_SCALE_SIGNATURE='41 8b 44 24 48 41 89 86 48 05 00 00'  # mov 0x48(%r12),%eax; mov %eax,0x548(%r14)
@@ -178,8 +178,9 @@ def external_selection(found, config, ini=None):
         if (ini or {}).get(key)=='1': enabled.add(patch); disabled.discard(patch)
     # The 1080p Pro patch follows render_res (Settings > Internal resolution, the in-game menu).
     pro_1080p=GAME_PATCH_KEYS['patch_pro_1080p']
-    if render_res(ini)=='1080': enabled.add(pro_1080p); disabled.discard(pro_1080p)
-    elif render_res(ini): enabled.discard(pro_1080p); disabled.add(pro_1080p)
+    # With render_res the Pro mode follows it (run.py): 1080p runs the base PS4 path, so the
+    # 1080p Pro patch is never needed (on the base path its flipped branch would take the Pro one).
+    if render_res(ini): enabled.discard(pro_1080p); disabled.add(pro_1080p)
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 

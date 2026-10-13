@@ -130,7 +130,7 @@ class RenderResTests(unittest.TestCase):
         found = external_patches(ROOT / 'patches')
         pro = GAME_PATCH_KEYS['patch_pro_1080p']
         keys = lambda ini: [k for k, _, _ in external_selection(found, None, ini)]
-        self.assertIn(pro, keys({'render_res': '1080'}))
+        self.assertNotIn(pro, keys({'render_res': '1080', 'patch_pro_1080p': '1'}))
         self.assertNotIn(pro, keys({'render_res': '2160', 'patch_pro_1080p': '1'}))
         self.assertIn(pro, keys({'patch_pro_1080p': '1'}))  # older settings without render_res
 

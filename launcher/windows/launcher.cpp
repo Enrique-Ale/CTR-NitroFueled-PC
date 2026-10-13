@@ -688,7 +688,7 @@ void StartGame() {
         a.last_status.clear();
     }
     SetEnv(L"BB_GAME_DIR", PathText(a.game_dir));
-    SetEnv(L"BB_NEO", a.launcher.Flag("neo", false) || EffectiveRenderRes() != "1080" ? "1" : "0");
+    SetEnv(L"BB_NEO", EffectiveRenderRes() != "1080" ? "1" : "0");  // the resolution picks the path
     SetEnv(L"BB_LANGUAGE", a.launcher.Get("language", DefaultGameLanguage()));
     SetEnv(L"BB_DISPLAY", a.launcher.Get("display"));
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
@@ -1424,7 +1424,7 @@ std::string EffectiveRenderRes() {
     const std::string v = g_app.game.Get("render_res");
     for (const auto& r : kRenderRes)
         if (v == r.value) return v;
-    return g_app.launcher.Flag("neo", false) && !g_app.game.Flag("patch_pro_1080p", false) ? "1440" : "1080";
+    return "1080";
 }
 
 void RenderResCombo() {
@@ -1444,7 +1444,7 @@ void RenderResCombo() {
         ImGui::EndCombo();
     }
     HelpMarker(T("El tamaño al que el juego dibuja la escena 3D. Por encima de 1080p usa el modo PS4 Pro del juego "
-                 "(se activa solo) y la imagen sale en 4K: en una pantalla 1080p eso quita los dientes de sierra. "
+                 "y la imagen sale en 4K: en una pantalla 1080p eso quita los dientes de sierra. "
                  "4K necesita una GPU potente (una RTX 3070 va a unos 100 FPS); 720p y 480p alivian PCs modestos "
                  "(la imagen sale a 1080p).",
                  "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path (turned "
@@ -1561,18 +1561,6 @@ void SettingsTab() {
     ImGui::SeparatorText(T("Consola", "Console"));
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
     ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
-    if (EffectiveRenderRes() != "1080") {
-        ImGui::BeginDisabled();
-        bool on = true;
-        ImGui::Checkbox(T("Modo PS4 Pro", "PS4 Pro mode"), &on);
-        ImGui::EndDisabled();
-        HelpMarker(T("Lo activa la resolución interna (por encima de 1080p).",
-                     "Turned on by the internal resolution (above 1080p)."));
-    } else {
-        LauncherFlag("neo", T("Modo PS4 Pro", "PS4 Pro mode"), false,
-                     T("La ruta de render de PS4 Pro del juego (7 núcleos, más memoria). A 1080p usa el parche de 1080p.",
-                       "The game's PS4 Pro path (7 cores, more memory). At 1080p it uses the 1080p patch."));
-    }
 }
 
 void PatchesTab() {
@@ -1596,6 +1584,10 @@ void PatchesTab() {
             on = listed_on || (p.default_on && !listed_off);
         }
         const bool needs_neo = p.ini_key && std::strcmp(p.ini_key, "patch_pro_1080p") == 0;
+        if (needs_neo) {  // replaced by Settings > Internal resolution
+            ImGui::PopID();
+            continue;
+        }
         // render_res decides the 1080p Pro patch (Settings > Internal resolution).
         if (needs_neo) on = EffectiveRenderRes() == "1080" && neo;
         ImGui::BeginDisabled(needs_neo);

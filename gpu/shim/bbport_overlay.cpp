@@ -528,7 +528,7 @@ void Menu() {
     }
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         const auto& patch = BbSettings::GamePatches[g];
-        if (s.render_res >= 0 && std::strcmp(patch.key, "patch_pro_1080p") == 0) continue;
+        if (std::strcmp(patch.key, "patch_pro_1080p") == 0) continue; // see Internal resolution
         const bool before = s.game_patches[g];
         Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
         if (before != s.game_patches[g]) {
