@@ -167,6 +167,8 @@ def main():
     # BB_GAME_DIR: the merged CTR dump (update 1.21 copied over the base game).
     game = Path(env.get('BB_GAME_DIR', PORT / 'orig' / TITLE_ID))
     if not (game / 'eboot.bin').is_file():
+        if (game / 'Image0' / 'eboot.bin').is_file():
+            fail(f'{game} has the PS4 PKG Tool layout (Image0 and Sc0): prepare it in the launcher first.')
         fail(f'No eboot.bin in {game} (set BB_GAME_DIR to your {TITLE_ID} folder).')
     # The game check compares the executable image with the supported one (CTR NF 1.21).
     check = subprocess.run([sys.executable, '-X', 'utf8', str(PORT / 'scripts' / 'game_check.py'), str(game)],

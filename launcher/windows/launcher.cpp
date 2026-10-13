@@ -231,6 +231,7 @@ struct FolderInfo {
     Kind kind = Kind::Empty;
     std::string title, version, category;
     std::uintmax_t bytes = 0;
+    bool split = false;  // Image0 + Sc0 (PS4 PKG Tool): needs preparing before it runs
 };
 
 std::uintmax_t FolderBytes(const fs::path& dir) {
@@ -244,23 +245,60 @@ std::uintmax_t FolderBytes(const fs::path& dir) {
     return total;
 }
 
-// Some dump tools put the game one folder down (Image0\eboot.bin, Image0\sce_sys): a folder
-// without eboot.bin whose only game subfolder (Image0 or another) has one stands for it.
+// Where a dump keeps its files. Most tools give the PS4 layout (eboot.bin and sce_sys\param.sfo
+// side by side); PS4 PKG Tool splits it into Image0\ (eboot.bin, sce_module, the data) and Sc0\
+// (what goes in sce_sys). Such a folder is "split": preparing the game flattens it.
+struct Layout {
+    fs::path files, sys;  // the folder that becomes the game root, the one that becomes sce_sys
+    bool split = false;
+    explicit operator bool() const { return !files.empty(); }
+};
+
+Layout FindLayout(const fs::path& dir) {
+    std::error_code ec;
+    const auto has = [&](const fs::path& p) { return fs::is_regular_file(p, ec); };
+    const bool flat = has(dir / L"eboot.bin") && has(dir / L"sce_sys" / L"param.sfo");
+    const fs::path image = dir / L"Image0";
+    // A folder fixed by hand keeps Image0 next to a copied eboot.bin: it is flat only once
+    // sce_module is in the root too.
+    if (flat && (!has(image / L"eboot.bin") || fs::is_directory(dir / L"sce_module", ec))) return {dir, dir / L"sce_sys", false};
+    if (!has(image / L"eboot.bin")) return {};
+    for (const fs::path& sys : {image / L"sce_sys", dir / L"Sc0", dir / L"sce_sys"}) {
+        if (has(sys / L"param.sfo")) return {image, sys, true};
+    }
+    return {};
+}
+
+// A folder picked one level too high (the folder that holds CUSA13795) stands for its only game.
 fs::path GameRoot(const fs::path& dir) {
     std::error_code ec;
-    const auto is_game = [&](const fs::path& d) {
-        return fs::is_regular_file(d / L"eboot.bin", ec) && fs::is_regular_file(d / L"sce_sys" / L"param.sfo", ec);
-    };
-    if (dir.empty() || is_game(dir)) return dir;
-    if (is_game(dir / L"Image0")) return dir / L"Image0";
+    if (dir.empty() || FindLayout(dir)) return dir;
+    // Image0 itself, picked from a PS4 PKG Tool dump, stands for the dump.
+    if (_wcsicmp(dir.filename().c_str(), L"Image0") == 0 && FindLayout(dir.parent_path())) return dir.parent_path();
     fs::path found;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        if (it->is_directory(ec) && is_game(it->path())) {
+        if (it->is_directory(ec) && FindLayout(it->path())) {
             if (!found.empty()) return dir;  // more than one: the player chooses
             found = it->path();
         }
     }
     return found.empty() ? dir : found;
+}
+
+/// The files of a dump as (source, path in the PS4 layout).
+std::vector<std::pair<fs::path, fs::path>> LayoutFiles(const fs::path& dir, std::error_code& ec) {
+    std::vector<std::pair<fs::path, fs::path>> files;
+    const Layout layout = FindLayout(dir);
+    if (!layout) return files;
+    auto add = [&](const fs::path& from, const fs::path& prefix) {
+        for (fs::recursive_directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+            std::error_code e2;
+            if (it->is_regular_file(e2)) files.emplace_back(it->path(), prefix / fs::relative(it->path(), from, e2));
+        }
+    };
+    add(layout.files, {});
+    if (!ec && layout.split && layout.sys != layout.files / L"sce_sys") add(layout.sys, L"sce_sys");
+    return files;
 }
 
 FolderInfo Analyze(const fs::path& dir) {
@@ -271,11 +309,13 @@ FolderInfo Analyze(const fs::path& dir) {
         info.kind = Kind::Missing;
         return info;
     }
-    if (!fs::is_regular_file(dir / L"eboot.bin", ec) || !fs::is_regular_file(dir / L"sce_sys" / L"param.sfo", ec)) {
+    const Layout layout = FindLayout(dir);
+    if (!layout) {
         info.kind = Kind::NotGame;
         return info;
     }
-    const auto sfo = ReadSfo(dir / L"sce_sys" / L"param.sfo");
+    info.split = layout.split;
+    const auto sfo = ReadSfo(layout.sys / L"param.sfo");
     auto get = [&](const char* k) {
         const auto it = sfo.find(k);
         return it == sfo.end() ? std::string() : it->second;
@@ -290,7 +330,7 @@ FolderInfo Analyze(const fs::path& dir) {
     } else if (info.version != kUpdateVersion) {
         info.kind = Kind::OtherVersion;
     } else {
-        info.bytes = FolderBytes(dir);
+        info.bytes = FolderBytes(layout.split ? layout.files : dir);
         info.kind = info.bytes >= kCompleteGameMinBytes ? Kind::Complete : Kind::Update;
     }
     return info;
@@ -613,6 +653,10 @@ void StartCheck() {
     a.game_ok = false;
     a.check_message.clear();
     if (a.game_info.kind != Kind::Complete || !a.python) return;
+    if (a.game_info.split) {  // Image0 + Sc0: PlayTab offers to prepare it
+        a.game_checked = true;
+        return;
+    }
     JoinWorker();
     a.job = Job::Check;
     a.job_finished = false;
@@ -632,11 +676,22 @@ void StartCheck() {
     });
 }
 
-/// Base game + 1.21 update -> a new folder of hard links (copies across drives).
-void StartMerge() {
+fs::path MergeTarget(const fs::path& near_dir) {
     App& a = g_app;
-    fs::path target = a.base_dir.parent_path() / L"CUSA13795-1.21";
-    if (target == a.base_dir || target == a.update_dir) target = a.base_dir.parent_path() / L"CUSA13795-1.21-merged";
+    const fs::path parent = near_dir.parent_path();
+    fs::path target = parent / L"CUSA13795-1.21";
+    if (target == near_dir || target == a.base_dir || target == a.update_dir || target == a.game_dir) {
+        target = parent / L"CUSA13795-1.21-merged";
+    }
+    return target;
+}
+
+/// Base game + 1.21 update (or one already merged dump in the Image0 + Sc0 layout) -> a new
+/// folder of hard links in the PS4 layout (copies across drives).
+void StartMerge(std::vector<fs::path> sources) {
+    App& a = g_app;
+    if (sources.empty()) return;
+    const fs::path target = MergeTarget(sources.front());
     JoinWorker();
     a.job = Job::Merge;
     a.job_finished = false;
@@ -646,17 +701,14 @@ void StartMerge() {
         std::scoped_lock lock{a.mutex};
         a.job_error.clear();
     }
-    const fs::path base = a.base_dir, update = a.update_dir;
-    a.worker = std::thread([base, update, target] {
+    a.worker = std::thread([sources, target] {
         App& app = g_app;
         std::vector<std::pair<fs::path, fs::path>> files;  // source, relative
         std::error_code ec;
-        for (const fs::path& from : {base, update}) {
-            for (fs::recursive_directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
-                std::error_code e2;
-                if (it->is_regular_file(e2)) files.emplace_back(it->path(), fs::relative(it->path(), from, e2));
-            }
+        for (const fs::path& from : sources) {
+            auto more = LayoutFiles(from, ec);
             if (ec) break;
+            files.insert(files.end(), std::make_move_iterator(more.begin()), std::make_move_iterator(more.end()));
         }
         std::string error;
         if (ec) error = "Cannot read the game folders: " + ec.message();
@@ -866,8 +918,13 @@ void ChooseFolder(fs::path& slot, FolderInfo& info, const wchar_t* title) {
     switch (found.kind) {
     case Kind::Complete:
         a.game_dir = *picked;
+        a.game_info = found;
         SaveLauncher();
-        StartCheck();
+        if (found.split) {
+            StartMerge({*picked});  // Image0 + Sc0 -> the PS4 layout, next to it
+        } else {
+            StartCheck();
+        }
         return;
     case Kind::Base:
         a.base_dir = *picked;
@@ -1227,7 +1284,8 @@ std::string Describe(const FolderInfo& f) {
     switch (f.kind) {
     case Kind::Empty: return T("sin elegir", "not chosen");
     case Kind::Missing: return T("la carpeta no existe", "the folder does not exist");
-    case Kind::NotGame: return T("no tiene eboot.bin y sce_sys\\param.sfo", "no eboot.bin and sce_sys\\param.sfo");
+    case Kind::NotGame:
+        return T("no tiene eboot.bin y sce_sys\\param.sfo (ni Image0 y Sc0)", "no eboot.bin and sce_sys\\param.sfo (nor Image0 and Sc0)");
     case Kind::OtherTitle: return std::string(T("es otro juego o región: ", "another game or region: ")) + f.title;
     case Kind::OtherVersion: return std::string(T("actualización ", "update ")) + f.version + T(" (se necesita la 01.21)", " (01.21 is needed)");
     case Kind::Base: return std::string(T("juego base ", "base game ")) + f.title + " v" + f.version;
@@ -1294,7 +1352,26 @@ void PlayTab() {
                                          "Python 3 is missing: no python\\python.exe and no installed Python."));
     }
     if (a.game_info.kind == Kind::Complete) {
-        if (!a.game_checked) {
+        if (a.job == Job::Merge) {
+            const size_t total = a.merge_total, done = a.merge_done;
+            char overlay[64];
+            std::snprintf(overlay, sizeof overlay, "%zu / %zu", done, total);
+            ImGui::TextColored(kYellow, "%s", T("Preparando el juego...", "Preparing the game..."));
+            ImGui::ProgressBar(total ? float(done) / float(total) : 0.0f, ImVec2(-FLT_MIN, 0), overlay);
+        } else if (a.game_info.split) {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextColored(kYellow, "%s",
+                               T("Esta carpeta tiene el formato de PS4 PKG Tool (Image0 y Sc0). Hay que prepararla: "
+                                 "se crea una carpeta nueva con enlaces duros, sin tocar la tuya.",
+                                 "This folder has the PS4 PKG Tool layout (Image0 and Sc0). It needs preparing: a "
+                                 "new folder of hard links is created, yours is not changed."));
+            ImGui::PopTextWrapPos();
+            ImGui::BeginDisabled(busy);
+            if (ImGui::Button(T("Preparar el juego", "Prepare the game"))) StartMerge({a.game_dir});
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::TextColored(kGrey, "%s %s", T("se crea", "creates"), PathText(MergeTarget(a.game_dir)).c_str());
+        } else if (!a.game_checked) {
             ImGui::TextColored(kYellow, "%s", T("Comprobando el juego...", "Checking the game..."));
         } else if (a.game_ok) {
             ImGui::TextColored(kGreen, "%s %s", T("Listo:", "Ready:"), Describe(a.game_info).c_str());
@@ -1356,12 +1433,14 @@ void PlayTab() {
             ImGui::ProgressBar(fraction, ImVec2(-FLT_MIN, 0), overlay);
         } else {
             ImGui::BeginDisabled(!can_merge || busy);
-            if (ImGui::Button(T("Preparar el juego (base + 1.21)", "Prepare the game (base + 1.21)"))) StartMerge();
+            if (ImGui::Button(T("Preparar el juego (base + 1.21)", "Prepare the game (base + 1.21)"))) {
+                StartMerge({a.base_dir, a.update_dir});
+            }
             ImGui::EndDisabled();
             if (can_merge) {
                 ImGui::SameLine();
                 ImGui::TextColored(kGrey, "%s %s", T("se crea", "creates"),
-                                   PathText(a.base_dir.parent_path() / L"CUSA13795-1.21").c_str());
+                                   PathText(MergeTarget(a.base_dir)).c_str());
             }
             HelpMarker(T("Une la actualización con el juego base en una carpeta nueva usando enlaces duros: no ocupa "
                          "espacio extra ni cambia tus carpetas originales (si están en discos distintos, se copia).",

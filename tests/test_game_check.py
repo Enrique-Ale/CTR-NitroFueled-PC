@@ -87,6 +87,17 @@ class GameCheckTests(unittest.TestCase):
         os.environ['BB_SKIP_GAME_CHECK'] = '1'
         self.assertIsNone(game_check.problem(self.game('CUSA13795', '01.00')))
 
+    def test_pkg_tool_layout_needs_preparing(self):
+        # PS4 PKG Tool: Image0 holds eboot.bin and sce_module, Sc0 the sce_sys files. A copied
+        # eboot.bin and param.sfo alone do not make it runnable (sce_module stays in Image0).
+        game = self.game('CUSA13795', '01.21')
+        (game / 'Image0').mkdir()
+        (game / 'Image0/eboot.bin').write_bytes(fixture())
+        self.assertEqual(game_check.problem(game)[0], 'split_layout')
+        self.assertIn('Image0', game_check.explain('split_layout', '?', '?'))
+        (game / 'sce_module').mkdir()
+        self.assertIsNone(game_check.problem(game))
+
     def test_every_problem_is_explained(self):
         for kind in ('missing_update', 'wrong_eboot', 'other_title', 'unreadable'):
             self.assertIn('CUSA', game_check.explain(kind, 'CUSA13795', '01.00'))

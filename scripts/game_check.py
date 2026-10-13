@@ -77,12 +77,21 @@ def sfo_info(game):
         return {}
 
 
+def split_layout(game):
+    """True for a PS4 PKG Tool dump (the files in Image0, sce_sys in Sc0) that was not flattened,
+    including one fixed by hand only as far as eboot.bin and param.sfo."""
+    game = Path(game)
+    return (game / 'Image0/eboot.bin').is_file() and not (game / 'sce_module').is_dir()
+
+
 def problem(game, image_hash=None):
     """None for a supported game, else (kind, title, version): kind is 'missing_update' (base
     game or an older update), 'wrong_eboot' (param.sfo names the supported update, eboot.bin is
-    another version), 'other_title' (another edition, region or game) or 'unreadable'."""
+    another version), 'split_layout' (Image0 + Sc0 not flattened), 'other_title' (another edition, region or game) or 'unreadable'."""
     if os.environ.get('BB_SKIP_GAME_CHECK') == '1':
         return None
+    if split_layout(game):
+        return 'split_layout', '?', '?'
     from prepare import sfo
     try:
         info = sfo((Path(game) / 'sce_sys/param.sfo').read_bytes())
@@ -116,6 +125,9 @@ def explain(kind, title, version):
         'wrong_eboot': f"{found} param.sfo is from {p['version']} but eboot.bin is not: copy eboot.bin from "
                        f"the dumped {p['version']} update into the game folder, replacing the old one.",
         'other_title': f'{found} Supported: {supported}; other editions and regions have a different executable.',
+        'split_layout': 'The game folder has the PS4 PKG Tool layout (Image0 and Sc0): choose it in the '
+                        'launcher and press "Prepare the game", or copy everything in Image0 to the game folder '
+                        'and everything in Sc0 to its sce_sys folder.',
         'unreadable': f'{found} eboot.bin could not be read as a decrypted PS4 executable: dump '
                       'the game and its update again.',
     }[kind]
