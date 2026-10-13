@@ -28,6 +28,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -144,7 +145,16 @@ struct Ini {
         const long n = std::strtol(v.c_str(), &end, 10);
         return end && *end == '\0' ? int(n) : fallback;
     }
-    void Set(const std::string& key, const std::string& value) { values[key] = value; }
+    void Set(const std::string& key, const std::string& value) {
+        values[key] = value;
+        erased.erase(key);
+    }
+    // Removes the key: its line is dropped on Save.
+    void Erase(const std::string& key) {
+        values.erase(key);
+        erased.insert(key);
+    }
+    std::set<std::string> erased;
     bool Save(const fs::path& path, const char* header) {
         std::vector<std::string> out;
         std::map<std::string, bool> written;
@@ -153,6 +163,7 @@ struct Ini {
             const auto eq = t.find('=');
             if (!t.empty() && t[0] != '#' && t[0] != ';' && eq != std::string::npos) {
                 const auto key = Trim(t.substr(0, eq));
+                if (erased.count(key)) continue;
                 const auto it = values.find(key);
                 if (it != values.end()) {
                     if (!written[key]) out.push_back(key + "=" + it->second);
@@ -170,6 +181,7 @@ struct Ini {
         for (const auto& line : out) text += line + "\n";
         if (!WriteTextAtomic(path, text)) return false;
         lines = out;
+        erased.clear();
         return true;
     }
 };
@@ -1926,6 +1938,206 @@ void SaveConfirmations() {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Keyboard tab: bbport.ini key.<input>=<SDL key names> (src/runtime_pad.c reads them at start;
+// a missing line keeps the runtime's default). Keys are captured by their scan code (the key's
+// place on the keyboard, as SDL's scancodes), so the binding holds whatever the layout.
+
+struct KeyInput {
+    const char* id;      // runtime_pad.c input name
+    const char* es;
+    const char* en;
+    const char* fallback;  // runtime_pad.c bind_defaults()
+};
+constexpr KeyInput kKeyInputs[] = {
+    {"move_up", "Stick izquierdo arriba", "Left stick up", "W"},
+    {"move_down", "Stick izquierdo abajo", "Left stick down", "S"},
+    {"move_left", "Stick izquierdo izquierda (girar)", "Left stick left (steer)", "A"},
+    {"move_right", "Stick izquierdo derecha (girar)", "Left stick right (steer)", "D"},
+    {"cross", "X (acelerar)", "Cross (accelerate)", "Space"},
+    {"square", "Cuadrado (frenar)", "Square (brake)", "E"},
+    {"circle", "Círculo", "Circle", "Left Shift"},
+    {"triangle", "Triángulo", "Triangle", "Q"},
+    {"r1", "R1", "R1", "3"},
+    {"l1", "L1", "L1", "1"},
+    {"r2", "R2", "R2", "F"},
+    {"l2", "L2", "L2", "R"},
+    {"l3", "L3", "L3", "Z"},
+    {"r3", "R3", "R3", "C"},
+    {"options", "Options (pausa)", "Options (pause)", "Return"},
+    {"touchpad", "Panel táctil", "Touchpad", "Tab"},
+    {"touchpad_right", "Panel táctil (derecha)", "Touchpad (right)", "Backspace"},
+    {"up", "Cruceta arriba", "D-pad up", "I"},
+    {"down", "Cruceta abajo", "D-pad down", "K"},
+    {"left", "Cruceta izquierda", "D-pad left", "J"},
+    {"right", "Cruceta derecha", "D-pad right", "L"},
+    {"look_up", "Stick derecho arriba", "Right stick up", "Up"},
+    {"look_down", "Stick derecho abajo", "Right stick down", "Down"},
+    {"look_left", "Stick derecho izquierda", "Right stick left", "Left"},
+    {"look_right", "Stick derecho derecha", "Right stick right", "Right"},
+};
+
+// Scan code set 1 (WM_KEYDOWN lParam bits 16-23, + 0x100 for E0-extended) -> SDL scancode name.
+const char* SdlKeyName(unsigned code) {
+    static const std::map<unsigned, const char*> names = {
+        {0x02, "1"}, {0x03, "2"}, {0x04, "3"}, {0x05, "4"}, {0x06, "5"}, {0x07, "6"}, {0x08, "7"},
+        {0x09, "8"}, {0x0A, "9"}, {0x0B, "0"}, {0x0C, "-"}, {0x0D, "="}, {0x0E, "Backspace"},
+        {0x0F, "Tab"}, {0x10, "Q"}, {0x11, "W"}, {0x12, "E"}, {0x13, "R"}, {0x14, "T"}, {0x15, "Y"},
+        {0x16, "U"}, {0x17, "I"}, {0x18, "O"}, {0x19, "P"}, {0x1A, "["}, {0x1B, "]"},
+        {0x1C, "Return"}, {0x1D, "Left Ctrl"}, {0x1E, "A"}, {0x1F, "S"}, {0x20, "D"}, {0x21, "F"},
+        {0x22, "G"}, {0x23, "H"}, {0x24, "J"}, {0x25, "K"}, {0x26, "L"}, {0x27, ";"}, {0x28, "'"},
+        {0x29, "`"}, {0x2A, "Left Shift"}, {0x2B, "\\"}, {0x2C, "Z"}, {0x2D, "X"}, {0x2E, "C"},
+        {0x2F, "V"}, {0x30, "B"}, {0x31, "N"}, {0x32, "M"}, {0x33, ","}, {0x34, "."}, {0x35, "/"},
+        {0x36, "Right Shift"}, {0x37, "Keypad *"}, {0x38, "Left Alt"}, {0x39, "Space"},
+        {0x3A, "CapsLock"}, {0x3B, "F1"}, {0x3C, "F2"}, {0x3D, "F3"}, {0x3E, "F4"}, {0x3F, "F5"},
+        {0x40, "F6"}, {0x41, "F7"}, {0x42, "F8"}, {0x43, "F9"}, {0x44, "F10"}, {0x57, "F11"},
+        {0x58, "F12"}, {0x47, "Keypad 7"}, {0x48, "Keypad 8"}, {0x49, "Keypad 9"},
+        {0x4A, "Keypad -"}, {0x4B, "Keypad 4"}, {0x4C, "Keypad 5"}, {0x4D, "Keypad 6"},
+        {0x4E, "Keypad +"}, {0x4F, "Keypad 1"}, {0x50, "Keypad 2"}, {0x51, "Keypad 3"},
+        {0x52, "Keypad 0"}, {0x53, "Keypad ."}, {0x56, "NonUSBackslash"},
+        {0x11C, "Keypad Enter"}, {0x11D, "Right Ctrl"}, {0x135, "Keypad /"}, {0x138, "Right Alt"},
+        {0x147, "Home"}, {0x148, "Up"}, {0x149, "PageUp"}, {0x14B, "Left"}, {0x14D, "Right"},
+        {0x14F, "End"}, {0x150, "Down"}, {0x151, "PageDown"}, {0x153, "Delete"},
+    };
+    const auto it = names.find(code);
+    return it == names.end() ? nullptr : it->second;
+}
+
+// How a key name reads in the launcher.
+std::string KeyLabel(const std::string& name) {
+    static const std::map<std::string, std::pair<const char*, const char*>> labels = {
+        {"Space", {"Espacio", "Space"}}, {"Return", {"Enter", "Enter"}},
+        {"Backspace", {"Retroceso", "Backspace"}}, {"Left Shift", {"Mayús izq.", "Left Shift"}},
+        {"Right Shift", {"Mayús der.", "Right Shift"}}, {"Left Ctrl", {"Ctrl izq.", "Left Ctrl"}},
+        {"Right Ctrl", {"Ctrl der.", "Right Ctrl"}}, {"Left Alt", {"Alt", "Left Alt"}},
+        {"Right Alt", {"Alt Gr", "Right Alt"}}, {"Up", {"Flecha arriba", "Up arrow"}},
+        {"Down", {"Flecha abajo", "Down arrow"}}, {"Left", {"Flecha izquierda", "Left arrow"}},
+        {"Right", {"Flecha derecha", "Right arrow"}}, {"CapsLock", {"Bloq Mayús", "Caps Lock"}},
+        {"Delete", {"Supr", "Delete"}}, {"Home", {"Inicio", "Home"}}, {"End", {"Fin", "End"}},
+        {"PageUp", {"Re Pág", "Page Up"}}, {"PageDown", {"Av Pág", "Page Down"}},
+        {"`", {"Tecla a la izquierda del 1", "` key"}},
+        {"NonUSBackslash", {"Tecla < >", "< > key"}}, {"Keypad Enter", {"Enter (teclado num.)", "Keypad Enter"}},
+    };
+    const auto it = labels.find(name);
+    if (it != labels.end()) return T(it->second.first, it->second.second);
+    if (name.rfind("Keypad ", 0) == 0) return std::string(T("Num ", "Num ")) + name.substr(7);
+    return name;
+}
+
+std::atomic<int> g_key_capture{-1};      // the input waiting for a key, -1 none
+std::atomic<unsigned> g_key_captured{0};  // scan code + 1 (0: nothing yet)
+bool g_key_replace = false;                 // the captured key replaces the default binding
+
+std::vector<std::string> SplitKeys(const std::string& value) {
+    std::vector<std::string> keys;
+    std::stringstream ss(value);
+    std::string key;
+    while (std::getline(ss, key, ',')) {
+        key = Trim(key);
+        if (!key.empty()) keys.push_back(key);
+    }
+    return keys;
+}
+
+void KeyboardTab() {
+    App& a = g_app;
+    ImGui::TextWrapped("%s", T("Teclas del jugador 1. El teclado funciona a la vez que el mando. Pulsa \"Cambiar\" y luego la "
+                               "tecla; cada acción admite hasta 4 teclas. Se guarda en bbport.ini y vale desde el próximo arranque.",
+                               "Player 1's keys. The keyboard works together with the controller. Press \"Change\", then the key; "
+                               "each action takes up to 4 keys. Saved in bbport.ini, used from the next start."));
+    ImGui::TextColored(kGrey, "%s", T("Insert abre el menú del juego y Esc cancela, por eso no se pueden asignar.",
+                                      "Insert opens the in-game menu and Esc cancels, so they cannot be bound."));
+    const int capturing = g_key_capture;
+    if (capturing >= 0) {
+        const unsigned got = g_key_captured.exchange(0);
+        if (got) {
+            const unsigned code = got - 1;
+            if (code == 0x01) {
+                g_key_capture = -1;  // Esc: cancel
+            } else if (const char* name = SdlKeyName(code); name && code != 0x152) {
+                const KeyInput& in = kKeyInputs[capturing];
+                const std::string key = std::string("key.") + in.id;
+                auto keys = g_key_replace ? std::vector<std::string>{} : SplitKeys(a.game.Get(key));
+                if (std::find(keys.begin(), keys.end(), name) == keys.end()) {
+                    if (keys.size() >= 4) keys.erase(keys.begin());
+                    keys.push_back(name);
+                }
+                std::string value;
+                for (const auto& k : keys) value += (value.empty() ? "" : ",") + k;
+                a.game.Set(key, value);
+                SaveGameIni();
+                g_key_capture = -1;
+            } else {
+                a.notice = T("Esa tecla no se puede asignar.", "That key cannot be bound.");
+                g_key_capture = -1;
+            }
+        }
+    }
+
+    ImGui::SeparatorText(T("Controles", "Controls"));
+    if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn(T("Teclas", "Keys"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
+            const KeyInput& in = kKeyInputs[i];
+            const std::string key = std::string("key.") + in.id;
+            const bool custom = a.game.values.count(key) > 0;
+            const auto keys = SplitKeys(custom ? a.game.Get(key) : in.fallback);
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(T(in.es, in.en));
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            if (capturing == i) {
+                ImGui::TextColored(kYellow, "%s", T("Pulsa una tecla... (Esc cancela)", "Press a key... (Esc cancels)"));
+            } else if (keys.empty()) {
+                ImGui::TextColored(kGrey, "%s", T("(sin tecla)", "(none)"));
+            } else {
+                std::string text;
+                for (const auto& k : keys) text += (text.empty() ? "" : "  /  ") + KeyLabel(k);
+                if (custom) ImGui::TextUnformatted(text.c_str());
+                else ImGui::TextColored(kGrey, "%s", text.c_str());
+            }
+            ImGui::TableNextColumn();
+            ImGui::BeginDisabled(capturing >= 0);
+            if (ImGui::SmallButton(T("Cambiar", "Change"))) {
+                // A key replaces the default binding; on a custom one it is added (up to 4).
+                g_key_replace = !custom;
+                g_key_captured = 0;
+                g_key_capture = i;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton(T("Quitar", "Clear"))) {
+                a.game.Set(key, "");
+                SaveGameIni();
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!custom);
+            if (ImGui::SmallButton(T("Original", "Default"))) {
+                a.game.Erase(key);
+                SaveGameIni();
+            }
+            ImGui::EndDisabled();
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    ImGui::BeginDisabled(capturing >= 0);
+    if (ImGui::Button(T("Restaurar todas las teclas", "Restore all keys"))) {
+        for (const auto& in : kKeyInputs) a.game.Erase(std::string("key.") + in.id);
+        SaveGameIni();
+    }
+    ImGui::EndDisabled();
+    ImGui::TextColored(kGrey, "%s", T("Gris: tecla original. Las teclas van por su posición en el teclado.",
+                                      "Grey: default key. Keys go by their place on the keyboard."));
+}
+
 void ToolsTab() {
     App& a = g_app;
     ImGui::SeparatorText(T("Carpetas y registro", "Folders and log"));
@@ -2019,6 +2231,14 @@ void Frame() {
             SettingsTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem(T("Teclado", "Keyboard"))) {
+            ImGui::BeginChild("keyboard");
+            KeyboardTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        } else if (g_key_capture >= 0) {
+            g_key_capture = -1;  // left the tab while waiting for a key
         }
         if (ImGui::BeginTabItem(T("Parches", "Patches"))) {
             ImGui::BeginChild("patches");
@@ -2185,6 +2405,12 @@ void CleanupDevice() {
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    // Keyboard tab: the next key's scan code, before ImGui sees it.
+    if ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && g_key_capture >= 0) {
+        const unsigned code = unsigned((lparam >> 16) & 0xff) | ((lparam & (1 << 24)) ? 0x100u : 0u);
+        g_key_captured = code + 1;
+        return 0;
+    }
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam)) return true;
     switch (msg) {
     case WM_SIZE:
