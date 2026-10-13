@@ -80,6 +80,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "render_res") {
+        for (int r = 0; r < RenderResCount; ++r) {
+            if (i == RenderResHeights[r]) v.render_res = r;
+        }
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "live_resolution") {
@@ -190,6 +194,7 @@ void Load() {
         v.startup_game_patches[g] = v.game_patches[g];
     }
     v.startup_model_lod = v.model_lod;
+    v.startup_render_res = v.render_res;
     v.startup_output_res = v.output_res;
     v.startup_live_resolution = v.live_resolution;
 }
@@ -272,6 +277,7 @@ void Save() {
         put(GamePatches[g].key, flag(v.game_patches[g]));
     }
     put("model_lod", std::to_string(v.model_lod.load()));
+    if (v.render_res >= 0) put("render_res", std::to_string(RenderResHeights[v.render_res]));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));
     // Read by run.sh at start.

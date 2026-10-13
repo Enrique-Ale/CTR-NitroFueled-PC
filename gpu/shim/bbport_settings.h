@@ -54,6 +54,10 @@ inline constexpr Effect GamePatches[] = {
     {"patch_pro_1080p", "1080p in PS4 Pro mode (TroyWarez; with BB_NEO=1)", "1080p в режиме PS4 Pro (TroyWarez; с BB_NEO=1)", false},
 };
 inline constexpr int GamePatchCount = int(sizeof(GamePatches) / sizeof(GamePatches[0]));
+/// SacredFire: bbport.ini render_res, the scene size CTR renders (through its PS4 Pro path above
+/// 1080p; scripts/patches.py and run.py apply it at start, docs/sacredfire/13-resolution.md).
+inline constexpr int RenderResHeights[] = {1080, 1440, 1620, 2160};
+inline constexpr int RenderResCount = 4;
 /// Live output resolutions: the upscaler's output and the UI host targets.
 inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
 inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
@@ -99,6 +103,7 @@ struct Values {
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<bool> game_patches[GamePatchCount]{}; ///< SacredFire: see GamePatches
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
+    std::atomic<int> render_res{-1}; ///< index into RenderResHeights, -1 when not set
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
@@ -114,6 +119,7 @@ struct Values {
     bool startup_effects[EffectCount]{};
     bool startup_game_patches[GamePatchCount]{};
     int startup_model_lod = 0;
+    int startup_render_res = -1;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
 };

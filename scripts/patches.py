@@ -34,6 +34,43 @@ GAME_PATCH_KEYS={'patch_60fps':'CrashTeamRacing.xml/60 FPS Unlock',
                  'patch_pro_1080p':'CrashTeamRacing.xml/Resolution Patch (1080p for PS4 Pro)'}
 
 
+# bbport.ini render_res: the scene size the game renders in PS4 Pro mode (run.py turns the Pro
+# mode on for these), via the game's own render scale (docs/sacredfire/13-resolution.md).
+# 1080: the community 1080p Pro patch (as before v0.3). 1440: the Pro's own scale. Others: the
+# scale read at 0x17aa662 is replaced by a constant; 2160 also needs a larger GPU heap.
+RENDER_RESOLUTIONS=('1080','1440','1620','2160')
+RENDER_SCALE_SIGNATURE='41 8b 44 24 48 41 89 86 48 05 00 00'  # mov 0x48(%r12),%eax; mov %eax,0x548(%r14)
+GPU_HEAP_SIGNATURE='c7 45 c8 00 00 00 3c e9'                  # movl $0x3c000000,-0x38(%rbp); jmp
+RENDER_SCALES={'1620':1.5,'2160':2.0}
+
+
+def render_res(settings):
+    """The render_res setting, or None without one (older settings: patch_pro_1080p decides)."""
+    value=(settings or {}).get('render_res')
+    return value if value in RENDER_RESOLUTIONS else None
+
+
+def render_patches(settings):
+    """Built-in patch elements for render_res (a list of (key, None, Metadata element))."""
+    res=render_res(settings)
+    lines=[]
+    if res in RENDER_SCALES:
+        value='b8'+struct.pack('<f',RENDER_SCALES[res]).hex()
+        lines.append(dict(Type='bytes',Address='0x017aa662',Value=value,
+                          Signature=RENDER_SCALE_SIGNATURE,SignatureOffset='0x0'))
+    if res=='2160':
+        # 960 MiB -> 1792 MiB (0x70000000): native 4K with 2x MSAA does not fit the Pro's heap.
+        lines.append(dict(Type='bytes',Address='0x01fbb93e',Value='70',
+                          Signature=GPU_HEAP_SIGNATURE,SignatureOffset='0x6'))
+    if not lines:
+        return []
+    meta=ET.Element('Metadata',Name=f'Render resolution {res}p',AppVer=APP_VERSION,AppElf='eboot.bin')
+    patch_list=ET.SubElement(meta,'PatchList')
+    for line in lines:
+        ET.SubElement(patch_list,'Line',**line)
+    return [(f'render_res/{res}p',None,meta)]
+
+
 def read_settings(path):
     """bbport.ini as a dict (key=value lines; # comments)."""
     settings={}
@@ -132,6 +169,10 @@ def external_selection(found, config, ini=None):
     enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
     for key,patch in GAME_PATCH_KEYS.items():
         if (ini or {}).get(key)=='1': enabled.add(patch); disabled.discard(patch)
+    # The 1080p Pro patch follows render_res (Settings > Internal resolution, the in-game menu).
+    pro_1080p=GAME_PATCH_KEYS['patch_pro_1080p']
+    if render_res(ini)=='1080': enabled.add(pro_1080p); disabled.discard(pro_1080p)
+    elif render_res(ini): enabled.discard(pro_1080p); disabled.add(pro_1080p)
     return [(key,path,meta) for key,path,meta in found
             if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
 
@@ -184,7 +225,9 @@ def main():
     elf=(a.out/'eboot.elf').read_bytes()
     segments=eboot_segments(elf)
     found=external_patches(a.patches_dir,a.app_version,a.title_id)
-    writes=compile_external(external_selection(found,a.patches_config,read_settings(a.settings)),segments,elf)
+    settings=read_settings(a.settings)
+    writes=compile_external(external_selection(found,a.patches_config,settings)+render_patches(settings),
+                            segments,elf)
     write_blob(a.out,writes)
     print(f'Patches: {len(writes)} writes from {len(found)} available patches')
 

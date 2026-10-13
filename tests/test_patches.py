@@ -111,6 +111,41 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual(self.writes(twice, EBOOT_BASE + 0x1012), [])
 
 
+class RenderResTests(unittest.TestCase):
+    """render_res: the game's PS4 Pro render scale and GPU heap (docs/sacredfire/13-resolution.md)."""
+
+    def elf(self):
+        scale = bytes.fromhex(patches.RENDER_SCALE_SIGNATURE.replace(' ', ''))
+        heap = bytes.fromhex(patches.GPU_HEAP_SIGNATURE.replace(' ', ''))
+        # Both sites at their 5.05-build addresses inside one segment from 0x13a9000.
+        base = 0x13a9000
+        code = bytearray(0x1fbb940 - EBOOT_BASE - base + 16)
+        at = 0x17aa662 - EBOOT_BASE - base
+        code[at:at + len(scale)] = scale
+        at = 0x1fbb938 - EBOOT_BASE - base
+        code[at:at + len(heap)] = heap
+        return tiny_elf(bytes(code), vaddr=base)
+
+    def test_selection_follows_render_res(self):
+        found = external_patches(ROOT / 'patches')
+        pro = GAME_PATCH_KEYS['patch_pro_1080p']
+        keys = lambda ini: [k for k, _, _ in external_selection(found, None, ini)]
+        self.assertIn(pro, keys({'render_res': '1080'}))
+        self.assertNotIn(pro, keys({'render_res': '2160', 'patch_pro_1080p': '1'}))
+        self.assertIn(pro, keys({'patch_pro_1080p': '1'}))  # older settings without render_res
+
+    def test_builtin_writes(self):
+        elf = self.elf()
+        segments = eboot_segments(elf)
+        self.assertEqual(patches.render_patches({'render_res': '1080'}), [])
+        self.assertEqual(patches.render_patches({'render_res': '1440'}), [])
+        writes = compile_external(patches.render_patches({'render_res': '1620'}), segments, elf)
+        self.assertEqual(writes, [(0x17aa662 - EBOOT_BASE, b'\xb8' + struct.pack('<f', 1.5))])
+        writes = compile_external(patches.render_patches({'render_res': '2160'}), segments, elf)
+        self.assertEqual(writes, [(0x17aa662 - EBOOT_BASE, b'\xb8' + struct.pack('<f', 2.0)),
+                                  (0x1fbb93e - EBOOT_BASE, b'\x70')])
+
+
 class GamePatchTests(unittest.TestCase):
     """The bundled CTR patches, chosen through bbport.ini patch_* keys (the in-game menu)."""
 

@@ -493,8 +493,35 @@ void Menu() {
     // Bloodborne profile (removed 2026-10-09).
     ImGui::SeparatorText(BbSettings::MenuText("Game patches (restart required)",
                                               "Патчи игры (после перезапуска)"));
+    // SacredFire: the scene resolution (render_res) replaces the 1080p Pro patch's checkbox.
+    {
+        static const char* labels[] = {"1920 x 1080", "2560 x 1440 (PS4 Pro)", "2880 x 1620",
+                                       "3840 x 2160 (4K)"};
+        const int current = s.render_res;
+        const char* preview =
+            current >= 0 ? labels[current]
+                         : BbSettings::MenuText("(game patches decide)", "(решают патчи)");
+        if (ImGui::BeginCombo(BbSettings::MenuText("Internal resolution", "Внутреннее разрешение"),
+                              preview)) {
+            for (int r = 0; r < BbSettings::RenderResCount; ++r) {
+                if (ImGui::Selectable(labels[r], r == current)) {
+                    s.render_res = r;
+                    std::printf("Menu: render_res = %d (applies after the restart)\n",
+                                BbSettings::RenderResHeights[r]);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        Hint(BbSettings::MenuText(
+            "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path "
+            "and the picture is output at 4K; on a 1080p screen that smooths jagged edges. 4K needs "
+            "a strong GPU.",
+            "Размер, в котором игра рисует 3D-сцену. Выше 1080p используется режим PS4 Pro, кадр "
+            "выводится в 4K; на экране 1080p это сглаживает края. Для 4K нужна мощная видеокарта."));
+    }
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         const auto& patch = BbSettings::GamePatches[g];
+        if (s.render_res >= 0 && std::strcmp(patch.key, "patch_pro_1080p") == 0) continue;
         const bool before = s.game_patches[g];
         Checkbox(BbSettings::MenuText(patch.label, patch.label_ru), s.game_patches[g]);
         if (before != s.game_patches[g]) {
@@ -513,6 +540,7 @@ void Menu() {
     for (int g = 0; g < BbSettings::GamePatchCount; ++g) {
         restart |= s.game_patches[g] != s.startup_game_patches[g];
     }
+    restart |= s.render_res != s.startup_render_res;
     if (restart) {
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
                            BbSettings::MenuText("Changes apply after restarting the game",

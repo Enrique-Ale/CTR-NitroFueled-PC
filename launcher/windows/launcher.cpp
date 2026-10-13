@@ -554,6 +554,8 @@ struct App {
 
 App g_app;
 
+std::string EffectiveRenderRes();
+
 fs::path LauncherIni() { return g_app.root / L"launcher.ini"; }
 fs::path GameIni() { return g_app.root / L"bbport.ini"; }
 
@@ -686,7 +688,7 @@ void StartGame() {
         a.last_status.clear();
     }
     SetEnv(L"BB_GAME_DIR", PathText(a.game_dir));
-    SetEnv(L"BB_NEO", a.launcher.Flag("neo", false) ? "1" : "0");
+    SetEnv(L"BB_NEO", a.launcher.Flag("neo", false) || EffectiveRenderRes() != "1080" ? "1" : "0");
     SetEnv(L"BB_LANGUAGE", a.launcher.Get("language", DefaultGameLanguage()));
     SetEnv(L"BB_DISPLAY", a.launcher.Get("display"));
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
@@ -1402,6 +1404,51 @@ void PlayTab() {
     }
 }
 
+// bbport.ini render_res: the scene size (scripts/patches.py, run.py; docs/sacredfire/13-resolution.md).
+struct RenderRes {
+    const char* value;
+    const char* es;
+    const char* en;
+};
+constexpr RenderRes kRenderRes[] = {
+    {"1080", "1080p (1920 x 1080)", "1080p (1920 x 1080)"},
+    {"1440", "1440p (2560 x 1440, PS4 Pro)", "1440p (2560 x 1440, PS4 Pro)"},
+    {"1620", "1620p (2880 x 1620)", "1620p (2880 x 1620)"},
+    {"2160", "4K (3840 x 2160)", "4K (3840 x 2160)"},
+};
+
+// The render_res in effect: the setting, or for older settings the Pro mode and 1080p patch.
+std::string EffectiveRenderRes() {
+    const std::string v = g_app.game.Get("render_res");
+    for (const auto& r : kRenderRes)
+        if (v == r.value) return v;
+    return g_app.launcher.Flag("neo", false) && !g_app.game.Flag("patch_pro_1080p", false) ? "1440" : "1080";
+}
+
+void RenderResCombo() {
+    App& a = g_app;
+    const std::string current = EffectiveRenderRes();
+    const RenderRes* selected = &kRenderRes[0];
+    for (const auto& r : kRenderRes)
+        if (current == r.value) selected = &r;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+    if (ImGui::BeginCombo(T("Resolución interna", "Internal resolution"), T(selected->es, selected->en))) {
+        for (const auto& r : kRenderRes) {
+            if (ImGui::Selectable(T(r.es, r.en), &r == selected)) {
+                a.game.Set("render_res", r.value);
+                SaveGameIni();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    HelpMarker(T("El tamaño al que el juego dibuja la escena 3D. Por encima de 1080p usa el modo PS4 Pro del juego "
+                 "(se activa solo) y la imagen sale en 4K: en una pantalla 1080p eso quita los dientes de sierra. "
+                 "4K necesita una GPU potente (una RTX 3070 va a unos 100 FPS).",
+                 "The size the game draws its 3D scene at. Above 1080p it uses the game's PS4 Pro path (turned "
+                 "on automatically) and the picture is output at 4K: on a 1080p screen that removes jagged "
+                 "edges. 4K needs a strong GPU (an RTX 3070 runs it at about 100 FPS)."));
+}
+
 void SettingsTab() {
     App& a = g_app;
     ImGui::TextColored(kGrey, "%s", T("Se aplican al pulsar Jugar. El menú del juego (Insert o L3+R3) cambia los mismos ajustes.",
@@ -1434,6 +1481,7 @@ void SettingsTab() {
                "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
     ImGui::SeparatorText(T("Pantalla", "Display"));
+    RenderResCombo();
     GameFlag("fullscreen", T("Pantalla completa", "Fullscreen"), false);
     GameFlag("show_fps", T("Contador de FPS en la esquina", "FPS counter in the corner"), false);
     {
@@ -1504,9 +1552,18 @@ void SettingsTab() {
     ImGui::SeparatorText(T("Consola", "Console"));
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
     ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
-    LauncherFlag("neo", T("Modo PS4 Pro", "PS4 Pro mode"), false,
-                 T("La ruta de render de PS4 Pro (más resolución). Necesario para el parche de 1080p.",
-                   "The game's PS4 Pro rendering path (higher resolution). Needed for the 1080p patch."));
+    if (EffectiveRenderRes() != "1080") {
+        ImGui::BeginDisabled();
+        bool on = true;
+        ImGui::Checkbox(T("Modo PS4 Pro", "PS4 Pro mode"), &on);
+        ImGui::EndDisabled();
+        HelpMarker(T("Lo activa la resolución interna (por encima de 1080p).",
+                     "Turned on by the internal resolution (above 1080p)."));
+    } else {
+        LauncherFlag("neo", T("Modo PS4 Pro", "PS4 Pro mode"), false,
+                     T("La ruta de render de PS4 Pro del juego (7 núcleos, más memoria). A 1080p usa el parche de 1080p.",
+                       "The game's PS4 Pro path (7 cores, more memory). At 1080p it uses the 1080p patch."));
+    }
 }
 
 void PatchesTab() {
@@ -1530,7 +1587,9 @@ void PatchesTab() {
             on = listed_on || (p.default_on && !listed_off);
         }
         const bool needs_neo = p.ini_key && std::strcmp(p.ini_key, "patch_pro_1080p") == 0;
-        ImGui::BeginDisabled(needs_neo && !neo);
+        // render_res decides the 1080p Pro patch (Settings > Internal resolution).
+        if (needs_neo) on = EffectiveRenderRes() == "1080" && neo;
+        ImGui::BeginDisabled(needs_neo);
         if (ImGui::Checkbox(p.name.c_str(), &on)) {
             if (p.ini_key) {
                 a.game.Set(p.ini_key, on ? "1" : "0");
@@ -1552,7 +1611,8 @@ void PatchesTab() {
         }
         ImGui::Indent();
         ImGui::PushTextWrapPos(0.0f);
-        if (needs_neo) ImGui::TextColored(kGrey, "%s", T("Necesita el modo PS4 Pro (pestaña Ajustes).", "Needs PS4 Pro mode (Settings tab)."));
+        if (needs_neo) ImGui::TextColored(kGrey, "%s", T("Lo controla Ajustes > Resolución interna (1080p con el modo PS4 Pro).",
+                                                          "Controlled by Settings > Internal resolution (1080p with PS4 Pro mode)."));
         if (!p.note.empty()) ImGui::TextColored(kGrey, "%s", p.note.c_str());
         ImGui::TextColored(kGrey, "%s", p.key.c_str());
         ImGui::PopTextWrapPos();

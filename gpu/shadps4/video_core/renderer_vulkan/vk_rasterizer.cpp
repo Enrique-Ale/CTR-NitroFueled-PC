@@ -3399,7 +3399,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     if (std::popcount(key.mrt_mask & 0x7f) >= gbuffer_mrt && db_desc.first &&
         scene_targets->EligibleScene(texture_cache.GetImage(db_desc.first))) scene_started = true;
     // BB_SCENE_DEBUG frame: why a multi-target pass does or does not start the scene.
-    static int start_checks_left = 6; // the first multi-target passes, then debug frames only
+    static int start_checks_left = 0; // >0: also log the first multi-target passes of a run
     if ((scene_debug_frame || start_checks_left > 0) &&
         std::popcount(key.mrt_mask & 0x7f) >= 3) {
         if (start_checks_left > 0) --start_checks_left;

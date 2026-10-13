@@ -89,6 +89,31 @@ def ini_has(path, line):
         return False
 
 
+def ini_value(path, key):
+    try:
+        for line in Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
+            name, sep, value = line.partition('=')
+            if sep and not line.lstrip().startswith('#') and name.strip() == key:
+                return value.strip()
+    except OSError:
+        pass
+    return None
+
+
+# bbport.ini render_res above 1080 renders through the game's PS4 Pro path (scripts/patches.py,
+# docs/sacredfire/13-resolution.md); native 4K also takes a larger GPU heap, past the Pro's 5568
+# MiB of direct memory.
+def apply_render_res(env, config):
+    res = ini_value(config, 'render_res')
+    if res in ('1440', '1620', '2160'):
+        env['BB_NEO'] = '1'
+        if res == '2160' and int(env.get('BB_DMEM_MB') or 0) < 7168:
+            env['BB_DMEM_MB'] = '7168'
+        say(f'Internal resolution: {res}p (PS4 Pro rendering path)')
+    elif res == '1080':
+        say('Internal resolution: 1080p')
+
+
 def pump(stream):
     for raw in iter(stream.readline, b''):
         # The game writes CRLF; the log is a text file that adds its own CR.
@@ -168,6 +193,7 @@ def main():
         run_python('scripts/content_profile.py', game, '--out', out, '--sku', env.get('BB_CONTENT_SKU', 'full'),
                    '--dlc-dir', env.get('BB_DLC_DIR', data / 'dlc'))
         env.setdefault('BB_NEO', '0')
+        apply_render_res(env, config)
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
@@ -200,7 +226,11 @@ def main():
                    '--content-profile', str(out / 'content.bin'), '--patches', str(out / 'patches.bin'),
                    '--app0', str(game), '--user', str(user_dir),
                    '--timeout', env.get('BB_TIMEOUT', '0'), *args]
+        first = True
         while True:
+            if not first:  # the in-game menu may have changed render_res
+                apply_render_res(env, config)
+            first = False
             run_python('scripts/patches.py', '--patches-dir', env.get('BB_PATCHES_DIR', 'patches'),
                        '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'),
                        '--app-version', APP_VERSION, '--title-id', TITLE_ID, '--out', out,
