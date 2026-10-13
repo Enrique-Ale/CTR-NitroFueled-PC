@@ -3145,7 +3145,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
             }
             if (FsrRedirects(image_id) && !is_storage && !image.info.props.is_depth) {
-                if (const auto upscaled = DisplayFsr(image_id, view, image_view.info.format)) {
+                if (const auto upscaled =
+                        DisplayFsr(image_id, view, image_view.info.format, image_view.info.mapping)) {
                     view = upscaled;
                     layout = fsr_layout;
                     set_ok = false;
@@ -4419,7 +4420,7 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
 }
 
 vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view,
-                                     vk::Format view_format) {
+                                     vk::Format view_format, vk::ComponentMapping mapping) {
     if (fsr_done) {
         return fsr_view;
     }
@@ -4436,7 +4437,7 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
     const vk::Extent2D out{display.info.size.width, display.info.size.height};
     // SacredFire: FSR 3 first (races and other 3D scenes); FSR 1 or the plain stretch otherwise.
     if (ctr_fsr3->Enabled()) {
-        if (const auto upscaled = ctr_fsr3->Upscale(id, view_format, out, fsr_layout)) {
+        if (const auto upscaled = ctr_fsr3->Upscale(id, view_format, mapping, out, fsr_layout)) {
             fsr_view = upscaled;
             return fsr_view;
         }

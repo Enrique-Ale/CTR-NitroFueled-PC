@@ -190,23 +190,39 @@ vk::ImageView CtrFsr3::SourceView(const VideoCore::Image& image, vk::Format form
     return *entry.view;
 }
 
-vk::ImageView CtrFsr3::OutputView(vk::Format format) {
+// The display pass reads the game's frame through a view with its own format and channel
+// swizzle (CTR's swaps red and blue); the upscaled frame is read the same way.
+vk::ImageView CtrFsr3::OutputView(vk::Format format, vk::ComponentMapping mapping) {
     for (auto& entry : output_views) {
-        if (entry.view && entry.format == format) {
+        if (entry.view && entry.format == format && entry.mapping == mapping) {
             return *entry.view;
         }
     }
-    auto& entry = output_views[output_views[0].view ? 1 : 0];
+    auto& entry = output_views[output_view_next++ % output_views.size()];
+    if (entry.view) {
+        scheduler.DeferOperation([view = std::move(entry.view)] {});
+    }
     const vk::ImageViewUsageCreateInfo usage{.usage = vk::ImageUsageFlagBits::eSampled};
     entry.format = format;
+    entry.mapping = mapping;
     entry.view = Check(instance.GetDevice().createImageViewUnique({
         .pNext = &usage,
         .image = vk::Image(output_image),
         .viewType = vk::ImageViewType::e2D,
         .format = format,
+        .components = mapping,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
     }));
     return *entry.view;
+}
+
+void CtrFsr3::Skip(const char* reason) {
+    reset = true;
+    if (reason != last_skip) {
+        last_skip = reason;
+        std::printf("FSR 3: skipped (%s)\n", reason);
+        std::fflush(stdout);
+    }
 }
 
 void CtrFsr3::CreatePipelines() {
@@ -251,8 +267,9 @@ void CtrFsr3::CreatePipelines() {
     pipelines[3] = compute(CTR_FSR3_INPUTS_DV_COMP);
 }
 
-bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh) {
-    if (context && w == width && h == height && ow == out_width && oh == out_height) {
+bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, vk::Format format) {
+    if (context && w == width && h == height && ow == out_width && oh == out_height &&
+        format == output_format) {
         return true;
     }
     const auto device = instance.GetDevice();
@@ -265,6 +282,7 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh) {
     height = h;
     out_width = ow;
     out_height = oh;
+    output_format = format;
     reset = true;
 
     FfxVkPortableDeviceInfo device_info{};
@@ -332,15 +350,17 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh) {
     make(depth_image, &depth_view, vk::Format::eR32Sfloat, w, h, inputs);
     make(motion_image, &motion_view, vk::Format::eR16G16Sfloat, w, h, inputs);
     make(debug_image, &debug_view, vk::Format::eR8G8B8A8Unorm, w, h, inputs);
-    // The output is sampled through views in the game's format (sRGB or not).
-    static constexpr std::array<vk::Format, 2> formats{vk::Format::eR8G8B8A8Unorm,
-                                                       vk::Format::eR8G8B8A8Srgb};
+    // The output has the frame's memory layout (RGBA or BGRA) and is sampled through views like
+    // the game's (sRGB or not, swizzled).
+    static constexpr std::array<vk::Format, 4> formats{
+        vk::Format::eR8G8B8A8Unorm, vk::Format::eR8G8B8A8Srgb, vk::Format::eB8G8R8A8Unorm,
+        vk::Format::eB8G8R8A8Srgb};
     const vk::ImageFormatListCreateInfo list{.viewFormatCount = u32(formats.size()),
                                              .pViewFormats = formats.data()};
     for (auto& entry : output_views) {
         entry.view.reset();
     }
-    make(output_image, nullptr, vk::Format::eR8G8B8A8Unorm, ow, oh,
+    make(output_image, nullptr, format, ow, oh,
          vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
              vk::ImageUsageFlagBits::eTransferSrc,
          &list, vk::ImageCreateFlagBits::eMutableFormat);
@@ -371,18 +391,23 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh) {
     FfxVkPortableMemoryUsage usage{};
     usage.structSize = sizeof(usage);
     ffxVkPortableUpscaleContextGetMemoryUsage(context, &usage);
-    std::printf("FSR 3: %ux%u -> %ux%u, %u jitter phases, %.1f MB\n", w, h, ow, oh, jitter_phases,
-                usage.totalUsageInBytes / 1e6);
+    std::printf("FSR 3: %ux%u -> %ux%u (%s), %u jitter phases, %.1f MB\n", w, h, ow, oh,
+                vk::to_string(format).c_str(), jitter_phases, usage.totalUsageInBytes / 1e6);
     return true;
 }
 
 vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_format,
-                               vk::Extent2D out, vk::ImageLayout& layout) {
+                               vk::ComponentMapping mapping, vk::Extent2D out,
+                               vk::ImageLayout& layout) {
     const bool scene = scene_this_frame;
     scene_this_frame = false;
     camera_this_frame = false;
-    if (!Enabled() || !scene || !source_id || !scene_depth || !velocity) {
+    if (!Enabled()) {
         reset = true;
+        return {};
+    }
+    if (!scene || !source_id || !scene_depth || !velocity) {
+        Skip("no 3D scene this frame");
         return {};
     }
     auto& source = texture_cache.GetImage(source_id);
@@ -396,19 +421,24 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         out.height < h || w * 4 < out.width ||
         std::abs(double(w) / h - double(out.width) / out.height) > 0.02 ||
         !depth.info.props.is_depth) {
-        if (!announced) {
-            announced = true;
+        static u32 logged = 0;
+        if (logged++ < 4) {
             std::printf("FSR 3: not used: frame %ux%u, depth %ux%u, velocity %ux%u, output %ux%u\n",
                         w, h, depth.info.size.width, depth.info.size.height, vel.info.size.width,
                         vel.info.size.height, out.width, out.height);
         }
-        reset = true;
+        Skip("sizes do not match");
         return {};
     }
     const u32 variant = (depth.info.num_samples > 1 ? 1u : 0u) | (vel.info.num_samples > 1 ? 2u : 0u);
     // Inside the display pass's draw: its rendering ends here (and resumes when it draws).
     scheduler.EndRendering();
-    if (!EnsureResources(w, h, out.width, out.height)) {
+    const vk::Format frame_format = Linear(source.info.pixel_format);
+    if (frame_format != vk::Format::eR8G8B8A8Unorm && frame_format != vk::Format::eB8G8R8A8Unorm) {
+        Skip("the frame is not 8-bit RGBA");
+        return {};
+    }
+    if (!EnsureResources(w, h, out.width, out.height, frame_format)) {
         failed = true;
         std::printf("FSR 3: off for this session\n");
         return {};
@@ -527,7 +557,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
     info.motionVectors = Describe(vk::Image(motion_image), vk::Format::eR16G16Sfloat, w, h, inputs,
                                   vk::ImageAspectFlagBits::eColor,
                                   FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
-    info.output = Describe(vk::Image(output_image), vk::Format::eR8G8B8A8Unorm, out.width,
+    info.output = Describe(vk::Image(output_image), output_format, out.width,
                            out.height,
                            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
                                vk::ImageUsageFlagBits::eTransferSrc,
@@ -567,6 +597,10 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         return {};
     }
     reset = false;
+    if (last_skip) {
+        last_skip = nullptr;
+        std::printf("FSR 3: upscaling again\n");
+    }
     const vk::MemoryBarrier2 done{
         .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
         .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
@@ -582,7 +616,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
                     depth.info.num_samples, vel.info.num_samples);
     }
     layout = vk::ImageLayout::eGeneral;
-    return OutputView(view_format);
+    return OutputView(view_format, mapping);
 }
 
 void CtrFsr3::Dump(vk::CommandBuffer cmdbuf) {

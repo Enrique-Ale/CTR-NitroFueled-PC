@@ -638,7 +638,8 @@ private:
         return fsr_pending && id == fsr_source;
     }
     /// The upscaled view standing in for `id` (sampled through `game_view`), or null.
-    vk::ImageView DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view, vk::Format view_format);
+    vk::ImageView DisplayFsr(VideoCore::ImageId id, vk::ImageView game_view, vk::Format view_format,
+                             vk::ComponentMapping mapping);
     u32 preupload_frame = ~0u; ///< bbport: frame of the last background pre-upload
     bool PendingWriteOverlaps(VAddr address, u64 size);
     /// Stage B: the ring bindings of the stages of the packet being recorded.

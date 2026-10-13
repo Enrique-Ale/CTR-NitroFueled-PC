@@ -57,15 +57,18 @@ public:
     /// Upscales `source` (the finished frame the display pass samples through a view of
     /// `view_format`) to `out`. Returns the view to sample instead and its layout, or a null view
     /// when FSR 3 does not apply (no scene this frame, sizes that do not match).
-    vk::ImageView Upscale(VideoCore::ImageId source, vk::Format view_format, vk::Extent2D out,
-                          vk::ImageLayout& layout);
+    vk::ImageView Upscale(VideoCore::ImageId source, vk::Format view_format,
+                          vk::ComponentMapping mapping, vk::Extent2D out, vk::ImageLayout& layout);
 
 private:
-    bool EnsureResources(u32 w, u32 h, u32 ow, u32 oh);
+    bool EnsureResources(u32 w, u32 h, u32 ow, u32 oh, vk::Format format);
     void CreatePipelines();
     vk::ImageView SourceView(const VideoCore::Image& image, vk::Format format,
                              vk::ImageAspectFlags aspect, int slot);
-    vk::ImageView OutputView(vk::Format format);
+    vk::ImageView OutputView(vk::Format format, vk::ComponentMapping mapping);
+    /// Logs why a frame is not upscaled, once per change of reason.
+    void Skip(const char* reason);
+    const char* last_skip = nullptr;
     void Dump(vk::CommandBuffer cmdbuf);
 
     const Instance& instance;
@@ -91,13 +94,16 @@ private:
 
     FfxVkPortableUpscaleContext* context = nullptr;
     u32 width = 0, height = 0, out_width = 0, out_height = 0;
+    vk::Format output_format = vk::Format::eUndefined; ///< the frame's own format (linear)
     VideoCore::UniqueImage depth_image, motion_image, debug_image, output_image;
     vk::UniqueImageView depth_view, motion_view, debug_view;
     struct OutputViewEntry {
         vk::Format format{};
+        vk::ComponentMapping mapping{};
         vk::UniqueImageView view;
     };
-    std::array<OutputViewEntry, 2> output_views{};
+    std::array<OutputViewEntry, 4> output_views{};
+    u32 output_view_next = 0;
     struct SourceViewEntry {
         vk::Image image;
         u64 uid = 0;
