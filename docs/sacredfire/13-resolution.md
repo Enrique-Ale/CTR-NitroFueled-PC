@@ -44,7 +44,19 @@ patch can set any scale (signature `41 8b 44 24 48 41 89 86 48 05 00 00`):
 | (game default) | 2560x1440 | 3840x2160 | 88 FPS |
 | `b80000803f` (1.0) | 1920x1080 | 3840x2160 | works |
 | `b80000c03f` (1.5) | 2880x1620 | 3840x2160 | 87-106 FPS, clean |
-| `b800000040` (2.0) | - | - | game OOM at boot: `OOM [1]{7,Garlic}`; its GPU heap is fixed |
+| `b800000040` (2.0) | - | - | game OOM at boot: `OOM [1]{7,Garlic}` with the stock GPU heap |
+| 2.0 + GPU heap 1792 MiB | 3840x2160 | 3840x2160 | 97-110 FPS (limit 144), clean, BB_DMEM_MB=7168 |
 
 PS4 Pro mode must be on and the 1080p Pro patch off. The 4K display buffer is scaled to the
 window by the presenter, so on a 1080p monitor higher scales act as supersampling.
+
+## The game's GPU heap ("Garlic", vramB)
+
+0x1900330 allocates the game's two GPU heaps with sceKernelAllocateDirectMemory (2 MiB
+alignment): Onion (type 0) and Garlic (type 3), then maps them. Its caller at 0x1fbb143 takes
+the sizes from `ram:/alchemy.xml` keys `Gfx/@vramASize` (default 0x10000000, 256 MiB) and
+`Gfx/@vramBSize` (default 0x20000000, 512 MiB; on the Pro, after sceKernelIsNeoMode, the
+default is set at 0x1fbb938: `movl $0x3c000000,-0x38(%rbp)`, 960 MiB). The size is read back
+with movslq, so it must stay below 0x80000000. Native 4K with 2x MSAA did not fit in 960 MiB;
+0x70000000 (1792 MiB, byte 0x70 at 0x1fbb93e) does. More direct memory than the Pro's 5568 MiB
+is given with BB_DMEM_MB.
