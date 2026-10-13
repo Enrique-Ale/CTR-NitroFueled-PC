@@ -35,6 +35,7 @@ Mando Xbox / SDL (recomendado) y teclado al mismo tiempo:
   WASD = stick izquierdo, flechas = stick derecho, Espacio = X,
   LShift = circulo, E = cuadrado, Q = triangulo, 1/3 = L1/R1,
   R/F = L2/R2, Z/C = L3/R3, Enter = Options, IJKL = cruceta.
+  Las teclas se cambian en la pestana Teclado del launcher.
 Menu del port (parches 60 FPS, sin motion blur, 1080p Pro, limite FPS hasta 240,
 pantalla completa, FPS, idioma): tecla Insert o L3+R3. "Apply and restart" reinicia solo.
 Por defecto arranca en ventana y a 60 FPS; la pantalla completa y el limite de FPS

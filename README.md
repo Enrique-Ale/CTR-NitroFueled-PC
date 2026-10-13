@@ -14,6 +14,8 @@ files, timers) from Supermedo's Windows port of bbport, plus the fixes SacredFir
 of it: see [packaging/windows/README.md](packaging/windows/README.md).
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
+> Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
+> 6.72+ (experimental since v0.2.1: if it fails, open an issue with your `last_run.log`).
 > Not affiliated with or endorsed by Sony Interactive Entertainment, Activision or Beenox.
 > *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their owners, named
 > here only to identify the game this software runs.
@@ -28,6 +30,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
+| [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature; experimental); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
 
@@ -84,6 +87,8 @@ small runtime replaces the PS4 system libraries, and a renderer derived from
 Developed and tested on a Steam Deck.
 
 > **No game files are included.** You need your own dump of the game and its 1.21 update.
+> Both builds of the 1.21 update work: the one for firmware 5.05 (the reference) and the one for
+> 6.72+ (experimental since v0.2.1: if it fails, open an issue with your `last_run.log`).
 > This project is not affiliated with or endorsed by Sony Interactive Entertainment, Activision
 > or Beenox. *Crash Team Racing*, *Nitro-Fueled* and *PlayStation* are trademarks of their
 > owners, named here only to identify the game this software runs.
@@ -161,7 +166,8 @@ when the chosen one is missing. Split screen: assign pads to ports 2–4 in the 
 `port.N=<GUID>` in `bbport.ini`); each port logs a user in and out as the pad comes and goes.
 The keyboard works next to a gamepad: WASD left stick, arrow keys right stick, Space Cross,
 LShift Circle, E Square, Q Triangle, 1/3 L1/R1, R/F L2/R2, Z/C L3/R3, Enter Options, IJKL
-d-pad; `key.<input>=` and `pad.<input>=` lines in `bbport.ini` rebind them.
+d-pad. The launcher's *Keyboard* page rebinds them (`key.<input>=` lines in `bbport.ini`;
+`pad.<input>=` rebinds gamepad buttons).
 
 **PS4 Pro mode** (`BB_NEO=1`, the launcher's switch): the game sees a PS4 Pro (7-CPU mode,
 5568 MiB of direct memory) and takes its Pro rendering path; with the 1080p patch it renders
