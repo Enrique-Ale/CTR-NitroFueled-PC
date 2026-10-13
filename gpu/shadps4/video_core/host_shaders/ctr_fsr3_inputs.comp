@@ -6,9 +6,11 @@
 // - the static world: reprojected from the depth with the camera of this frame and the last
 //   (CTR's G-buffer constants carry both views): `prev` maps a view-space position of this frame
 //   to the previous frame's clip space;
-// - moving objects: CTR's velocity target (RGBA8, the motion blur's input) marks them in channel
-//   2 and stores their screen velocity in channels 0 and 1 around 127/255. Its scale is being
-//   worked out: the settings pick zero, linear or squared decoding.
+// - moving objects: CTR's velocity target (RGBA8, the motion blur's input) marks them in memory
+//   channel 2 (red through the game's BGRA view) and stores the object's own motion, without the
+//   camera's, in channels 1 and 0 (green and blue) around 127/255. Measured on the player's kart
+//   (docs/sacredfire/14-fsr3.md) no decoding beat leaving it still on the screen (the camera
+//   follows it), the default; the settings can add a decoded object term to the camera's motion.
 // `debug` replaces the frame shown with a view of these inputs (RGBA8 at render size).
 #version 450
 #extension GL_EXT_samplerless_texture_functions : require
@@ -68,10 +70,10 @@ void main() {
     if (moving && decoding > 0.5) {
         const vec2 e = vec2(raw[params.flags & 3u], raw[(params.flags >> 2) & 3u]) - params.object.z;
         const vec2 v = decoding > 1.5 ? sign(e) * e * e : e;
-        motion = v * params.object.xy;
+        motion += v * params.object.xy;
     } else if (moving) {
-        // Not decoded yet: a moving object near the camera (the player's kart) barely moves on
-        // the screen, which is closer than the world's motion behind it.
+        // A moving object near the camera (the player's kart) barely moves on the screen: closer
+        // than the world's motion behind it.
         motion = vec2(0.0);
     }
     // No infinities or NaNs into FSR 3 (sky, odd cameras in menus).

@@ -27,13 +27,14 @@ namespace Vulkan {
 
 namespace {
 
-// Moving objects' velocity (CTR's velocity target, channel 2 marks them): from
-// BB_FSR3_MV="sx,sy,bias,mode,cx,cy" while its scale is worked out. pixels = v * s, with
-// e = channel - bias and v = e (mode 1) or sign(e) e^2 (mode 2); mode 0 (default) leaves them
-// still on the screen. BB_FSR3_MV=nocamera also drops the camera's motion (tests).
+// Moving objects (CTR's velocity target, memory channel 2 marks them; their own motion in
+// channels 1 and 0): BB_FSR3_MV="sx,sy,bias,mode,cx,cy" adds pixels = v * s to the camera's
+// motion, with e = channel - bias and v = e (mode 1) or sign(e) e^2 (mode 2); mode 0 (default)
+// leaves them still on the screen, which measured best. BB_FSR3_MV=nocamera drops the camera's
+// motion (tests).
 struct Decode {
     float sx = 0.0f, sy = 0.0f, bias = 127.0f / 255.0f;
-    u32 mode = 0, cx = 0, cy = 1;
+    u32 mode = 0, cx = 1, cy = 0;
     bool camera = true;
 };
 
