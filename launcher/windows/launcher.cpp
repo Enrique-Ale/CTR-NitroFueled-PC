@@ -244,6 +244,25 @@ std::uintmax_t FolderBytes(const fs::path& dir) {
     return total;
 }
 
+// Some dump tools put the game one folder down (Image0\eboot.bin, Image0\sce_sys): a folder
+// without eboot.bin whose only game subfolder (Image0 or another) has one stands for it.
+fs::path GameRoot(const fs::path& dir) {
+    std::error_code ec;
+    const auto is_game = [&](const fs::path& d) {
+        return fs::is_regular_file(d / L"eboot.bin", ec) && fs::is_regular_file(d / L"sce_sys" / L"param.sfo", ec);
+    };
+    if (dir.empty() || is_game(dir)) return dir;
+    if (is_game(dir / L"Image0")) return dir / L"Image0";
+    fs::path found;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->is_directory(ec) && is_game(it->path())) {
+            if (!found.empty()) return dir;  // more than one: the player chooses
+            found = it->path();
+        }
+    }
+    return found.empty() ? dir : found;
+}
+
 FolderInfo Analyze(const fs::path& dir) {
     FolderInfo info;
     if (dir.empty()) return info;
@@ -839,8 +858,9 @@ void StartProbe() {
 void ChooseFolder(fs::path& slot, FolderInfo& info, const wchar_t* title) {
     App& a = g_app;
     fs::path start = slot.empty() ? (a.base_dir.empty() ? a.root : a.base_dir.parent_path()) : slot.parent_path();
-    const auto picked = PickFolder(a.hwnd, title, start);
+    auto picked = PickFolder(a.hwnd, title, start);
     if (!picked) return;
+    *picked = GameRoot(*picked);
     const FolderInfo found = Analyze(*picked);
     // Whatever was picked goes where it belongs.
     switch (found.kind) {
