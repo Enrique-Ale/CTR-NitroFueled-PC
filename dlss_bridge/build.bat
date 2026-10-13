@@ -10,6 +10,7 @@ call "%VS%\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
 cd /d "%~dp0"
 cl /nologo /O2 /MT /EHsc /std:c++20 /LD /DNOMINMAX /DWIN32_LEAN_AND_MEAN /I"%SDK%\include" /I"%VKINC%" ^
    shadps4_dlss_bridge.cpp /Fo"%TEMP%\\" /link "%SDK%\lib\Windows_x86_64\vs2010\x64\nvsdk_ngx_s.lib" ^
+   advapi32.lib user32.lib legacy_stdio_definitions.lib ^
    /OUT:sacredfire_dlss.dll /IMPLIB:"%TEMP%\sacredfire_dlss.lib" || exit /b 1
 echo Built %~dp0sacredfire_dlss.dll
 exit /b 0
