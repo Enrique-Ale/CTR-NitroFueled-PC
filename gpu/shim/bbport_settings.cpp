@@ -82,8 +82,13 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "fsr1") {
         v.fsr1 = i != 0;
+    } else if (key == "temporal") {
+        for (int t = 0; t < TemporalCount; ++t) {
+            if (value == TemporalNames[t]) v.temporal = t;
+        }
     } else if (key == "fsr3") {
-        v.fsr3 = i != 0;
+        // Test builds before `temporal`.
+        if (i != 0 && v.temporal == TemporalOff) v.temporal = TemporalFsr3;
     } else if (key == "fsr3_sharpness") {
         v.fsr3_sharpness = Clamp(f, 0.0f, 1.0f);
     } else if (key == "render_res") {
@@ -188,7 +193,12 @@ void Load() {
     // SacredFire: BB_FULLSCREEN=1 starts fullscreen; the menu toggles it later (window.cpp
     // applies the setting on the window thread, so the checkbox takes effect at once).
     if (const char* fsr3 = std::getenv("BB_FSR3")) {
-        v.fsr3 = fsr3[0] == '1';
+        v.temporal = fsr3[0] == '1' ? TemporalFsr3 : TemporalOff;
+    }
+    if (const char* temporal = std::getenv("BB_TEMPORAL")) {
+        for (int t = 0; t < TemporalCount; ++t) {
+            if (std::strcmp(temporal, TemporalNames[t]) == 0) v.temporal = t;
+        }
     }
     if (const char* full = std::getenv("BB_FULLSCREEN")) {
         v.fullscreen = full[0] == '1';
@@ -288,7 +298,7 @@ void Save() {
     put("model_lod", std::to_string(v.model_lod.load()));
     if (v.render_res >= 0) put("render_res", std::to_string(RenderResHeights[v.render_res]));
     put("fsr1", flag(v.fsr1));
-    put("fsr3", flag(v.fsr3));
+    put("temporal", TemporalNames[std::clamp(v.temporal.load(), 0, TemporalCount - 1)]);
     put("fsr3_sharpness", fixed(v.fsr3_sharpness, 2));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));

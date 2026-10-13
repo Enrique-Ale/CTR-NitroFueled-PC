@@ -67,6 +67,10 @@ inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 /// SacredFire: controller ports for split screen (bbport.ini port.1..4: SDL GUID or part of the
 /// gamepad name; the runtime re-reads the file when the menu saves it).
 constexpr int ControllerPorts = 4;
+/// SacredFire: `temporal` values (bbport.ini temporal=off|fsr3|dlss).
+enum Temporal : int { TemporalOff = 0, TemporalFsr3 = 1, TemporalDlss = 2, TemporalCount = 3 };
+inline constexpr const char* TemporalNames[TemporalCount] = {"off", "fsr3", "dlss"};
+
 struct Values {
     std::array<std::array<char, 64>, ControllerPorts> ports{}; ///< guarded by PortsMutex()
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
@@ -105,8 +109,9 @@ struct Values {
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> render_res{-1}; ///< index into RenderResHeights, -1 when not set
     std::atomic<bool> fsr1{true}; ///< SacredFire: FSR 1 for the game's scene-to-display stretch
-    /// SacredFire: FSR 3 temporal upscaling/AA of the finished frame (vk_ctr_fsr3; experimental).
-    std::atomic<bool> fsr3{false};
+    /// SacredFire: temporal upscaling/AA of the finished frame (vk_ctr_fsr3; experimental):
+    /// TemporalOff, TemporalFsr3 or TemporalDlss (FSR 3 where DLSS cannot run).
+    std::atomic<int> temporal{0};
     std::atomic<float> fsr3_sharpness{0.3f}; ///< FSR 3's RCAS, 0 off .. 1
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest

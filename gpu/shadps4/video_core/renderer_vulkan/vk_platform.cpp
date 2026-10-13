@@ -21,6 +21,7 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "sdl_window.h"
+#include "video_core/renderer_vulkan/vk_dlss_ngx.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
 #ifdef __APPLE__
@@ -286,7 +287,11 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
                VK_VERSION_MAJOR(available_version), VK_VERSION_MINOR(available_version));
 
     const auto layers = GetInstanceLayers(enable_validation, enable_crash_diagnostic);
-    const auto extensions = GetLayerExtensions(GetInstanceExtensions(window_type, true), layers);
+    auto extensions = GetLayerExtensions(GetInstanceExtensions(window_type, true), layers);
+    // SacredFire: the instance extensions NVIDIA's DLSS needs (when its bridge is present).
+    if (auto* dlss = DlssNgx::Get()) {
+        dlss->AppendInstanceExtensions(extensions);
+    }
 
     const vk::ApplicationInfo application_info = {
         .pApplicationName = "shadPS4",

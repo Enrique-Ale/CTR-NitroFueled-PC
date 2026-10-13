@@ -1590,14 +1590,36 @@ void SettingsTab() {
                "AMD FSR 1 la agranda en vez del estirado simple del juego: bordes y detalles más nítidos.",
                "When the scene is smaller than the picture (720p, 480p, and 1440p or 1620p in the 4K picture), "
                "AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges and detail."));
-    GameFlag("fsr3", T("FSR 3 (experimental)", "FSR 3 (experimental)"), false,
-             T("Escalado temporal AMD FSR 3.1: reconstruye el detalle a lo largo de varios cuadros con la "
-               "profundidad y el movimiento del juego, más nítido y estable que FSR 1. A la misma resolución "
-               "también suaviza los bordes. Experimental: si ves estelas o parpadeos, desactívalo.",
-               "AMD FSR 3.1 temporal upscaling: rebuilds detail over several frames from the game's depth and "
-               "motion, sharper and steadier than FSR 1. At the same resolution it also smooths edges. "
-               "Experimental: turn it off if you see trails or shimmering."));
-    if (a.game.Flag("fsr3", false)) {
+    {
+        // temporal=off|fsr3|dlss (bbport.ini); fsr3=1 from test builds counts as fsr3.
+        static constexpr Choice kTemporal[] = {
+            {"Desactivado", "Off", "off"}, {"AMD FSR 3", "AMD FSR 3", "fsr3"}, {"NVIDIA DLSS", "NVIDIA DLSS", "dlss"}};
+        std::string current = a.game.Get("temporal", a.game.Flag("fsr3", false) ? "fsr3" : "off");
+        const Choice* selected = &kTemporal[0];
+        for (const auto& c : kTemporal)
+            if (current == c.value) selected = &c;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (ImGui::BeginCombo(T("Escalado temporal (experimental)", "Temporal upscaling (experimental)"),
+                              T(selected->es, selected->en))) {
+            for (const auto& c : kTemporal) {
+                if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
+                    a.game.Set("temporal", c.value);
+                    a.game.Erase("fsr3");
+                    SaveGameIni();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        HelpMarker(T("Reconstruye el detalle a lo largo de varios cuadros con la profundidad y el movimiento del juego: "
+                     "más nítido y estable que FSR 1, y a la misma resolución también suaviza los bordes. DLSS necesita "
+                     "una tarjeta NVIDIA RTX y sus archivos junto al juego (si no, se usa FSR 3). Experimental: si ves "
+                     "estelas o parpadeos, desactívalo.",
+                     "Rebuilds detail over several frames from the game's depth and motion: sharper and steadier than "
+                     "FSR 1, and at the same resolution it also smooths edges. DLSS needs an NVIDIA RTX card and its "
+                     "files next to the game (FSR 3 runs otherwise). Experimental: turn it off if you see trails or "
+                     "shimmering."));
+    }
+    if (a.game.Get("temporal", a.game.Flag("fsr3", false) ? "fsr3" : "off") == "fsr3") {
         float sharp = float(std::atof(a.game.Get("fsr3_sharpness", "0.30").c_str()));
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
         if (ImGui::SliderFloat(T("Nitidez de FSR 3", "FSR 3 sharpness"), &sharp, 0.0f, 1.0f, "%.2f")) {

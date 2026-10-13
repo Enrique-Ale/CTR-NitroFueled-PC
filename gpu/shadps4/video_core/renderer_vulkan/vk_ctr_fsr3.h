@@ -119,7 +119,9 @@ private:
         vk::Format format{};
         vk::UniqueImageView view;
     };
-    std::array<SourceViewEntry, 2> source_views{};
+    std::array<SourceViewEntry, 3> source_views{}; ///< depth, velocity, the frame (DLSS)
+    vk::UniqueImageView output_storage_view;       ///< DLSS writes the output through it
+    bool dlss_failed = false, dlss_warned = false, last_dlss = false;
 
     vk::UniqueDescriptorSetLayout desc_layout;
     vk::UniquePipelineLayout pipeline_layout;

@@ -513,13 +513,28 @@ void Menu() {
             ImGui::EndCombo();
         }
         Checkbox(BbSettings::MenuText("FSR 1 upscaling", "Апскейл FSR 1"), s.fsr1);
-        Checkbox(BbSettings::MenuText("FSR 3 (experimental)", "FSR 3 (экспериментально)"), s.fsr3);
+        {
+            static constexpr const char* temporal_labels[BbSettings::TemporalCount] = {
+                "Off", "AMD FSR 3", "NVIDIA DLSS"};
+            const int current = std::clamp(s.temporal.load(), 0, BbSettings::TemporalCount - 1);
+            if (ImGui::BeginCombo(BbSettings::MenuText("Temporal upscaling (experimental)",
+                                                       "Временной апскейл (эксперимент)"),
+                                  temporal_labels[current])) {
+                for (int t = 0; t < BbSettings::TemporalCount; ++t) {
+                    if (ImGui::Selectable(temporal_labels[t], t == current)) {
+                        Store(s.temporal, t, t != current);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
         Hint(BbSettings::MenuText(
-            "AMD FSR 3.1 temporal upscaling: rebuilds detail over several frames from the game's "
-            "depth and motion. Also smooths edges at the same resolution. Experimental: may smear "
-            "or shimmer. Applies at once; takes over from FSR 1 in races.",
-            "Временной апскейл AMD FSR 3.1. Экспериментально. Применяется сразу."));
-        if (s.fsr3) {
+            "Rebuilds detail over several frames from the game's depth and motion: sharper and "
+            "steadier than FSR 1, and smooths edges at the same resolution. DLSS needs an RTX GPU "
+            "and its files next to the game (FSR 3 runs otherwise). Experimental. Applies at once.",
+            "Восстанавливает детали за несколько кадров. DLSS нужна видеокарта RTX. "
+            "Экспериментально. Применяется сразу."));
+        if (s.temporal == BbSettings::TemporalFsr3) {
             Slider(BbSettings::MenuText("FSR 3 sharpness", "Резкость FSR 3"), s.fsr3_sharpness,
                    0.0f, 1.0f);
         }

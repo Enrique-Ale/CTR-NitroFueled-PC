@@ -16,6 +16,7 @@
 #include "video_core/host_shaders/ctr_fsr3_inputs_d_comp.h"
 #include "video_core/host_shaders/ctr_fsr3_inputs_dv_comp.h"
 #include "video_core/host_shaders/ctr_fsr3_inputs_v_comp.h"
+#include "video_core/renderer_vulkan/vk_dlss_ngx.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -204,7 +205,7 @@ CtrFsr3::~CtrFsr3() {
 }
 
 bool CtrFsr3::Enabled() const {
-    return !failed && BbSettings::Get().fsr3;
+    return !failed && BbSettings::Get().temporal != BbSettings::TemporalOff;
 }
 
 void CtrFsr3::OnGBufferPass(VideoCore::ImageId depth, VideoCore::ImageId velocity_,
@@ -443,6 +444,16 @@ bool CtrFsr3::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, vk::Format format) {
          vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
              vk::ImageUsageFlagBits::eTransferSrc,
          &list, vk::ImageCreateFlagBits::eMutableFormat);
+    {
+        const vk::ImageViewUsageCreateInfo storage{.usage = vk::ImageUsageFlagBits::eStorage};
+        output_storage_view = Check(device.createImageViewUnique({
+            .pNext = &storage,
+            .image = vk::Image(output_image),
+            .viewType = vk::ImageViewType::e2D,
+            .format = format,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        }));
+    }
     CreatePipelines();
 
     // The images start in General: FSR 3 reads and writes them there.
@@ -541,6 +552,47 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         }
     }
     last_frame = now;
+
+    // DLSS when it is chosen and can run (an RTX GPU, the bridge and nvngx_dlss.dll next to the
+    // game); FSR 3 otherwise. A new DLSS feature is made with the GPU idle, before this frame's
+    // commands.
+    bool use_dlss = false;
+    if (BbSettings::Get().temporal == BbSettings::TemporalDlss && !dlss_failed) {
+        auto* dlss = DlssNgx::Get();
+        if (dlss && dlss->IsAvailable()) {
+            static const u32 preset = [] {
+                const char* env = std::getenv("BB_DLSS_PRESET");
+                return env ? u32(std::atoi(env)) : 0u;
+            }();
+            const DlssNgx::FeatureDesc desc{w, h, out.width, out.height,
+                                            DlssNgx::QualityForScale(float(out.width) / float(w)),
+                                            false, preset, false};
+            if (!dlss->HasFeature(desc)) {
+                scheduler.Finish();
+                if (dlss->CreateFeature(scheduler.CommandBuffer(), desc)) {
+                    reset = true;
+                    std::printf("DLSS: %ux%u -> %ux%u, quality %d, preset %u\n", w, h, out.width,
+                                out.height, desc.quality, preset);
+                } else {
+                    dlss_failed = true;
+                    std::printf("DLSS: the feature could not be created; FSR 3 from now on\n");
+                }
+                std::fflush(stdout);
+            }
+            use_dlss = !dlss_failed;
+        } else if (!dlss_warned) {
+            dlss_warned = true;
+            std::printf("DLSS: not available (%s); FSR 3 instead\n",
+                        dlss ? dlss->Problem().c_str()
+                             : "sacredfire_dlss.dll or nvngx_dlss.dll is not next to the game");
+            std::fflush(stdout);
+        }
+    }
+    if (use_dlss != last_dlss) {
+        last_dlss = use_dlss;
+        reset = true;
+        std::printf("Temporal upscaling: %s\n", use_dlss ? "DLSS" : "FSR 3");
+    }
 
     runtime.Transit(&source, vk::ImageLayout::eShaderReadOnlyOptimal,
                     vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderRead);
@@ -658,7 +710,63 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         return *debug_view;
     }
 
-    // 2. FSR 3.
+    // 2. DLSS: its inputs in shader-read layout, the output in General.
+    if (use_dlss) {
+        const auto transition = [&](vk::Image image, vk::ImageLayout from, vk::ImageLayout to) {
+            return vk::ImageMemoryBarrier2{
+                .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+                .oldLayout = from,
+                .newLayout = to,
+                .image = image,
+                .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+            };
+        };
+        const auto ro = vk::ImageLayout::eShaderReadOnlyOptimal, general = vk::ImageLayout::eGeneral;
+        const std::array to_read{transition(vk::Image(depth_image), general, ro),
+                                 transition(vk::Image(motion_image), general, ro)};
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(to_read.size()),
+                                 .pImageMemoryBarriers = to_read.data()});
+        constexpr vk::ImageSubresourceRange color_range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+        const DlssNgx::Resource color{source.GetImage(),
+                                      SourceView(source, source.info.pixel_format,
+                                                 vk::ImageAspectFlagBits::eColor, 2),
+                                      color_range, source.info.pixel_format, {w, h}};
+        const DlssNgx::Resource depth_res{vk::Image(depth_image), *depth_view, color_range,
+                                          vk::Format::eR32Sfloat, {w, h}};
+        const DlssNgx::Resource motion_res{vk::Image(motion_image), *motion_view, color_range,
+                                           vk::Format::eR16G16Sfloat, {w, h}};
+        const DlssNgx::Resource output_res{vk::Image(output_image), *output_storage_view,
+                                           color_range, output_format, {out.width, out.height}};
+        const float sign = std::getenv("BB_DLSS_JITTER_FLIP") ? -1.0f : 1.0f;
+        const DlssNgx::EvalDesc eval{sign * frame_jitter[0], sign * frame_jitter[1], reset,
+                                     frame_ms};
+        const bool ok = DlssNgx::Get()->Evaluate(cmdbuf, color, depth_res, motion_res, output_res,
+                                                eval);
+        scheduler.GetDynamicState().Invalidate(); // NGX records its own Vulkan state
+        const std::array back{transition(vk::Image(depth_image), ro, general),
+                              transition(vk::Image(motion_image), ro, general),
+                              transition(vk::Image(output_image), general, general)};
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(back.size()),
+                                 .pImageMemoryBarriers = back.data()});
+        if (!ok) {
+            dlss_failed = true;
+            std::printf("DLSS: evaluation failed; FSR 3 from now on\n");
+            std::fflush(stdout);
+            return {};
+        }
+        reset = false;
+        if (last_skip) {
+            last_skip = nullptr;
+            std::printf("DLSS: upscaling again\n");
+        }
+        layout = vk::ImageLayout::eGeneral;
+        return OutputView(view_format, mapping);
+    }
+
+    // 3. FSR 3.
     float near_plane = 16.0f, far_plane = 150000.0f, fov = 1.2870f;
     if (camera_valid) {
         // Projection at floats 48-63 (column-major, OpenGL style): [5] = 1/tan(fov/2),
@@ -730,6 +838,7 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
         failed = true;
         return {};
     }
+    scheduler.GetDynamicState().Invalidate(); // FSR records its own Vulkan state
     reset = false;
     if (last_skip) {
         last_skip = nullptr;

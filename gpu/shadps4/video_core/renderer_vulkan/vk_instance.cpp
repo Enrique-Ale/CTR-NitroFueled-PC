@@ -13,6 +13,7 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_dlss_ngx.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -202,6 +203,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 }
 
 Instance::~Instance() {
+    if (auto* dlss = DlssNgx::Get()) {
+        dlss->Shutdown(); // NGX before the device goes
+    }
     ImGui::Core::Shutdown(GetDevice());
     vmaDestroyAllocator(allocator);
 }
@@ -453,6 +457,17 @@ bool Instance::CreateDevice() {
         }
     }
 
+    // SacredFire: the device extensions NVIDIA's DLSS needs (RTX GPUs, when its bridge is present).
+    if (auto* dlss = DlssNgx::Get()) {
+        const std::vector<std::string> already(enabled_extensions.begin(), enabled_extensions.end());
+        for (const char* name : dlss->DeviceExtensions(*instance, physical_device, already)) {
+            if (enabled_extensions.size() < enabled_extensions.capacity()) {
+                LOG_INFO(Render_Vulkan, "Enabling extension for DLSS: {}", name);
+                enabled_extensions.push_back(name);
+            }
+        }
+    }
+
     const auto vk11_features = feature_chain.get<vk::PhysicalDeviceVulkan11Features>();
     vk12_features = feature_chain.get<vk::PhysicalDeviceVulkan12Features>();
     vk13_features = feature_chain.get<vk::PhysicalDeviceVulkan13Features>();
@@ -691,6 +706,9 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    if (auto* dlss = DlssNgx::Get()) {
+        dlss->Initialize(*instance, physical_device, *device);
+    }
 
     graphics_queue = device->getQueue(queue_family_index, 0);
     present_queue = device->getQueue(queue_family_index, 0);
