@@ -12,7 +12,7 @@ The C interface (`shadps4_dlss_bridge.h`) is unchanged.
 ## Building (Windows, Visual Studio 2022)
 
 1. Get the NVIDIA DLSS SDK from [github.com/NVIDIA/DLSS](https://github.com/NVIDIA/DLSS)
-   (`include/`, `lib/Windows_x86_64/vs2010/x64/nvsdk_ngx_s.lib`,
+   (`include/`, `lib/Windows_x86_64/x64/nvsdk_ngx_s.lib`,
    `lib/Windows_x86_64/rel/nvngx_dlss.dll`). It is licensed by NVIDIA under its own terms
    (`LICENSE.txt` in the SDK) and is not part of this repository.
 2. `build.bat <DLSS SDK folder> <folder with vulkan/vulkan.h>` builds `sacredfire_dlss.dll`
