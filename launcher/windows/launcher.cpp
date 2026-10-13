@@ -1590,6 +1590,23 @@ void SettingsTab() {
                "AMD FSR 1 la agranda en vez del estirado simple del juego: bordes y detalles más nítidos.",
                "When the scene is smaller than the picture (720p, 480p, and 1440p or 1620p in the 4K picture), "
                "AMD FSR 1 enlarges it instead of the game's plain stretch: sharper edges and detail."));
+    GameFlag("fsr3", T("FSR 3 (experimental)", "FSR 3 (experimental)"), false,
+             T("Escalado temporal AMD FSR 3.1: reconstruye el detalle a lo largo de varios cuadros con la "
+               "profundidad y el movimiento del juego, más nítido y estable que FSR 1. A la misma resolución "
+               "también suaviza los bordes. Experimental: si ves estelas o parpadeos, desactívalo.",
+               "AMD FSR 3.1 temporal upscaling: rebuilds detail over several frames from the game's depth and "
+               "motion, sharper and steadier than FSR 1. At the same resolution it also smooths edges. "
+               "Experimental: turn it off if you see trails or shimmering."));
+    if (a.game.Flag("fsr3", false)) {
+        float sharp = float(std::atof(a.game.Get("fsr3_sharpness", "0.30").c_str()));
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+        if (ImGui::SliderFloat(T("Nitidez de FSR 3", "FSR 3 sharpness"), &sharp, 0.0f, 1.0f, "%.2f")) {
+            char text[16];
+            std::snprintf(text, sizeof text, "%.2f", sharp);
+            a.game.Set("fsr3_sharpness", text);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveGameIni();
+    }
     GameFlag("fullscreen", T("Pantalla completa", "Fullscreen"), false);
     GameFlag("show_fps", T("Contador de FPS en la esquina", "FPS counter in the corner"), false);
     {
