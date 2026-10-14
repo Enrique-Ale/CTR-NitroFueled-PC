@@ -28,6 +28,10 @@ void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
+/* Prepared-image accessors (probe.c): guest address == host address. */
+uintptr_t runtime_probe_image(uint64_t *size);
+void runtime_probe_read_image(uintptr_t address, void *data, uint64_t size);
+int runtime_probe_write_image(uintptr_t address, const void *data, uint64_t size);
 /* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);

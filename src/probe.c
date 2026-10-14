@@ -32,6 +32,10 @@ typedef struct { uint64_t target, kind, value, addend; } Reloc;
 static char (*names)[128];
 static uint64_t import_count;
 static unsigned char *image;
+static uint64_t image_size;
+/* Prepared-image layout kept for in-place development writes (online test key). */
+static Segment image_segments[64];
+static uint64_t image_segment_count;
 static size_t page_size;
 typedef struct { uint64_t base, size, init, tls_address, tls_memsz, tls_filesz, tls_module; } LinkedModule;
 static LinkedModule modules[16];
@@ -109,6 +113,37 @@ static void protect(void *p, size_t size, unsigned flags) {
     int mode = ((flags & 4) ? PROT_READ : 0) | ((flags & 2) ? PROT_WRITE : 0) | ((flags & 1) ? PROT_EXEC : 0);
     if (mprotect(p, size, mode)) fail("mprotect failed");
 #endif
+}
+/* SacredFire online test key: the prepared image is host memory the guest addresses
+ * directly (guest address == host address). In-place development writes, used only
+ * with online play pointed at a private server. */
+uintptr_t runtime_probe_image(uint64_t *size) {
+    if (size) *size = image_size;
+    return (uintptr_t)image;
+}
+void runtime_probe_read_image(uintptr_t address, void *data, uint64_t size) {
+    memcpy(data, (const void *)address, (size_t)size);
+}
+int runtime_probe_write_image(uintptr_t address, const void *data, uint64_t size) {
+    const uintptr_t base = (uintptr_t)image;
+    if (!image || !size || address < base || address - base > image_size ||
+        size > image_size || address - base > image_size - size) return 0;
+    /* protect() needs page granularity: round the range out to RW... */
+    const uintptr_t lo = address & ~(uintptr_t)(page_size - 1);
+    const uintptr_t hi = (address + size + page_size - 1) & ~(uintptr_t)(page_size - 1);
+    protect((void *)lo, (size_t)(hi - lo), 6);
+    memcpy((void *)address, data, (size_t)size);
+    /* ...then restore each overlapping segment's own flags over the same rounded
+     * range. The key range always sits inside one segment. */
+    for (uint64_t i = 0; i < image_segment_count; ++i) {
+        const uintptr_t s = base + image_segments[i].address;
+        const uintptr_t e = s + image_segments[i].size;
+        if (s < hi && lo < e) {
+            uintptr_t a = s > lo ? s : lo, b = e < hi ? e : hi;
+            if (a < b) protect((void *)a, (size_t)(b - a), (unsigned)image_segments[i].flags);
+        }
+    }
+    return 1;
 }
 static ABI __attribute__((noreturn)) void unresolved(uint32_t id, uintptr_t argument) {
     if (id >= import_count) fail("bad import trap index");
@@ -661,6 +696,8 @@ int main(int argc, char **argv) {
         if (segments[i].address > size || segments[i].size > size - segments[i].address ||
             segments[i].address % page_size || segments[i].flags > 7) fail("bad segment");
     }
+    image_segment_count = ns < 64 ? ns : 64;
+    for (uint64_t i = 0; i < image_segment_count; ++i) image_segments[i] = segments[i];
     if (fread(names, 128, import_count, f) != import_count) fail("truncated import names");
     for (uint64_t i = 0; i < import_count; ++i)
         if (!memchr(names[i], 0, 128)) fail("unterminated import name");
@@ -689,6 +726,7 @@ int main(int argc, char **argv) {
         }
     }
     image = allocate(round_page(size));
+    image_size = size;
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);
     if (!cpu_only) {

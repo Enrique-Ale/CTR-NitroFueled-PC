@@ -108,6 +108,220 @@ static struct {
 static pthread_once_t cfg_once=PTHREAD_ONCE_INIT;
 static pthread_mutex_t net_lock=PTHREAD_MUTEX_INITIALIZER;
 
+/* ---- Demonware test key (development only, private server) ----
+ * The client checks the auth reply signature with Demonware's embedded RSA-2048
+ * public key before reading any ticket, so a private server cannot complete the
+ * login with the official key. With BB_DW_TEST_KEY pointing at a 294-byte test
+ * SPKI (tools/online/dw_keygen.py), the embedded key is swapped in guest memory,
+ * in place, and the private server signs with the matching test key. Without
+ * BB_DW_TEST_KEY (and always offline) nothing here runs. */
+#define DW_SPKI_LEN 294
+#define DW_KEY_IMAGE_OFF ((uintptr_t)0x1becf80) /* eboot VA; verified at runtime, scanned if moved */
+/* Demonware's RSA-2048 SPKI (public key only): the pattern searched in guest memory. */
+static const unsigned char dw_official_spki[DW_SPKI_LEN] = {
+    0x30, 0x82, 0x01, 0x22, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+    0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x03, 0x82, 0x01, 0x0f, 0x00,
+    0x30, 0x82, 0x01, 0x0a, 0x02, 0x82, 0x01, 0x01, 0x00, 0xc0, 0xa2, 0x0b,
+    0x1f, 0x6c, 0xb8, 0x1b, 0x12, 0x70, 0xed, 0x1a, 0xef, 0x30, 0x6c, 0x75,
+    0x9d, 0xc1, 0x08, 0x89, 0x99, 0xf0, 0x2a, 0xc8, 0xac, 0x2f, 0xc7, 0xd5,
+    0xd0, 0x3b, 0x61, 0x29, 0x39, 0xf3, 0x8f, 0x62, 0x39, 0xda, 0xf1, 0x20,
+    0x11, 0xe7, 0x92, 0xe9, 0x16, 0x24, 0x22, 0x96, 0x09, 0x9e, 0xac, 0x19,
+    0xcd, 0x24, 0x3e, 0x58, 0xc6, 0x40, 0x86, 0x78, 0xd7, 0xdf, 0x70, 0x77,
+    0xcb, 0xde, 0x80, 0x42, 0xb1, 0x38, 0xf3, 0x1d, 0x6a, 0x3c, 0x98, 0xe4,
+    0x85, 0xdb, 0xfb, 0x53, 0x3a, 0x86, 0x47, 0xce, 0x58, 0xb1, 0xd3, 0xd7,
+    0x0b, 0x83, 0x3d, 0x14, 0x6b, 0xda, 0x40, 0x24, 0x1f, 0x16, 0x2b, 0x0e,
+    0x49, 0x22, 0xe4, 0xb7, 0x63, 0xff, 0xaa, 0x40, 0xc2, 0x44, 0xdf, 0xdc,
+    0x3f, 0x8c, 0x1e, 0x60, 0xb4, 0x6f, 0x3e, 0xda, 0xb2, 0x4e, 0x50, 0xca,
+    0xfc, 0x62, 0x4b, 0x62, 0xc7, 0xe1, 0x77, 0x5e, 0x83, 0xcd, 0xe0, 0xb5,
+    0xfc, 0xc6, 0xaa, 0xa0, 0xc2, 0x6b, 0x28, 0xcc, 0x8a, 0xa7, 0x95, 0x7b,
+    0x1e, 0x67, 0xe0, 0x5b, 0xaf, 0xc6, 0x54, 0x49, 0xe6, 0xac, 0x7a, 0x8d,
+    0x1d, 0xe6, 0x7d, 0x12, 0x04, 0x94, 0xc3, 0x23, 0x4a, 0x00, 0x60, 0x58,
+    0x33, 0x6f, 0xe7, 0x94, 0x19, 0xff, 0xf6, 0xe0, 0xc6, 0x40, 0x50, 0xb7,
+    0x9d, 0x0e, 0xcd, 0xdf, 0xe7, 0x92, 0x5d, 0x84, 0x94, 0x13, 0x06, 0x61,
+    0xbc, 0x44, 0x75, 0x54, 0x70, 0x54, 0x77, 0x4c, 0xc0, 0x28, 0x7d, 0xfc,
+    0xc9, 0x9a, 0x92, 0x38, 0xd4, 0xd5, 0xee, 0xf3, 0x27, 0x44, 0x66, 0x13,
+    0x2c, 0x06, 0xf0, 0x64, 0xe7, 0xec, 0xf8, 0x75, 0xfd, 0x15, 0xd4, 0x1b,
+    0x91, 0x45, 0x9d, 0x4a, 0x3f, 0x40, 0xe9, 0x35, 0x53, 0x7f, 0xfc, 0x96,
+    0x61, 0xe1, 0x48, 0x74, 0x21, 0xf0, 0x04, 0x20, 0x41, 0x30, 0x02, 0xd2,
+    0xf9, 0x02, 0x03, 0x01, 0x00, 0x01,
+};
+static unsigned char dw_test_spki[DW_SPKI_LEN];
+static int dw_test_key_ready;   /* test SPKI loaded from BB_DW_TEST_KEY */
+static int dw_test_key_logged;  /* one log line per run about test-key mode */
+static int dw_key_swapped;      /* swap completed (guest address in dw_key_addr) */
+static int dw_scan_done;        /* bounded scan attempted at most once */
+static uintptr_t dw_key_addr;
+#define DW_SIGFN_IMAGE_OFF ((uintptr_t)0x14300) /* FUN_00014300: X-Signature check, only caller 0x13eb9 */
+static const unsigned char dw_sigfn_bypass[6] = {0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3}; /* mov eax,1; ret */
+#define DW_VALIDATE_IMAGE_OFF ((uintptr_t)0x1410e) /* call [rax+0x50]: reply-JSON validator virtual */
+static const unsigned char dw_validate_orig[3] = {0xff, 0x50, 0x50};
+static const unsigned char dw_validate_bypass[3] = {0xb0, 0x01, 0x90}; /* mov al,1; nop */
+#define DW_HANDLER_IMAGE_OFF ((uintptr_t)0x13d30) /* FUN_00013d30: whole auth reply handler */
+static const unsigned char dw_handler_force700[6] = {0xb8, 0xbc, 0x02, 0x00, 0x00, 0xc3}; /* mov eax,700; ret */
+#define DW_CHECK40_IMAGE_OFF ((uintptr_t)0x13e73) /* call [rax+0x40]: reply task-id check virtual */
+static const unsigned char dw_check40_orig[3] = {0xff, 0x50, 0x40};
+static const unsigned char dw_check40_bypass[3] = {0xb0, 0x01, 0x90}; /* mov al,1; nop */
+static int dw_nosig_applied, dw_novalidate_applied, dw_force700_applied, dw_no40check_applied;
+static void dw_test_key_load(void) {
+    const char *path=getenv("BB_DW_TEST_KEY");
+    if (!path || !*path || dw_test_key_ready) return;
+    FILE *f=fopen(path,"rb");
+    unsigned char buf[DW_SPKI_LEN];
+    const size_t n=f ? fread(buf,1,sizeof buf,f) : 0;
+    const int extra=f && fgetc(f)!=EOF;
+    if (f) fclose(f);
+    if (n!=sizeof buf || extra) {
+        printf("Net: online: test key '%s' unreadable (need exactly %d DER bytes): auth signatures will fail\n",
+               path,DW_SPKI_LEN);
+        return;
+    }
+    if (!memcmp(buf,dw_official_spki,sizeof buf)) {
+        printf("Net: online: test key '%s' is the official key: refusing to swap a key for itself\n",path);
+        return;
+    }
+    memcpy(dw_test_spki,buf,sizeof buf);
+    dw_test_key_ready=1;
+}
+static int dw_swap_at(uintptr_t addr) {
+    unsigned char cur[DW_SPKI_LEN];
+    runtime_probe_read_image(addr,cur,sizeof cur);
+    if (!memcmp(cur,dw_test_spki,sizeof cur)) { dw_key_addr=addr; return 1; } /* already swapped */
+    if (memcmp(cur,dw_official_spki,sizeof cur)) return 0;
+    if (!runtime_probe_write_image(addr,dw_test_spki,sizeof dw_test_spki)) {
+        printf("Net: online: test key swap failed at image offset 0x%llx\n",
+               (unsigned long long)(addr - runtime_probe_image(NULL)));
+        return 0;
+    }
+    dw_key_addr=addr;
+    printf("Net: online: Demonware test key installed at image offset 0x%llx (private server only)\n",
+           (unsigned long long)(addr - runtime_probe_image(NULL)));
+    return 1;
+}
+/* Called with online on: from configure() and before each Demonware /auth/ request. */
+static void dw_test_key_ensure(void) {
+    pthread_mutex_lock(&net_lock);
+    dw_test_key_load();
+    if (dw_test_key_ready && !dw_test_key_logged) {
+        dw_test_key_logged=1;
+        printf("Net: online: test-key mode (BB_DW_TEST_KEY): auth replies must carry X-Signature from the test key\n");
+    }
+    if (dw_test_key_ready && !dw_key_swapped) {
+        uint64_t image_size=0;
+        const uintptr_t image=runtime_probe_image(&image_size);
+        if (!image || !image_size) {
+            printf("Net: online: prepared image not ready yet: will retry before auth\n");
+        } else if (DW_KEY_IMAGE_OFF+DW_SPKI_LEN <= image_size &&
+                   dw_swap_at(image+DW_KEY_IMAGE_OFF)) {
+            dw_key_swapped=1;
+        } else if (!dw_scan_done) {
+            dw_scan_done=1;
+            static unsigned char page[1048576];
+            const uintptr_t end=image+image_size;
+            for (uintptr_t base=image; base<end && !dw_key_swapped; base+=sizeof page) {
+                uint64_t chunk=(uint64_t)(end-base)<sizeof page ? (uint64_t)(end-base) : sizeof page;
+                runtime_probe_read_image(base,page,chunk);
+                for (uint64_t i=0;i+DW_SPKI_LEN<=chunk;++i)
+                    if (!memcmp(page+i,dw_official_spki,DW_SPKI_LEN) && dw_swap_at(base+i)) {
+                        dw_key_swapped=1; break;
+                    }
+            }
+            if (!dw_key_swapped)
+                printf("Net: online: official Demonware key not found in image (%llu bytes): signatures will fail\n",
+                       (unsigned long long)image_size);
+        }
+    } else if (dw_test_key_ready && dw_key_swapped && dw_key_addr) {
+        dw_swap_at(dw_key_addr); /* one 294-byte check before each auth request */
+    }
+    /* BB_DW_NOSIG=1: bypass the reply signature check (mov eax,1; ret at FUN_00014300).
+     * Isolates whether the gate is the signature or the tickets that follow. The
+     * function has a single caller (0x13eb9, inside the auth reply handler). */
+    {
+        const char *nosig=getenv("BB_DW_NOSIG");
+        if (nosig && !strcmp(nosig,"1") && !dw_nosig_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_SIGFN_IMAGE_OFF+sizeof dw_sigfn_bypass <= image_size) {
+                const uintptr_t fn=image+DW_SIGFN_IMAGE_OFF;
+                unsigned char cur[sizeof dw_sigfn_bypass];
+                runtime_probe_read_image(fn,cur,sizeof cur);
+                if (!memcmp(cur,dw_sigfn_bypass,sizeof cur)) dw_nosig_applied=1;
+                else if (runtime_probe_write_image(fn,dw_sigfn_bypass,sizeof dw_sigfn_bypass)) {
+                    dw_nosig_applied=1;
+                    printf("Net: online: test BYPASS: auth signature check disabled "
+                           "(was %02x %02x %02x %02x %02x %02x, private server dev only)\n",
+                           cur[0],cur[1],cur[2],cur[3],cur[4],cur[5]);
+                } else printf("Net: online: test bypass write failed\n");
+            }
+        }
+    }
+    /* BB_DW_NOVALIDATE=1: force the reply-JSON validator virtual (+0x50) to pass.
+     * Isolates whether the gate is that validator or the ticket fields. Single
+     * use site (0x1410e, inside the auth reply handler, after the tickets decode). */
+    {
+        const char *novalidate=getenv("BB_DW_NOVALIDATE");
+        if (novalidate && !strcmp(novalidate,"1") && !dw_novalidate_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_VALIDATE_IMAGE_OFF+sizeof dw_validate_bypass <= image_size) {
+                const uintptr_t site=image+DW_VALIDATE_IMAGE_OFF;
+                unsigned char cur[sizeof dw_validate_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_validate_bypass,sizeof cur)) dw_novalidate_applied=1;
+                else if (!memcmp(cur,dw_validate_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_validate_bypass,sizeof dw_validate_bypass)) {
+                    dw_novalidate_applied=1;
+                    printf("Net: online: test BYPASS: reply validator forced to pass (private server dev only)\n");
+                } else printf("Net: online: test validator bypass not applied (bytes %02x %02x %02x)\n",
+                              cur[0],cur[1],cur[2]);
+            }
+        }
+    }
+    /* BB_DW_NO40CHECK=1: force the reply task-id check virtual (+0x40) to pass.
+     * Same isolation pattern as the +0x50 bypass (single use site 0x13e73). */
+    {
+        const char *no40=getenv("BB_DW_NO40CHECK");
+        if (no40 && !strcmp(no40,"1") && !dw_no40check_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_CHECK40_IMAGE_OFF+sizeof dw_check40_bypass <= image_size) {
+                const uintptr_t site=image+DW_CHECK40_IMAGE_OFF;
+                unsigned char cur[sizeof dw_check40_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_check40_bypass,sizeof cur)) dw_no40check_applied=1;
+                else if (!memcmp(cur,dw_check40_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_check40_bypass,sizeof dw_check40_bypass)) {
+                    dw_no40check_applied=1;
+                    printf("Net: online: test BYPASS: reply task-id check forced to pass (private server dev only)\n");
+                } else printf("Net: online: test task-id bypass not applied (bytes %02x %02x %02x)\n",
+                              cur[0],cur[1],cur[2]);
+            }
+        }
+    }
+    /* BB_DW_FORCE700=1: force the whole auth reply handler to return 700.     * Tells whether the retry loop even depends on FUN_00013d30's result: if the
+     * client still retries, another loop drives it; if it advances or faults on
+     * the (uninitialized) ticket state, the handler's internals are the gate. */
+    {
+        const char *force=getenv("BB_DW_FORCE700");
+        if (force && !strcmp(force,"1") && !dw_force700_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_HANDLER_IMAGE_OFF+sizeof dw_handler_force700 <= image_size) {
+                const uintptr_t fn=image+DW_HANDLER_IMAGE_OFF;
+                unsigned char cur[sizeof dw_handler_force700];
+                runtime_probe_read_image(fn,cur,sizeof cur);
+                if (!memcmp(cur,dw_handler_force700,sizeof cur)) dw_force700_applied=1;
+                else if (runtime_probe_write_image(fn,dw_handler_force700,sizeof dw_handler_force700)) {
+                    dw_force700_applied=1;
+                    printf("Net: online: test BYPASS: auth handler forced to 700 "
+                           "(was %02x %02x %02x %02x %02x %02x, private server dev only)\n",
+                           cur[0],cur[1],cur[2],cur[3],cur[4],cur[5]);
+                } else printf("Net: online: test force700 write failed\n");
+            }
+        }
+    }
+    pthread_mutex_unlock(&net_lock);
+}
+
 static void ip_text(uint32_t addr, char *out, size_t size) {
     const unsigned char *b=(const unsigned char *)&addr;
     snprintf(out,size,"%u.%u.%u.%u",b[0],b[1],b[2],b[3]);
@@ -187,6 +401,7 @@ static void configure(void) {
     printf("Net: online ON: private server %s (%s), HTTP port %u, local address %s, PSN user '%s' "
            "(account %llu); every host name answers the private server\n",
            server,cfg.server_text,cfg.http_port,local,cfg.online_id,(unsigned long long)cfg.account_id);
+    dw_test_key_ensure();
 }
 static int online(void) { pthread_once(&cfg_once,configure); return cfg.on; }
 
@@ -1118,6 +1333,7 @@ static ABI int32_t http_send(int id,const void *data,uint64_t size) {
     char scheme[16], host[256];
     const char *path;
     if (!h->url || !parse_url(h->url,scheme,sizeof scheme,host,sizeof host,&path)) return HTTP_INVALID_URL;
+    if (strstr(h->url,"lavender-ps4-auth3") && strstr(path,"/auth/")) dw_test_key_ensure();
     Buffer request={0};
     char line[2048];
     int n=snprintf(line,sizeof line,"%s %s HTTP/1.1\r\nHost: %s\r\nX-SacredFire-Scheme: %s\r\nUser-Agent: %s\r\nConnection: close\r\n",
@@ -1133,6 +1349,15 @@ static ABI int32_t http_send(int id,const void *data,uint64_t size) {
     if (data && size) buffer_add(&request,data,(size_t)size);
     printf("Net: HTTP %s %s (%llu bytes) -> %s:%u\n",h->method,h->url,(unsigned long long)size,cfg.server_text,cfg.http_port);
     if (data && size) hexdump("HTTP body",id,data,(size_t)size);
+    { /* M4: the Demonware auth request carries X-TransactionID and JSON fields the reply
+       * validation depends on; show the head (no behavior change, offline path untouched). */
+        char *head_end=request.data ? strstr(request.data,"\r\n\r\n") : NULL;
+        if (head_end && head_end>request.data) {
+            size_t head_len=(size_t)(head_end-request.data);
+            if (head_len>2048) head_len=2048;
+            printf("Net: HTTP request %d head (%zu bytes):\n%.*s\n",id,head_len,(int)head_len,request.data);
+        }
+    }
 
     int32_t result=0;
     Buffer response={0};
@@ -1191,6 +1416,12 @@ static ABI int32_t http_send(int id,const void *data,uint64_t size) {
         if (te && strstr(te,"chunked") && strstr(te,"chunked")<strstr(te,"\n")) h->body_size=dechunk(h->body,h->body_size);
         h->sent=1;
         printf("Net: HTTP %s %s -> %d (%zu bytes)\n",h->method,h->url,h->status,h->body_size);
+        if (h->response_headers && h->response_headers_size) {
+            /* M4: X-Signature travels as a response header; without it no ticket can
+             * validate. Show headers (capped) so a signed vs unsigned reply is visible. */
+            size_t shown=h->response_headers_size<2048 ? h->response_headers_size : 2048;
+            printf("Net: HTTP reply %d headers (%zu bytes):\n%.*s\n",id,h->response_headers_size,(int)shown,h->response_headers);
+        }
         if (h->body_size) hexdump("HTTP reply",id,h->body,h->body_size);
     }
 done:
