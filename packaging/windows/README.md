@@ -50,7 +50,7 @@ Win32 + Direct3D 11, linked statically, no DLLs) is what players open:
   32:9 Super UltraWide; `bbport.ini`, the in-game menu's keys); monitor, present mode,
   controller, game language
   (`launcher.ini`, passed as `BB_*` variables, plus `bbport.ini` language).
-  Aspect/output (v0.3, by tcosi) replaces the Patches-tab toggles; upscaling is off
+  Aspect/output (v0.4, by tcosi) replaces the Patches-tab toggles; upscaling is off
   while ultrawide is on.
 - **Patches**: every patch for CUSA13795 01.21 in `patches\*.xml`; the three community patches
   keep their `bbport.ini` keys, others go through `patches.json`. The two ultrawide XMLs

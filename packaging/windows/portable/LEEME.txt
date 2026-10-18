@@ -9,7 +9,7 @@ REQUISITOS (no incluidos, los pones tu)
    (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
    Que dumps sirven:
    - Archivos descifrados de CUSA13795 (la edicion USA) o CUSA14876 (la
-     edicion europea, desde v0.3, menos probada y sin ultra-panoramico;
+     edicion europea, desde v0.4, menos probada y sin ultra-panoramico;
      gracias a martijnhe). El nombre de las
      carpetas da igual; el launcher dice en verde o rojo que encontro.
    - Dump hecho desde tu PS4 con un dumper: eboot.bin, sce_module y
@@ -38,7 +38,7 @@ monitor, el mando, el idioma del juego y la imagen:
   - Resolucion interna: de 480p (PCs modestos) a 4K nativo; por encima
     de 1080p la imagen sale en 4K (en pantallas 1080p suaviza los bordes).
     Necesita reiniciar el juego (el menu lo hace).
-  - Relacion de aspecto / salida (v0.3, por tcosi): una sola opcion —
+  - Relacion de aspecto / salida (v0.4, por tcosi): una sola opcion —
     16:9 (1280x720, 1920x1080, 2560x1440, 4K), 21:9 UltraWide (2560x1080 o
     3440x1440) o 32:9 Super UltraWide (5120x1440), con HUD centrado.
     Mientras hay ultra-panoramico el escalado se desactiva y la interna se
@@ -52,7 +52,7 @@ monitor, el mando, el idioma del juego y la imagen:
     RTX; sus archivos vienen incluidos).
     FSR 3, FSR 4 y DLSS reconstruyen detalle con varios cuadros; si ves
     estelas, vuelve a FSR 1.
-  - Generacion de cuadros (v0.3, experimental, en vivo): AMD FSR 3 muestra
+  - Generacion de cuadros (v0.4, experimental, en vivo): AMD FSR 3 muestra
     un cuadro interpolado entre cada par de cuadros del juego, casi el
     doble en pantalla; el juego y su limite de FPS no cambian. Ideal en
     monitores de 120 Hz o mas con el juego a la mitad de la frecuencia
@@ -64,8 +64,8 @@ monitor, el mando, el idioma del juego y la imagen:
     de DLSS (Transformer recomendado, o CNN mas ligero).
   - Idioma del juego (Ajustes > Consola): ingles, espanol latinoamericano,
     frances y portugues de Brasil (los que trae esta version del juego).
-    Con la edicion europea: los idiomas PAL (ingles UK, espanol de
-    Espana, frances, aleman, italiano, neerlandes, portugues, ruso...).
+    Con la edicion europea: los idiomas PAL (ingles, espanol de Espana,
+    frances, aleman, italiano y arabe).
 En Parches, los
 parches del juego; en Guardados, copias de seguridad e importar partidas;
 en DLC, tus paquetes DLC de PS4 (.pkg), opcionales: el juego funciona

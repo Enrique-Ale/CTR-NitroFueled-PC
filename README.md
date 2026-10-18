@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
+| [v0.4](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.4) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -50,7 +50,7 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
 - *Internal resolution*: the size the game draws its 3D scene at. 480p and 720p for modest PCs;
   1440p to 2160p output a 4K picture, which also smooths edges on a 1080p screen. Needs a restart
   (the in-game menu does it). Capped at 1440p while ultrawide is on.
-- *Aspect ratio* (v0.3, by tcosi; in Settings, not Patches): one *Aspect / output* choice —
+- *Aspect ratio* (v0.4, by tcosi; in Settings, not Patches): one *Aspect / output* choice —
   16:9 with 1280x720, 1920x1080, 2560x1440 or 3840x2160; 21:9 UltraWide with
   2560x1080 or 3440x1440; 32:9 Super UltraWide with 5120x1440 — with centered HUD.
   Upscaling is off while ultrawide is on. The first launch prepares about 9 GB of patched
@@ -62,7 +62,7 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
     DLSS** (GeForce RTX; the files come in the package): temporal upscaling that
     rebuilds detail over several frames from the game's depth and motion, and works as
     anti-aliasing at the same resolution. Turn them off if you see trails.
-- *Frame generation* (v0.3, experimental, live): AMD FSR 3.1.6 frame interpolation shows a
+- *Frame generation* (v0.4, experimental, live): AMD FSR 3.1.6 frame interpolation shows a
   generated frame halfway between each pair of game frames, about twice the images on screen; the
   game, its FPS limit and its timing do not change. Best on a 120 Hz+ screen with the game at half
   the refresh rate (e.g. FPS limit 72 at 144 Hz, with V-Sync/Fifo or Mailbox). Works with any
@@ -75,7 +75,7 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
 **Game language** (launcher: Settings > Console): the languages this build (CUSA13795, the
 Americas) has: English, Latin American Spanish, French and Brazilian Portuguese. Spain's Spanish is
 not in it. With the European edition (CUSA14876) the list shows the PAL release's languages instead
-(English UK, Spain's Spanish, French, German, Italian, Dutch, Portuguese, Russian, Polish, Arabic).
+(English, Spain's Spanish, French, German, Italian, Arabic).
 
 The launcher also has the game patches, FPS limit, display, monitor and controller settings, save
 backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
@@ -85,7 +85,7 @@ content is in the game). Spanish and English.
 ### Which game dumps work
 
 The launcher needs the game as **folders of decrypted files** from **CUSA13795** (the USA
-edition) or, from v0.3, **CUSA14876** (the European edition, as in
+edition) or, from v0.4, **CUSA14876** (the European edition, as in
 [martijnhe/OCTR-NitroFueled-PC-EU](https://github.com/martijnhe/OCTR-NitroFueled-PC-EU)): the base
 game (v01.00) and the 1.21 update. The folder names do not matter. When you
 choose a folder, the launcher says in green or red what it found.
@@ -93,10 +93,10 @@ choose a folder, the launcher says in green or red what it found.
 | Your dump | What it looks like | Works? |
 |---|---|---|
 | Dumped from your own PS4 with a game dumper | `eboot.bin`, `sce_module\`, `sce_sys\param.sfo`… directly in each folder (base, update) | Yes |
-| Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.3: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
+| Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.4: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
 | Any other tool | Works if the files end up in one of the two layouts above | Yes |
 | A `.pkg` file that was not extracted | | No: extract it first. Only the DLC tab takes `.pkg` files |
-| The European edition (CUSA14876) | Same layouts | Yes, from v0.3 (less tested; no ultrawide yet: tcosi's patches are for CUSA13795) |
+| The European edition (CUSA14876) | Same layouts | Yes, from v0.4 (less tested; no ultrawide yet: tcosi's patches are for CUSA13795) |
 | Another region or edition (JP…) | | No: each one has a different executable |
 | Encrypted files (straight from a disc or an official package) | `eboot.bin could not be read as a decrypted PS4 executable` | No: dump the game again |
 
@@ -135,7 +135,7 @@ This fork stands on the work of:
 - **illusion** and **TroyWarez**: the game patches ([illusionyy/PS-Game-Patch](https://github.com/illusionyy/PS-Game-Patch)).
 - **tcosi**: the 21:9 UltraWide and 32:9 Super UltraWide aspect patches with centered HUD
   (`patches/CTR-UltraWide21x9-v1.0.xml`, `patches/CTR-SuperUltraWide32x9-v1.0.xml`,
-  `scripts/ultrawide_*`), integrated in v0.3 under Settings > Display > Aspect ratio.
+  `scripts/ultrawide_*`), integrated in v0.4 under Settings > Display > Aspect ratio.
 - **[IFreemz](https://github.com/IFreemz)**: [shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR),
   whose DLSS bridge (MIT, `dlss_bridge/`) and NGX loader this fork uses.
 - **[FireBurn/FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)**: AMD FidelityFX FSR 3.1, FSR 3.1.6

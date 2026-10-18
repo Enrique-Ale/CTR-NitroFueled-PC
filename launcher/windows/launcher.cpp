@@ -12,11 +12,13 @@
 #endif
 #include <windows.h>
 #include <d3d11.h>
+#include <dwmapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <ctime>
 #include <atomic>
@@ -34,6 +36,7 @@
 #include <thread>
 #include <vector>
 
+#include "gamepads.h"
 #include "imgui.h"
 #include "imgui_impl_dx11.h"
 #include "imgui_impl_win32.h"
@@ -524,19 +527,15 @@ constexpr Choice kGameLanguages[] = {
     {"Francés", "French", "2"},
     {"Portugués (Brasil)", "Portuguese (Brazil)", "17"},
 };
-// The European build (CUSA14876): the languages of the PAL release, as PS4 codes (English UK 18,
-// French 2, German 4, Italian 5, Spain's Spanish 3, Dutch 6, Portuguese 7, Russian 8, Polish 16,
-// Arabic 21). A language the files do not hold falls back to English in the game.
+// The European build (CUSA14876): the languages of the PAL release (its store page: English,
+// French, German, Italian, Spanish and Arabic), as PS4 codes. A language the files do not hold
+// falls back to English in the game.
 constexpr Choice kGameLanguagesEu[] = {
     {"Inglés (Reino Unido)", "English (UK)", "18"},
     {"Español (España)", "Spanish (Spain)", "3"},
     {"Francés", "French", "2"},
     {"Alemán", "German", "4"},
     {"Italiano", "Italian", "5"},
-    {"Neerlandés", "Dutch", "6"},
-    {"Portugués", "Portuguese", "7"},
-    {"Ruso", "Russian", "8"},
-    {"Polaco", "Polish", "16"},
     {"Árabe", "Arabic", "21"},
 };
 constexpr Choice kPresentModes[] = {
@@ -831,6 +830,11 @@ void StartGame() {
     SetEnv(L"BB_DISPLAY", a.launcher.Get("display"));
     SetEnv(L"BB_PRESENT_MODE", a.launcher.Get("present_mode", "Mailbox"));
     SetEnv(L"BB_GAMEPAD", a.launcher.Get("gamepad"));
+    // The Controls tab's sticks settings (src/runtime_pad.c); the game gets the controllers alone.
+    SetEnv(L"BB_PAD_DEADZONE", a.launcher.Get("pad_deadzone"));
+    SetEnv(L"BB_PAD_DEADZONE_OUTER", a.launcher.Get("pad_deadzone_outer"));
+    SetEnv(L"BB_PAD_CENTER_CAL", a.launcher.Flag("pad_center_cal", true) ? "" : "0");
+    Pads::Stop();
     SetEnv(L"BB_SAVE_LOG", a.launcher.Flag("save_log", false) ? "1" : "");
     SetEnv(L"BB_DLC", a.launcher.Flag("dlc", true) ? "1" : "0");
     SetEnv(L"BB_DLC_DISABLED", a.launcher.Get("dlc_disabled"));
@@ -1345,10 +1349,157 @@ void WritePatchConfig(const std::vector<std::string>& enabled, const std::vector
 // ---------------------------------------------------------------------------------------------
 // UI
 
-const ImVec4 kGreen{0.45f, 0.85f, 0.45f, 1.0f};
-const ImVec4 kRed{1.0f, 0.45f, 0.40f, 1.0f};
-const ImVec4 kYellow{1.0f, 0.80f, 0.35f, 1.0f};
-const ImVec4 kGrey{0.65f, 0.65f, 0.68f, 1.0f};
+// v0.4 look: a dark theme with the Nitro orange as accent (ApplyTheme), Segoe UI for text,
+// Bahnschrift for titles and Segoe Fluent Icons / MDL2 Assets merged in for the icons below.
+const ImVec4 kGreen{0.42f, 0.86f, 0.52f, 1.0f};
+const ImVec4 kRed{1.0f, 0.42f, 0.40f, 1.0f};
+const ImVec4 kYellow{1.0f, 0.78f, 0.30f, 1.0f};
+const ImVec4 kGrey{0.58f, 0.61f, 0.70f, 1.0f};
+const ImVec4 kText{0.92f, 0.93f, 0.96f, 1.0f};
+const ImVec4 kAccent{1.0f, 0.54f, 0.12f, 1.0f};        // #FF8A1F
+const ImVec4 kAccentHover{1.0f, 0.63f, 0.26f, 1.0f};
+const ImVec4 kAccentActive{0.91f, 0.45f, 0.06f, 1.0f};
+const ImVec4 kBlue{0.30f, 0.64f, 1.0f, 1.0f};
+const ImVec4 kBg{0.067f, 0.075f, 0.102f, 1.0f};         // #11131A
+const ImVec4 kPanel{0.098f, 0.110f, 0.149f, 1.0f};      // #191C26
+const ImVec4 kCard{0.118f, 0.133f, 0.188f, 1.0f};       // #1E2230
+const ImVec4 kFrame{0.149f, 0.169f, 0.231f, 1.0f};      // #262B3B
+const ImVec4 kFrameHover{0.184f, 0.208f, 0.314f, 1.0f};
+const ImVec4 kFrameActive{0.220f, 0.251f, 0.388f, 1.0f};
+const ImVec4 kBorder{0.173f, 0.192f, 0.259f, 1.0f};
+
+// Segoe Fluent Icons / Segoe MDL2 Assets code points, as UTF-8.
+#define ICON_PLAY "\xEE\x9D\xA8"      // E768
+#define ICON_SETTINGS "\xEE\x9C\x93"  // E713
+#define ICON_GAMEPAD "\xEE\x9F\xBC"   // E7FC
+#define ICON_KEYBOARD "\xEE\x9D\xA5"  // E765
+#define ICON_PUZZLE "\xEE\xAA\x86"    // EA86
+#define ICON_SAVE "\xEE\x9D\x8E"      // E74E
+#define ICON_PACKAGE "\xEE\x9E\xB8"   // E7B8
+#define ICON_TOOLS "\xEE\xA4\x8F"     // E90F
+#define ICON_FOLDER "\xEE\xA2\xB7"    // E8B7
+#define ICON_REFRESH "\xEE\x9C\xAC"   // E72C
+#define ICON_CHECK "\xEE\x9C\xBE"     // E73E
+#define ICON_WARN "\xEE\x9E\xBA"      // E7BA
+#define ICON_INFO "\xEE\xA5\x86"      // E946
+#define ICON_STOP "\xEE\x9C\x9A"      // E71A
+#define ICON_GLOBE "\xEE\x9D\xB4"     // E774
+#define ICON_BLUETOOTH "\xEE\x9C\x82" // E702
+#define ICON_USB "\xEE\xA2\x8E"       // E88E
+#define ICON_CANCEL "\xEE\x9C\x91"    // E711
+#define ICON_UNDO "\xEE\x9E\xA7"      // E7A7
+#define ICON_VIBRATE "\xEE\xA1\xB7"   // E877
+#define ICON_PEOPLE "\xEE\x9C\x96"    // E716
+#define ICON_DISPLAY "\xEE\x9F\xB4"   // E7F4
+#define ICON_DOWNLOAD "\xEE\xA2\x96"  // E896
+
+ImFont* g_font_heading = nullptr;  // Segoe UI Semibold (section titles)
+ImFont* g_font_title = nullptr;    // Bahnschrift (the header, the Play button)
+float g_ui_scale = 1.0f;
+ID3D11ShaderResourceView* g_logo = nullptr;  // the app icon (LoadLogo)
+const char* g_goto_tab = nullptr;             // a tab to bring to front on the next frame
+void PlaySummary();
+std::string EditionLabel();
+
+/// A section title: the semibold font in the accent colour over a separator line.
+void Section(const char* label) {
+    ImGui::Spacing();
+    if (g_font_heading) ImGui::PushFont(g_font_heading, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+    ImGui::SeparatorText(label);
+    ImGui::PopStyleColor();
+    if (g_font_heading) ImGui::PopFont();
+}
+
+/// A rounded panel that grows with its content.
+void BeginCard(const char* id) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, kCard);
+    ImGui::PushStyleColor(ImGuiCol_Border, kBorder);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 10.0f * g_ui_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * g_ui_scale, 12.0f * g_ui_scale));
+    ImGui::BeginChild(id, ImVec2(0, 0),
+                      ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_Borders);
+}
+void EndCard() {
+    ImGui::EndChild();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
+}
+
+void ApplyTheme(float scale) {
+    ImGuiStyle& st = ImGui::GetStyle();
+    st.WindowPadding = ImVec2(18 * scale, 14 * scale);
+    st.FramePadding = ImVec2(10 * scale, 6 * scale);
+    st.ItemSpacing = ImVec2(10 * scale, 8 * scale);
+    st.ItemInnerSpacing = ImVec2(8 * scale, 6 * scale);
+    st.CellPadding = ImVec2(8 * scale, 5 * scale);
+    st.ScrollbarSize = 12 * scale;
+    st.GrabMinSize = 12 * scale;
+    st.WindowRounding = 0;
+    st.ChildRounding = 8 * scale;
+    st.FrameRounding = 6 * scale;
+    st.PopupRounding = 8 * scale;
+    st.ScrollbarRounding = 8 * scale;
+    st.GrabRounding = 6 * scale;
+    st.TabRounding = 6 * scale;
+    st.WindowBorderSize = 0;
+    st.ChildBorderSize = 1;
+    st.PopupBorderSize = 1;
+    st.FrameBorderSize = 0;
+    st.TabBorderSize = 0;
+    st.TabBarBorderSize = 1;
+    st.TabBarOverlineSize = 2 * scale;
+    st.SeparatorTextBorderSize = 2 * scale;
+    st.SeparatorTextPadding = ImVec2(14 * scale, 4 * scale);
+    ImVec4* c = st.Colors;
+    c[ImGuiCol_Text] = kText;
+    c[ImGuiCol_TextDisabled] = ImVec4(0.45f, 0.48f, 0.56f, 1.0f);
+    c[ImGuiCol_WindowBg] = kBg;
+    c[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_PopupBg] = kPanel;
+    c[ImGuiCol_Border] = kBorder;
+    c[ImGuiCol_FrameBg] = kFrame;
+    c[ImGuiCol_FrameBgHovered] = kFrameHover;
+    c[ImGuiCol_FrameBgActive] = kFrameActive;
+    c[ImGuiCol_TitleBg] = kPanel;
+    c[ImGuiCol_TitleBgActive] = kPanel;
+    c[ImGuiCol_MenuBarBg] = kPanel;
+    c[ImGuiCol_ScrollbarBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ScrollbarGrab] = kFrameHover;
+    c[ImGuiCol_ScrollbarGrabHovered] = kFrameActive;
+    c[ImGuiCol_ScrollbarGrabActive] = kAccentActive;
+    c[ImGuiCol_CheckMark] = kAccent;
+    c[ImGuiCol_SliderGrab] = kAccent;
+    c[ImGuiCol_SliderGrabActive] = kAccentHover;
+    c[ImGuiCol_Button] = kFrame;
+    c[ImGuiCol_ButtonHovered] = kFrameHover;
+    c[ImGuiCol_ButtonActive] = kFrameActive;
+    c[ImGuiCol_Header] = ImVec4(1.0f, 0.54f, 0.12f, 0.20f);
+    c[ImGuiCol_HeaderHovered] = ImVec4(1.0f, 0.54f, 0.12f, 0.30f);
+    c[ImGuiCol_HeaderActive] = ImVec4(1.0f, 0.54f, 0.12f, 0.42f);
+    c[ImGuiCol_Separator] = kBorder;
+    c[ImGuiCol_SeparatorHovered] = kAccentHover;
+    c[ImGuiCol_SeparatorActive] = kAccent;
+    c[ImGuiCol_ResizeGrip] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_Tab] = kPanel;
+    c[ImGuiCol_TabHovered] = kFrameHover;
+    c[ImGuiCol_TabSelected] = kCard;
+    c[ImGuiCol_TabSelectedOverline] = kAccent;
+    c[ImGuiCol_TabDimmed] = kPanel;
+    c[ImGuiCol_TabDimmedSelected] = kCard;
+    c[ImGuiCol_TabDimmedSelectedOverline] = kAccent;
+    c[ImGuiCol_PlotHistogram] = kAccent;
+    c[ImGuiCol_PlotHistogramHovered] = kAccentHover;
+    c[ImGuiCol_TableHeaderBg] = kFrame;
+    c[ImGuiCol_TableBorderStrong] = kBorder;
+    c[ImGuiCol_TableBorderLight] = ImVec4(0.15f, 0.17f, 0.23f, 1.0f);
+    c[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.025f);
+    c[ImGuiCol_TextLink] = kBlue;
+    c[ImGuiCol_TextSelectedBg] = ImVec4(1.0f, 0.54f, 0.12f, 0.35f);
+    c[ImGuiCol_NavCursor] = kAccent;
+    c[ImGuiCol_ModalWindowDimBg] = ImVec4(0, 0, 0, 0.55f);
+}
 
 std::string Describe(const FolderInfo& f) {
     switch (f.kind) {
@@ -1414,7 +1565,10 @@ void ChoiceCombo(const char* label, const char* key, const Choice (&choices)[N],
 void PlayTab() {
     App& a = g_app;
     const bool busy = a.job != Job::None;
-    ImGui::SeparatorText(T("Juego", "Game"));
+    BeginCard("game");
+    if (g_font_heading) ImGui::PushFont(g_font_heading, ImGui::GetStyle().FontSizeBase * 1.15f);
+    ImGui::TextUnformatted((std::string(ICON_FOLDER "  ") + T("Tu juego", "Your game")).c_str());
+    if (g_font_heading) ImGui::PopFont();
 
     const bool ready = a.game_info.kind == Kind::Complete && a.game_checked && a.game_ok;
     if (!a.python) {
@@ -1444,7 +1598,12 @@ void PlayTab() {
         } else if (!a.game_checked) {
             ImGui::TextColored(kYellow, "%s", T("Comprobando el juego...", "Checking the game..."));
         } else if (a.game_ok) {
-            ImGui::TextColored(kGreen, "%s %s", T("Listo:", "Ready:"), Describe(a.game_info).c_str());
+            ImGui::TextColored(kGreen, "%s  %s %s", ICON_CHECK, T("Listo:", "Ready:"), Describe(a.game_info).c_str());
+            const std::string edition = EditionLabel();
+            if (!edition.empty()) {
+                ImGui::SameLine();
+                ImGui::TextColored(kBlue, "·  %s", edition.c_str());
+            }
         } else {
             ImGui::TextColored(kRed, "%s", T("Estos archivos no sirven:", "These files do not work:"));
             ImGui::PushTextWrapPos(0.0f);
@@ -1452,9 +1611,12 @@ void PlayTab() {
             ImGui::PopTextWrapPos();
         }
         ImGui::TextColored(kGrey, "%s", PathText(a.game_dir).c_str());
-        if (ImGui::Button(T("Cambiar carpeta del juego...", "Change game folder...")) && !busy && !a.game_running) {
+        if (ImGui::Button((std::string(ICON_FOLDER "  ") + T("Cambiar carpeta del juego...", "Change game folder...")).c_str()) &&
+            !busy && !a.game_running) {
             ChooseFolder(a.game_dir, a.game_info, L"CUSA13795 + 1.21");
         }
+        ImGui::SameLine();
+        if (ImGui::Button(T("Abrir carpeta", "Open folder"))) OpenInShell(a.game_dir);
     } else {
         if (a.game_info.kind == Kind::Update) {
             ImGui::TextColored(kRed, "%s: %s", PathText(a.game_dir).c_str(),
@@ -1524,24 +1686,43 @@ void PlayTab() {
         }
     }
 
+    EndCard();
+
+    if (ready && !a.game_running) {
+        ImGui::Spacing();
+        BeginCard("summary");
+        if (g_font_heading) ImGui::PushFont(g_font_heading, ImGui::GetStyle().FontSizeBase * 1.15f);
+        ImGui::TextUnformatted((std::string(ICON_DISPLAY "  ") + T("Así arrancará", "It will start with")).c_str());
+        if (g_font_heading) ImGui::PopFont();
+        PlaySummary();
+        EndCard();
+    }
+
     ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    const float play_height = ImGui::GetFontSize() * 3.0f;
+    const float play_height = ImGui::GetFontSize() * 3.2f;
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 12.0f * g_ui_scale);
+    ImGui::PushFont(g_font_title, ImGui::GetStyle().FontSizeBase * 1.7f);
     if (a.game_running) {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.16f, 1.0f));
-        if (ImGui::Button(T("Cerrar el juego", "Stop the game"), ImVec2(-FLT_MIN, play_height))) StopGame();
-        ImGui::PopStyleColor();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.62f, 0.20f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.74f, 0.26f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.52f, 0.16f, 0.14f, 1.0f));
+        if (ImGui::Button((std::string(ICON_STOP "  ") + T("CERRAR EL JUEGO", "STOP THE GAME")).c_str(),
+                          ImVec2(-FLT_MIN, play_height)))
+            StopGame();
+        ImGui::PopStyleColor(3);
     } else {
         ImGui::BeginDisabled(!ready || busy || !a.python);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.45f, 0.20f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.58f, 0.26f, 1.0f));
-        ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.5f);
-        if (ImGui::Button(T("JUGAR", "PLAY"), ImVec2(-FLT_MIN, play_height))) StartGame();
-        ImGui::PopFont();
-        ImGui::PopStyleColor(2);
+        ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccentHover);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccentActive);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.08f, 0.06f, 0.04f, 1.0f));
+        if (ImGui::Button((std::string(ICON_PLAY "  ") + T("JUGAR", "PLAY")).c_str(), ImVec2(-FLT_MIN, play_height)))
+            StartGame();
+        ImGui::PopStyleColor(4);
         ImGui::EndDisabled();
     }
+    ImGui::PopFont();
+    ImGui::PopStyleVar();
 
     std::string status;
     {
@@ -1560,8 +1741,11 @@ void PlayTab() {
     if (!status.empty()) ImGui::TextColored(kGrey, "%s", status.c_str());
 
     ImGui::Spacing();
-    if (ImGui::CollapsingHeader(T("Registro", "Log"), ImGuiTreeNodeFlags_DefaultOpen)) {
-        ImGui::BeginChild("log", ImVec2(0, 0), ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+    if (ImGui::CollapsingHeader(T("Registro", "Log"), a.game_running || a.show_exit ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, kPanel);
+        ImGui::BeginChild("log", ImVec2(0, std::max(ImGui::GetContentRegionAvail().y, ImGui::GetFontSize() * 12.0f)),
+                          ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+        ImGui::PopStyleColor();
         {
             std::scoped_lock lock{a.mutex};
             ImGuiListClipper clipper;
@@ -1700,7 +1884,7 @@ void SettingsTab() {
     ImGui::TextColored(kGrey, "%s", T("Se aplican al pulsar Jugar. El menú del juego (Insert o L3+R3) cambia los mismos ajustes.",
                                       "Applied when you press Play. The in-game menu (Insert or L3+R3) changes the same settings."));
 
-    ImGui::SeparatorText(T("Rendimiento", "Performance"));
+    Section(T("Rendimiento", "Performance"));
     {
         int limit = a.game.Int("fps_limit", 60);
         auto name = [](int v) -> std::string {
@@ -1726,7 +1910,7 @@ void SettingsTab() {
              T("Menos tirones la primera vez que aparece un efecto; a veces un efecto tarda un fotograma en verse.",
                "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
-    ImGui::SeparatorText(T("Pantalla", "Display"));
+    Section(T("Pantalla", "Display"));
     {
         // v0.3 native (by tcosi): ONE dropdown sets aspect + output together, so they
         // can never mismatch. The two ultrawide XMLs stay hidden in Patches.
@@ -1960,48 +2144,14 @@ void SettingsTab() {
         }
     }
 
-    ImGui::SeparatorText(T("Mando", "Controller"));
-    {
-        std::scoped_lock lock{a.mutex};
-        const std::string current = a.launcher.Get("gamepad");
-        std::string preview = T("El primero conectado", "First connected");
-        bool listed = current.empty();
-        for (const auto& [guid, name] : a.gamepads)
-            if (guid == current) {
-                preview = name;
-                listed = true;
-            }
-        if (!listed) preview = a.launcher.Get("gamepad_name", current) + T(" (no conectado)", " (not connected)");
-        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22.0f);
-        if (ImGui::BeginCombo(T("Mando", "Controller"), preview.c_str())) {
-            if (ImGui::Selectable(T("El primero conectado", "First connected"), current.empty())) {
-                a.launcher.Set("gamepad", "");
-                a.launcher.Set("gamepad_name", "");
-                SaveLauncher();
-            }
-            for (const auto& [guid, name] : a.gamepads) {
-                ImGui::PushID(guid.c_str());
-                if (ImGui::Selectable(name.c_str(), guid == current)) {
-                    a.launcher.Set("gamepad", guid);
-                    a.launcher.Set("gamepad_name", name);
-                    SaveLauncher();
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-    }
+    Section(T("Mando", "Controller"));
+    ImGui::TextColored(kGrey, "%s  %s", ICON_GAMEPAD,
+                       T("Los mandos, los jugadores y los botones están en la pestaña Controles.",
+                         "Controllers, players and buttons are in the Controls tab."));
     ImGui::SameLine();
-    ImGui::BeginDisabled(!a.probe_done && a.probe.joinable());
-    if (ImGui::Button(T("Buscar mandos", "Refresh"))) {
-        if (a.probe.joinable()) a.probe.join();
-        StartProbe();
-    }
-    ImGui::EndDisabled();
-    ImGui::TextColored(kGrey, "%s", T("El teclado funciona siempre a la vez. La pantalla dividida se asigna en el menú del juego.",
-                                      "The keyboard always works too. Split-screen ports are assigned in the in-game menu."));
+    if (ImGui::SmallButton(T("Ir a Controles", "Open Controls"))) g_goto_tab = "controls";
 
-    ImGui::SeparatorText(T("Consola", "Console"));
+    Section(T("Consola", "Console"));
     if (a.launcher.Get("language") != GameLanguage()) a.launcher.Set("language", GameLanguage());
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
     if (EuEdition()) {
@@ -2084,7 +2234,7 @@ void PatchesTab() {
         ImGui::PopID();
     }
 
-    ImGui::SeparatorText(T("Añadir parches", "Add patches"));
+    Section(T("Añadir parches", "Add patches"));
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(T("Copia archivos .xml de parches en formato shadPS4 (como los de PS-Game-Patch o GoldHEN) en la "
                              "carpeta patches y pulsa Recargar. Solo aparecen los que son para CUSA13795 versión 01.21.",
@@ -2120,7 +2270,7 @@ void SavesTab() {
         ImGui::TextColored(kYellow, "%s", T("Cierra el juego para copiar, importar o restaurar partidas.",
                                             "Close the game to back up, import or restore saves."));
     }
-    ImGui::SeparatorText(T("Partidas", "Saves"));
+    Section(T("Partidas", "Saves"));
     ImGui::TextColored(kGrey, "%s", PathText(SaveRoot()).c_str());
     if (a.saves.empty()) {
         ImGui::TextUnformatted(T("Todavía no hay partidas guardadas.", "No saves yet."));
@@ -2187,7 +2337,7 @@ void SavesTab() {
         OpenInShell(SaveRoot());
     }
 
-    ImGui::SeparatorText(T("Copias de seguridad", "Backups"));
+    Section(T("Copias de seguridad", "Backups"));
     if (a.backups.empty()) {
         ImGui::TextColored(kGrey, "%s", T("Todavía no hay copias.", "No backups yet."));
     } else if (ImGui::BeginTable("backups", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
@@ -2382,7 +2532,7 @@ void DlcTab() {
     const bool enabled = a.launcher.Flag("dlc", true);
     std::vector<std::string> disabled = SplitList(a.launcher.Get("dlc_disabled"));
 
-    ImGui::SeparatorText(T("DLC encontrados", "DLC found"));
+    Section(T("DLC encontrados", "DLC found"));
     if (a.dlc.empty()) ImGui::TextColored(kGrey, "%s", T("No hay DLC en la carpeta dlc.", "No DLC in the dlc folder."));
     ImGui::BeginDisabled(!enabled);
     for (const auto& d : a.dlc) {
@@ -2599,7 +2749,7 @@ void KeyboardTab() {
         }
     }
 
-    ImGui::SeparatorText(T("Controles", "Controls"));
+    Section(T("Controles", "Controls"));
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn(T("Teclas", "Keys"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
@@ -2663,9 +2813,503 @@ void KeyboardTab() {
                                       "Grey: default key. Keys go by their place on the keyboard."));
 }
 
+// ---------------------------------------------------------------------------------------------
+// Controls tab (v0.4). The connected controllers through the game's own SDL3 (gamepads.cpp), so
+// names, GUIDs and buttons are what src/runtime_pad.c sees: a live test, the players'
+// controllers (bbport.ini port.1-4, as the in-game menu writes them; player 1 also launcher.ini
+// gamepad = BB_GAMEPAD), the gamepad buttons (bbport.ini pad.<input>) and the sticks' dead zone
+// (launcher.ini pad_deadzone*, passed as BB_PAD_DEADZONE*). The keyboard is its second page.
+
+uint32_t g_pad_selected = 0;
+int g_pad_capture = -1;  // kKeyInputs index waiting for a gamepad button, -1 none
+bool g_pad_replace = false;
+double g_pads_retry = 0.0;
+
+// runtime_pad.c bind_defaults() per kKeyInputs id; nullptr: not a gamepad binding (the sticks).
+const char* PadFallback(const std::string& id) {
+    static const std::map<std::string, const char*> defaults = {
+        {"cross", "a"},           {"circle", "b"},         {"square", "x"},           {"triangle", "y"},
+        {"l1", "leftshoulder"},   {"r1", "rightshoulder"}, {"l2", "lefttrigger"},     {"r2", "righttrigger"},
+        {"l3", "leftstick"},      {"r3", "rightstick"},    {"options", "start"},      {"touchpad", "back,touchpad"},
+        {"touchpad_right", ""},   {"up", "dpup"},          {"down", "dpdown"},        {"left", "dpleft"},
+        {"right", "dpright"},
+    };
+    const auto it = defaults.find(id);
+    return it == defaults.end() ? nullptr : it->second;
+}
+
+void LeaveControls() {
+    if (g_key_capture >= 0) g_key_capture = -1;
+    if (g_pad_capture >= 0) {
+        g_pad_capture = -1;
+        Pads::CancelCapture();
+    }
+}
+
+/// SDL's gamepads while the launcher shows them; never while the game runs (it has them).
+bool EnsurePads() {
+    App& a = g_app;
+    if (a.game_running) {
+        Pads::Stop();
+        return false;
+    }
+    if (Pads::Running()) return true;
+    const double now = ImGui::GetTime();
+    if (now < g_pads_retry) return false;
+    if (!Pads::Start((a.bin / L"SDL3.dll").wstring())) {
+        g_pads_retry = now + 3.0;
+        return false;
+    }
+    return true;
+}
+
+/// The controller of player p (1..4): a GUID, or "" for automatic (p = 1) / nobody.
+std::string PlayerPad(int p) {
+    std::string v = g_app.game.Get("port." + std::to_string(p));
+    if (p == 1 && v.empty()) v = g_app.launcher.Get("gamepad");
+    return v;
+}
+
+void SetPlayerPad(int p, const Pads::Info* pad) {
+    App& a = g_app;
+    a.game.Set("port." + std::to_string(p), pad ? pad->guid : "");
+    SaveGameIni();
+    if (p == 1) {
+        a.launcher.Set("gamepad", pad ? pad->guid : "");
+        a.launcher.Set("gamepad_name", pad ? pad->name : "");
+    }
+    a.launcher.Set("port_name." + std::to_string(p), pad ? pad->name : "");
+    SaveLauncher();
+}
+
+ImU32 Col(const ImVec4& c, float alpha = 1.0f) { return ImGui::GetColorU32(ImVec4(c.x, c.y, c.z, c.w * alpha)); }
+
+/// A drawing of the controller with what is pressed now (the raw input, before any remapping).
+void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, float dz_outer) {
+    using namespace Pads;
+    const bool ps = info.family == Family::PlayStation;
+    const float W = std::min(ImGui::GetContentRegionAvail().x, 430.0f * g_ui_scale);
+    const float H = W * 0.62f;
+    const ImVec2 o = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    auto P = [&](float x, float y) { return ImVec2(o.x + x * W, o.y + y * W); };
+    auto R = [&](float r) { return r * W; };
+    const ImU32 body = Col(kFrame), edge = Col(kBorder), idle = Col(ImVec4(0.24f, 0.27f, 0.37f, 1.0f)),
+                on = Col(kAccent), text = Col(kText), dim = Col(kGrey);
+    auto centered = [&](ImVec2 c, const std::string& label, ImU32 color) {
+        const ImVec2 t = ImGui::CalcTextSize(label.c_str());
+        dl->AddText(ImVec2(c.x - t.x * 0.5f, c.y - t.y * 0.5f), color, label.c_str());
+    };
+    // Body and grips.
+    dl->AddCircleFilled(P(0.24f, 0.46f), R(0.135f), body, 48);
+    dl->AddCircleFilled(P(0.76f, 0.46f), R(0.135f), body, 48);
+    dl->AddRectFilled(P(0.10f, 0.11f), P(0.90f, 0.47f), body, R(0.10f));
+    // Triggers (analog fill) and shoulders.
+    auto trigger = [&](float x0, float x1, int axis, int button) {
+        const float v = std::clamp(st.axes[axis] / 32767.0f, 0.0f, 1.0f);
+        dl->AddRectFilled(P(x0, 0.0f), P(x1, 0.04f), idle, R(0.012f));
+        if (v > 0.01f) dl->AddRectFilled(P(x0, 0.0f), P(x0 + (x1 - x0) * v, 0.04f), on, R(0.012f));
+        centered(P((x0 + x1) * 0.5f, 0.02f), Label(button, info.family, info.type, g_spanish), text);
+    };
+    trigger(0.14f, 0.34f, AxTriggerLeft, BtnLeftTrigger);
+    trigger(0.66f, 0.86f, AxTriggerRight, BtnRightTrigger);
+    auto shoulder = [&](float x0, float x1, int button) {
+        dl->AddRectFilled(P(x0, 0.055f), P(x1, 0.095f), st.buttons[button] ? on : idle, R(0.012f));
+        centered(P((x0 + x1) * 0.5f, 0.075f), Label(button, info.family, info.type, g_spanish), text);
+    };
+    shoulder(0.14f, 0.34f, BtnLeftShoulder);
+    shoulder(0.66f, 0.86f, BtnRightShoulder);
+    // D-pad and left stick: PlayStation pads have the d-pad on top, the others the stick.
+    const ImVec2 dpad = ps ? ImVec2(0.25f, 0.25f) : ImVec2(0.37f, 0.37f);
+    const ImVec2 lstick = ps ? ImVec2(0.37f, 0.37f) : ImVec2(0.25f, 0.25f);
+    {
+        const float a = 0.027f;
+        const struct { float dx, dy; int b; } arms[] = {
+            {0, -2 * a, BtnDpadUp}, {0, 2 * a, BtnDpadDown}, {-2 * a, 0, BtnDpadLeft}, {2 * a, 0, BtnDpadRight}};
+        dl->AddRectFilled(P(dpad.x - a, dpad.y - a), P(dpad.x + a, dpad.y + a), idle);
+        for (const auto& arm : arms)
+            dl->AddRectFilled(P(dpad.x + arm.dx - a, dpad.y + arm.dy - a), P(dpad.x + arm.dx + a, dpad.y + arm.dy + a),
+                              st.buttons[arm.b] ? on : idle, R(0.006f));
+    }
+    // Face buttons, with the shapes or letters of this controller.
+    {
+        const ImVec2 c(0.75f, 0.25f);
+        const float d = 0.058f, r = 0.028f;
+        const struct { float dx, dy; int b; } face[] = {
+            {0, -d, BtnNorth}, {0, d, BtnSouth}, {-d, 0, BtnWest}, {d, 0, BtnEast}};
+        for (const auto& f : face) {
+            const ImVec2 at = P(c.x + f.dx, c.y + f.dy);
+            const bool down = st.buttons[f.b];
+            dl->AddCircleFilled(at, R(r), down ? on : idle, 32);
+            const float k = R(r) * 0.48f;
+            const ImU32 ink = down ? Col(kBg) : text;
+            if (ps) {
+                const float th = 1.8f * g_ui_scale;
+                if (f.b == BtnNorth) {
+                    dl->AddTriangle(ImVec2(at.x, at.y - k), ImVec2(at.x - k, at.y + k * 0.75f), ImVec2(at.x + k, at.y + k * 0.75f),
+                                    down ? ink : Col(ImVec4(0.35f, 0.88f, 0.66f, 1.0f)), th);
+                } else if (f.b == BtnEast) {
+                    dl->AddCircle(at, k, down ? ink : Col(ImVec4(1.0f, 0.45f, 0.45f, 1.0f)), 24, th);
+                } else if (f.b == BtnSouth) {
+                    const ImU32 blue = down ? ink : Col(ImVec4(0.45f, 0.66f, 1.0f, 1.0f));
+                    dl->AddLine(ImVec2(at.x - k, at.y - k), ImVec2(at.x + k, at.y + k), blue, th);
+                    dl->AddLine(ImVec2(at.x - k, at.y + k), ImVec2(at.x + k, at.y - k), blue, th);
+                } else {
+                    dl->AddRect(ImVec2(at.x - k * 0.85f, at.y - k * 0.85f), ImVec2(at.x + k * 0.85f, at.y + k * 0.85f),
+                                down ? ink : Col(ImVec4(0.96f, 0.60f, 0.88f, 1.0f)), 0.0f, 0, th);
+                }
+            } else {
+                std::string l = Label(f.b, info.family, info.type, g_spanish);
+                if (l.size() > 1) l = l.substr(0, 1);
+                centered(at, l, ink);
+            }
+        }
+    }
+    // Centre buttons: the touchpad on PlayStation pads.
+    if (ps) {
+        dl->AddRectFilled(P(0.39f, 0.12f), P(0.61f, 0.27f), st.buttons[BtnTouchpad] ? on : idle, R(0.02f));
+        dl->AddRectFilled(P(0.335f, 0.13f), P(0.365f, 0.17f), st.buttons[BtnBack] ? on : idle, R(0.01f));
+        dl->AddRectFilled(P(0.635f, 0.13f), P(0.665f, 0.17f), st.buttons[BtnStart] ? on : idle, R(0.01f));
+        dl->AddCircleFilled(P(0.5f, 0.32f), R(0.02f), st.buttons[BtnGuide] ? on : idle, 24);
+    } else {
+        dl->AddCircleFilled(P(0.44f, 0.25f), R(0.017f), st.buttons[BtnBack] ? on : idle, 24);
+        dl->AddCircleFilled(P(0.56f, 0.25f), R(0.017f), st.buttons[BtnStart] ? on : idle, 24);
+        dl->AddCircleFilled(P(0.5f, 0.16f), R(0.028f), st.buttons[BtnGuide] ? on : idle, 32);
+    }
+    // Sticks: the dead zone (inner ring) and the full-travel ring, the stick's position.
+    auto stick = [&](ImVec2 c, int ax, int ay, int button) {
+        const ImVec2 at = P(c.x, c.y);
+        const float rad = R(0.068f);
+        dl->AddCircleFilled(at, rad, Col(kBg), 40);
+        dl->AddCircle(at, rad, edge, 40, 1.5f * g_ui_scale);
+        if (dz_inner > 0.0f) dl->AddCircle(at, rad * dz_inner, dim, 32, 1.0f * g_ui_scale);
+        if (dz_outer < 0.999f) dl->AddCircle(at, rad * dz_outer, Col(kAccent, 0.45f), 40, 1.0f * g_ui_scale);
+        const float x = std::clamp(st.axes[ax] / 32767.0f, -1.0f, 1.0f), y = std::clamp(st.axes[ay] / 32767.0f, -1.0f, 1.0f);
+        const ImVec2 dot(at.x + x * rad, at.y + y * rad);
+        dl->AddLine(at, dot, Col(kAccent, 0.6f), 2.0f * g_ui_scale);
+        dl->AddCircleFilled(dot, R(0.026f), st.buttons[button] ? on : text, 24);
+    };
+    stick(lstick, AxLeftX, AxLeftY, BtnLeftStick);
+    stick(ImVec2(0.63f, 0.37f), AxRightX, AxRightY, BtnRightStick);
+    dl->AddRect(P(0.10f, 0.11f), P(0.90f, 0.47f), edge, R(0.10f), 0, 1.0f);
+    ImGui::Dummy(ImVec2(W, H));
+}
+
+void ControllersPage() {
+    App& a = g_app;
+    const bool sdl = EnsurePads();
+    if (sdl) Pads::Update();
+    const auto& pads = Pads::List();
+    // The same model twice: "#2" tells them apart.
+    auto display = [&](const Pads::Info& p) {
+        int same = 0, index = 0;
+        for (const auto& q : pads) {
+            if (q.name == p.name) ++same;
+            if (q.id == p.id) index = same;
+        }
+        return same > 1 ? p.name + " #" + std::to_string(index) : p.name;
+    };
+    auto players_of = [&](const Pads::Info& p) {
+        std::string out;
+        for (int n = 1; n <= 4; ++n)
+            if (PlayerPad(n) == p.guid) out += (out.empty() ? "" : " ") + std::string(T("J", "P")) + std::to_string(n);
+        return out;
+    };
+
+    Section(T("Mandos conectados", "Connected controllers"));
+    if (a.game_running) {
+        ImGui::TextColored(kYellow, "%s  %s", ICON_INFO,
+                           T("El juego está abierto y usa los mandos. Ciérralo para probarlos aquí; dentro del juego, "
+                             "Insert › Controllers asigna los puertos.",
+                             "The game is running and has the controllers. Close it to test them here; in the game, "
+                             "Insert › Controllers assigns the ports."));
+    } else if (!sdl) {
+        ImGui::TextColored(kRed, "%s  %s: %s", ICON_WARN, T("No se pueden leer los mandos", "Controllers cannot be read"),
+                           Pads::Error().c_str());
+    } else if (pads.empty()) {
+        BeginCard("nopads");
+        ImGui::TextColored(kGrey, "%s", ICON_GAMEPAD);
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", T("No hay mandos conectados. Conecta uno por USB o Bluetooth: aparece aquí al momento. "
+                                   "El teclado funciona siempre (página Teclado).",
+                                   "No controllers connected. Plug one in over USB or pair it over Bluetooth: it shows "
+                                   "up here at once. The keyboard always works (Keyboard page)."));
+        EndCard();
+    } else {
+        bool found = false;
+        for (const auto& p : pads) found |= p.id == g_pad_selected;
+        if (!found) g_pad_selected = pads.front().id;
+        if (ImGui::BeginTable("padlayout", 2, ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("list", ImGuiTableColumnFlags_WidthStretch, 0.9f);
+            ImGui::TableSetupColumn("test", ImGuiTableColumnFlags_WidthStretch, 1.1f);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            const float row = ImGui::GetTextLineHeightWithSpacing() * 2.4f;
+            for (const auto& p : pads) {
+                ImGui::PushID(int(p.id));
+                const bool selected = p.id == g_pad_selected;
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                if (ImGui::Selectable("##pad", selected, 0, ImVec2(0, row))) g_pad_selected = p.id;
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+                const float pad_x = 10.0f * g_ui_scale, line = ImGui::GetTextLineHeight();
+                dl->AddText(ImVec2(at.x + pad_x, at.y + row * 0.5f - line * 0.5f), Col(selected ? kAccent : kGrey),
+                            ICON_GAMEPAD);
+                const float tx = at.x + pad_x + ImGui::GetFontSize() * 2.0f;
+                dl->AddText(g_font_heading ? g_font_heading : ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(tx, at.y + row * 0.12f), Col(kText),
+                            display(p).c_str());
+                std::string sub = Pads::TypeName(p.type, g_spanish);
+                if (p.wireless) sub += std::string(" · ") + ICON_BLUETOOTH + T(" inalámbrico", " wireless");
+                else if (p.wired) sub += std::string(" · ") + ICON_USB + " USB";
+                if (p.battery >= 0) sub += " · " + std::to_string(p.battery) + "%" + (p.charging ? T(" cargando", " charging") : "");
+                dl->AddText(ImVec2(tx, at.y + row * 0.12f + line * 1.15f), Col(kGrey), sub.c_str());
+                const std::string who = players_of(p);
+                if (!who.empty()) {
+                    const ImVec2 t = ImGui::CalcTextSize(who.c_str());
+                    const float right = at.x + ImGui::GetContentRegionAvail().x - pad_x;
+                    dl->AddRectFilled(ImVec2(right - t.x - 12 * g_ui_scale, at.y + 6 * g_ui_scale),
+                                      ImVec2(right, at.y + 6 * g_ui_scale + t.y + 4 * g_ui_scale), Col(kAccent, 0.25f), 99.0f);
+                    dl->AddText(ImVec2(right - t.x - 6 * g_ui_scale, at.y + 8 * g_ui_scale), Col(kAccent), who.c_str());
+                }
+                ImGui::PopID();
+            }
+            ImGui::TableNextColumn();
+            for (const auto& p : pads) {
+                if (p.id != g_pad_selected) continue;
+                Pads::State st;
+                Pads::Read(p.id, st);
+                const int inner = std::clamp(a.launcher.Int("pad_deadzone", 5), 0, 126);
+                const int outer = std::clamp(a.launcher.Int("pad_deadzone_outer", 127), inner + 1, 127);
+                DrawPad(p, st, inner / 127.0f, outer / 127.0f);
+                ImGui::TextColored(kGrey, T("Stick izq. %+.2f %+.2f   Stick der. %+.2f %+.2f", "Left %+.2f %+.2f   Right %+.2f %+.2f"),
+                                   st.axes[Pads::AxLeftX] / 32767.0f, st.axes[Pads::AxLeftY] / 32767.0f,
+                                   st.axes[Pads::AxRightX] / 32767.0f, st.axes[Pads::AxRightY] / 32767.0f);
+                if (ImGui::Button((std::string(ICON_VIBRATE "  ") + T("Vibrar", "Rumble")).c_str())) {
+                    if (!Pads::Rumble(p.id, 450)) a.notice = T("Este mando no admite vibración.", "This controller has no rumble.");
+                }
+                ImGui::SameLine();
+                ImGui::TextColored(kGrey, "%s", T("Pulsa botones y mueve los sticks para probarlo.",
+                                                  "Press buttons and move the sticks to test it."));
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    Section(T("Jugadores", "Players"));
+    for (int n = 1; n <= 4; ++n) {
+        ImGui::PushID(n);
+        const std::string current = PlayerPad(n);
+        std::string preview = n == 1 ? T("Automático: el último mando que uses", "Automatic: the last controller used")
+                                     : T("Nadie", "Nobody");
+        if (!current.empty()) {
+            preview = a.launcher.Get("port_name." + std::to_string(n));
+            if (preview.empty() && n == 1) preview = a.launcher.Get("gamepad_name");
+            if (preview.empty()) preview = current;
+            bool connected = false;
+            for (const auto& p : pads)
+                if (p.guid == current && !connected) {
+                    preview = display(p);
+                    connected = true;
+                }
+            if (!connected && sdl) preview += T(" (no conectado)", " (not connected)");
+        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted((std::string(T("Jugador ", "Player ")) + std::to_string(n)).c_str());
+        ImGui::SameLine(ImGui::GetFontSize() * 6.0f);
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22.0f);
+        if (ImGui::BeginCombo("##player", preview.c_str())) {
+            if (ImGui::Selectable(n == 1 ? T("Automático: el último mando que uses", "Automatic: the last controller used")
+                                         : T("Nadie", "Nobody"),
+                                  current.empty()))
+                SetPlayerPad(n, nullptr);
+            for (const auto& p : pads) {
+                ImGui::PushID(int(p.id));
+                const std::string label = display(p) + "  (" + Pads::TypeName(p.type, g_spanish) + ")";
+                if (ImGui::Selectable(label.c_str(), p.guid == current)) SetPlayerPad(n, &p);
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        if (n == 1)
+            HelpMarker(T("El jugador 1 también usa el teclado. En automático juega el mando que toques: coge cualquiera y pulsa un botón.",
+                         "Player 1 also uses the keyboard. On automatic, the controller you touch plays: pick any and press a button."));
+        if (n == 2)
+            HelpMarker(T("Jugadores 2 a 4: pantalla dividida. Entran al juego mientras su mando está conectado. También se cambia "
+                         "dentro del juego (Insert › Controllers).",
+                         "Players 2 to 4: split screen. They join the game while their controller is connected. Also set in "
+                         "the game (Insert › Controllers)."));
+        ImGui::PopID();
+    }
+
+    // Gamepad buttons: pad.<input> in bbport.ini.
+    Section(T("Botones del mando", "Controller buttons"));
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(kGrey, "%s", T("Lo que hace cada botón en el juego, para todos los mandos. Pulsa \"Cambiar\" y luego el botón "
+                                      "en el mando; cada acción admite hasta 4. Se guarda en bbport.ini y vale desde el próximo arranque.",
+                                      "What each button does in the game, for every controller. Press \"Change\", then the button on "
+                                      "the controller; each action takes up to 4. Saved in bbport.ini, used from the next start."));
+    ImGui::PopTextWrapPos();
+    const Pads::Info* shown = nullptr;
+    for (const auto& p : pads)
+        if (p.id == g_pad_selected) shown = &p;
+    const Pads::Family family = shown ? shown->family : Pads::Family::Xbox;
+    const int type = shown ? shown->type : 3;  // SDL_GAMEPAD_TYPE_XBOXONE
+    if (g_pad_capture >= 0) {
+        std::string name;
+        uint32_t from = 0;
+        if (Pads::TakeCapture(name, from) && !name.empty()) {
+            const KeyInput& in = kKeyInputs[g_pad_capture];
+            const std::string key = std::string("pad.") + in.id;
+            auto names = g_pad_replace ? std::vector<std::string>{} : SplitKeys(a.game.Get(key));
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                if (names.size() >= 4) names.erase(names.begin());
+                names.push_back(name);
+            }
+            std::string value;
+            for (const auto& n : names) value += (value.empty() ? "" : ",") + n;
+            a.game.Set(key, value);
+            SaveGameIni();
+            g_pad_capture = -1;
+        } else if (!Pads::Capturing()) {
+            g_pad_capture = -1;  // the controllers went away
+        }
+    }
+    if (ImGui::BeginTable("padbuttons", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn(T("Botones", "Buttons"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
+        ImGui::TableHeadersRow();
+        for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
+            const KeyInput& in = kKeyInputs[i];
+            const char* fallback = PadFallback(in.id);
+            if (!fallback) continue;
+            const std::string key = std::string("pad.") + in.id;
+            const bool custom = a.game.values.count(key) > 0;
+            const auto names = SplitKeys(custom ? a.game.Get(key) : fallback);
+            ImGui::PushID(i);
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(T(in.es, in.en));
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            if (g_pad_capture == i) {
+                ImGui::TextColored(kYellow, "%s", T("Pulsa un botón del mando...", "Press a controller button..."));
+            } else if (names.empty()) {
+                ImGui::TextColored(kGrey, "%s", T("(sin botón)", "(none)"));
+            } else {
+                std::string text;
+                for (const auto& n : names) {
+                    const int input = Pads::InputFromName(n);
+                    text += (text.empty() ? "" : "  /  ") + (input >= 0 ? Pads::Label(input, family, type, g_spanish) : n);
+                }
+                ImGui::TextColored(custom ? kText : kGrey, "%s", text.c_str());
+            }
+            ImGui::TableNextColumn();
+            if (g_pad_capture == i) {
+                if (ImGui::SmallButton(T("Cancelar", "Cancel"))) {
+                    g_pad_capture = -1;
+                    Pads::CancelCapture();
+                }
+            } else {
+                ImGui::BeginDisabled(g_pad_capture >= 0 || !sdl || pads.empty());
+                if (ImGui::SmallButton(T("Cambiar", "Change"))) {
+                    g_pad_replace = !custom;
+                    g_pad_capture = i;
+                    Pads::ArmCapture();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                ImGui::BeginDisabled(g_pad_capture >= 0);
+                if (ImGui::SmallButton(T("Quitar", "Clear"))) {
+                    a.game.Set(key, "");
+                    SaveGameIni();
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!custom);
+                if (ImGui::SmallButton(T("Original", "Default"))) {
+                    a.game.Erase(key);
+                    SaveGameIni();
+                }
+                ImGui::EndDisabled();
+                ImGui::EndDisabled();
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::BeginDisabled(g_pad_capture >= 0);
+    if (ImGui::Button((std::string(ICON_UNDO "  ") + T("Restaurar todos los botones", "Restore all buttons")).c_str())) {
+        for (const auto& in : kKeyInputs)
+            if (PadFallback(in.id)) a.game.Erase(std::string("pad.") + in.id);
+        SaveGameIni();
+    }
+    ImGui::EndDisabled();
+    ImGui::TextColored(kGrey, "%s", T("Gris: botón original. Los nombres siguen al mando elegido arriba.",
+                                      "Grey: default button. Names follow the controller chosen above."));
+
+    Section(T("Sticks", "Sticks"));
+    {
+        int inner = std::clamp(a.launcher.Int("pad_deadzone", 5), 0, 126);
+        int outer = std::clamp(a.launcher.Int("pad_deadzone_outer", 127), inner + 1, 127);
+        int inner_pct = int(std::lround(inner * 100.0 / 127.0)), outer_pct = int(std::lround(outer * 100.0 / 127.0));
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+        if (ImGui::SliderInt(T("Zona muerta", "Dead zone"), &inner_pct, 0, 40, "%d %%")) {
+            a.launcher.Set("pad_deadzone", std::to_string(int(std::lround(inner_pct * 127.0 / 100.0))));
+            SaveLauncher();
+        }
+        HelpMarker(T("Cuánto hay que mover el stick antes de que el juego lo note. Súbela si el kart gira solo (stick con deriva). "
+                     "Por defecto 4 %. Se ve como el anillo gris en la prueba de arriba.",
+                     "How far the stick moves before the game notices. Raise it if the kart steers by itself (stick drift). "
+                     "Default 4 %. It is the grey ring in the test above."));
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.0f);
+        if (ImGui::SliderInt(T("Giro completo al", "Full turn at"), &outer_pct, 60, 100, "%d %%")) {
+            a.launcher.Set("pad_deadzone_outer", std::to_string(int(std::lround(outer_pct * 127.0 / 100.0))));
+            SaveLauncher();
+        }
+        HelpMarker(T("Con menos del 100 % el giro llega al máximo antes del tope del stick: útil con sticks gastados o mandos "
+                     "que no llegan al borde. Es el anillo naranja.",
+                     "Below 100 % the turn reaches its maximum before the stick's edge: useful for worn sticks or "
+                     "controllers that do not reach the edge. It is the orange ring."));
+        LauncherFlag("pad_center_cal", T("Corregir el centro de mandos genéricos", "Correct the centre of generic controllers"), true,
+                     T("Algunos mandos clónicos dicen estar inclinados con el stick suelto; el port mide su centro al conectarlos. "
+                       "Desactívalo solo si un mando original se comporta raro.",
+                       "Some clone controllers report a tilt with the stick at rest; the port measures their centre when they "
+                       "connect. Turn it off only if a genuine controller behaves oddly."));
+        if (ImGui::Button((std::string(ICON_UNDO "  ") + T("Valores por defecto", "Defaults")).c_str())) {
+            a.launcher.Erase("pad_deadzone");
+            a.launcher.Erase("pad_deadzone_outer");
+            a.launcher.Erase("pad_center_cal");
+            SaveLauncher();
+        }
+    }
+}
+
+void ControlsTab() {
+    if (ImGui::BeginTabBar("controls")) {
+        if (ImGui::BeginTabItem((std::string(ICON_GAMEPAD "  ") + T("Mandos", "Controllers") + "###pads").c_str())) {
+            if (g_key_capture >= 0) g_key_capture = -1;
+            ImGui::BeginChild("pads");
+            ControllersPage();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem((std::string(ICON_KEYBOARD "  ") + T("Teclado", "Keyboard") + "###keys").c_str())) {
+            if (g_pad_capture >= 0) {
+                g_pad_capture = -1;
+                Pads::CancelCapture();
+            }
+            ImGui::BeginChild("keyboard");
+            KeyboardTab();
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
+        ImGui::EndTabBar();
+    }
+}
+
 void ToolsTab() {
     App& a = g_app;
-    ImGui::SeparatorText(T("Carpetas y registro", "Folders and log"));
+    Section(T("Carpetas y registro", "Folders and log"));
     if (ImGui::Button(T("Abrir last_run.log", "Open last_run.log"))) OpenInShell(a.root / L"last_run.log");
     ImGui::SameLine();
     if (ImGui::Button(T("Abrir la carpeta del port", "Open the port folder"))) OpenInShell(a.root);
@@ -2680,7 +3324,7 @@ void ToolsTab() {
                  T("Para reportar fallos o tirones: adjunta el archivo de logs\\ en un issue.",
                    "To report crashes or stutter: attach the file from logs\\ to an issue."));
 
-    ImGui::SeparatorText(T("Caché de shaders", "Shader cache"));
+    Section(T("Caché de shaders", "Shader cache"));
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(kGrey, "%s", T("Los shaders se guardan para que los siguientes arranques vayan fluidos. Bórrala solo si "
                                       "actualizaste el driver de la GPU o ves fallos gráficos.",
@@ -2691,7 +3335,7 @@ void ToolsTab() {
     if (ImGui::Button(T("Borrar la caché de shaders", "Clear the shader cache"))) a.confirm_clear_cache = true;
     ImGui::EndDisabled();
 
-    ImGui::SeparatorText(T("Idioma del launcher", "Launcher language"));
+    Section(T("Idioma del launcher", "Launcher language"));
     if (ImGui::RadioButton("Español", g_spanish)) {
         g_spanish = true;
         SaveLauncher();
@@ -2702,7 +3346,7 @@ void ToolsTab() {
         SaveLauncher();
     }
 
-    ImGui::SeparatorText(T("Acerca de", "About"));
+    Section(T("Acerca de", "About"));
     ImGui::Text("CTR-NitroFueled-PC %s", a.version.c_str());
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextUnformatted(T("Fork de Windows de SacredFire (T3CHNOLOG1C), basado en bbport (deadinside28), el port de Windows "
@@ -2741,6 +3385,132 @@ void ClearShaderCache() {
                             T(" archivos).", " files).");
 }
 
+// ---------------------------------------------------------------------------------------------
+// v0.4 header: the icon, the title, the version and the edition of the chosen game.
+
+/// "América (USA) · CUSA13795", "Europa (PAL) · CUSA14876" or "" without a game.
+std::string EditionLabel() {
+    const std::string title = GameTitleId();
+    bool known = false;
+    for (const FolderInfo* info : {&g_app.game_info, &g_app.update_info, &g_app.base_info}) known |= IsCtrTitle(info->title);
+    if (!known) return {};
+    return std::string(title == "CUSA14876" ? T("Europa (PAL)", "Europe (PAL)") : T("América (USA)", "Americas (USA)")) +
+           " · " + title;
+}
+
+void Header() {
+    App& a = g_app;
+    const float s = g_ui_scale;
+    const ImVec2 win = ImGui::GetWindowPos();
+    const float width = ImGui::GetWindowSize().x;
+    const float height = 74.0f * s;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 left = IM_COL32(0x2A, 0x1B, 0x3E, 0xFF), right = IM_COL32(0x15, 0x19, 0x2A, 0xFF);
+    dl->AddRectFilledMultiColor(win, ImVec2(win.x + width, win.y + height), left, right, right, left);
+    dl->AddRectFilledMultiColor(ImVec2(win.x, win.y + height - 3 * s), ImVec2(win.x + width, win.y + height),
+                                IM_COL32(0xFF, 0x7A, 0x18, 0xFF), IM_COL32(0xFF, 0xD2, 0x3F, 0xFF),
+                                IM_COL32(0xFF, 0xD2, 0x3F, 0xFF), IM_COL32(0xFF, 0x7A, 0x18, 0xFF));
+    const float pad = 18.0f * s, logo = 50.0f * s;
+    float x = win.x + pad;
+    if (g_logo) {
+        const float y = win.y + (height - logo) * 0.5f;
+        dl->AddImage(ImTextureRef(ImTextureID(reinterpret_cast<intptr_t>(g_logo))), ImVec2(x, y), ImVec2(x + logo, y + logo));
+        x += logo + 14.0f * s;
+    }
+    ImFont* title_font = g_font_title ? g_font_title : ImGui::GetFont();
+    const float title_size = 30.0f * s;
+    dl->AddText(title_font, title_size, ImVec2(x, win.y + 10.0f * s), IM_COL32(0xFF, 0xFF, 0xFF, 0xFF), "CTR Nitro-Fueled PC");
+    std::string version = a.version;
+    if (const auto dash = version.find("-windows"); dash != std::string::npos) version.erase(dash);
+    const std::string subtitle =
+        std::string(T("Port nativo para Windows", "Native Windows port")) + (version.empty() ? "" : "  ·  " + version);
+    dl->AddText(ImGui::GetFont(), ImGui::GetFontSize() * 0.92f, ImVec2(x + 2 * s, win.y + 10.0f * s + title_size + 2 * s),
+                Col(kGrey), subtitle.c_str());
+
+    // Right: the game's state and edition.
+    std::vector<std::pair<std::string, ImVec4>> pills;
+    const std::string edition = EditionLabel();
+    if (a.game_running) pills.emplace_back(std::string(ICON_PLAY "  ") + T("En juego", "Playing"), kGreen);
+    else if (a.game_info.kind == Kind::Complete && a.game_checked && a.game_ok)
+        pills.emplace_back(std::string(ICON_CHECK "  ") + T("Listo para jugar", "Ready to play"), kGreen);
+    else pills.emplace_back(std::string(ICON_WARN "  ") + T("Falta preparar el juego", "Game not set up"), kYellow);
+    if (!edition.empty()) pills.emplace_back(std::string(ICON_GLOBE "  ") + edition, kBlue);
+    float rx = win.x + width - pad;
+    const ImVec2 pp(8.0f * s, 4.0f * s);
+    const float line = ImGui::GetTextLineHeight();
+    for (const auto& [text, color] : pills) {
+        const ImVec2 t = ImGui::CalcTextSize(text.c_str());
+        const ImVec2 a0(rx - t.x - pp.x * 2, win.y + (height - line - pp.y * 2) * 0.5f);
+        const ImVec2 a1(rx, a0.y + line + pp.y * 2);
+        dl->AddRectFilled(a0, a1, Col(color, 0.16f), 99.0f);
+        dl->AddRect(a0, a1, Col(color, 0.8f), 99.0f, 0, 1.0f * s);
+        dl->AddText(ImVec2(a0.x + pp.x, a0.y + pp.y), Col(color), text.c_str());
+        rx = a0.x - 8.0f * s;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(win.x + ImGui::GetStyle().WindowPadding.x, win.y + height + 10.0f * s));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Play tab: what the game will start with, at a glance.
+
+void PlaySummary() {
+    App& a = g_app;
+    auto res = [&]() -> std::string {
+        const std::string v = EffectiveRenderRes();
+        for (const auto& r : kRenderRes)
+            if (v == r.value) return T(r.es, r.en);
+        return v;
+    };
+    auto upscaler = [&]() -> std::string {
+        const std::string t = GameTemporal();
+        if (t == "fsr1") return "AMD FSR 1";
+        if (t == "fsr3") return "AMD FSR 3";
+        if (t == "fsr4") return T("AMD FSR 4 (experimental)", "AMD FSR 4 (experimental)");
+        if (t == "dlss") return "NVIDIA DLSS";
+        return T("Desactivado", "Off");
+    };
+    auto language = [&]() -> std::string {
+        const std::string v = GameLanguage();
+        if (EuEdition()) {
+            for (const auto& c : kGameLanguagesEu)
+                if (v == c.value) return T(c.es, c.en);
+        } else {
+            for (const auto& c : kGameLanguages)
+                if (v == c.value) return T(c.es, c.en);
+        }
+        return v;
+    };
+    const int fps = a.game.Int("fps_limit", 60);
+    const std::string framegen = a.game.Get("framegen", "off");
+    const std::string aspect = GameAspect();
+    const std::string output = a.game.Get("output_res");
+    const std::pair<std::string, std::string> rows[] = {
+        {T("Resolución interna", "Internal resolution"), res()},
+        {T("Escalado", "Upscaling"), GameAspect() != "16:9" ? T("(apagado con ultra-panorámico)", "(off with ultrawide)") : upscaler()},
+        {T("Generación de cuadros", "Frame generation"),
+         framegen == "fsr3" || framegen == "fsr" ? "AMD FSR 3" : T("Desactivada", "Off")},
+        {T("Aspecto / salida", "Aspect / output"), aspect + (output.empty() ? "" : "  ·  " + output)},
+        {T("Límite de FPS", "FPS limit"), fps == 0 ? T("Sin límite", "No limit") : std::to_string(fps) + " FPS"},
+        {T("Idioma del juego", "Game language"), language()},
+    };
+    if (ImGui::BeginTable("summary", 2, ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("k", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
+        ImGui::TableSetupColumn("v", ImGuiTableColumnFlags_WidthStretch);
+        for (const auto& [k, v] : rows) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextColored(kGrey, "%s", k.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(v.c_str());
+        }
+        ImGui::EndTable();
+    }
+    if (ImGui::Button((std::string(ICON_SETTINGS "  ") + T("Cambiar ajustes", "Change settings")).c_str())) g_goto_tab = "settings";
+    ImGui::SameLine();
+    if (ImGui::Button((std::string(ICON_GAMEPAD "  ") + T("Mandos y teclado", "Controllers and keyboard")).c_str()))
+        g_goto_tab = "controls";
+}
+
 void Frame() {
     App& a = g_app;
     PollJobs();
@@ -2750,61 +3520,73 @@ void Frame() {
     ImGui::Begin("launcher", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.6f);
-    ImGui::TextUnformatted("CTR Nitro-Fueled PC");
-    ImGui::PopFont();
-    ImGui::SameLine();
-    ImGui::TextColored(kGrey, "%s", a.version.c_str());
+    Header();
 
     if (!a.notice.empty()) {
-        ImGui::TextColored(kYellow, "%s", a.notice.c_str());
+        BeginCard("notice");
+        ImGui::TextColored(kYellow, ICON_INFO);
         ImGui::SameLine();
+        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 3.0f);
+        ImGui::TextUnformatted(a.notice.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - ImGui::GetFontSize() * 1.5f);
         if (ImGui::SmallButton("OK")) a.notice.clear();
+        EndCard();
     }
 
+    bool on_controls = false;
     if (ImGui::BeginTabBar("tabs")) {
-        if (ImGui::BeginTabItem(T("Jugar", "Play"))) {
+        const char* go = g_goto_tab;
+        g_goto_tab = nullptr;
+        auto tab = [go](const char* icon, const char* label, const char* id) {
+            const std::string text = std::string(icon) + "  " + label + "###" + id;
+            const bool select = go && std::strcmp(go, id) == 0;
+            return ImGui::BeginTabItem(text.c_str(), nullptr, select ? ImGuiTabItemFlags_SetSelected : 0);
+        };
+        if (tab(ICON_PLAY, T("Jugar", "Play"), "play")) {
+            ImGui::BeginChild("play");
             PlayTab();
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("Ajustes", "Settings"))) {
+        if (tab(ICON_SETTINGS, T("Ajustes", "Settings"), "settings")) {
             ImGui::BeginChild("settings");
             SettingsTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("Teclado", "Keyboard"))) {
-            ImGui::BeginChild("keyboard");
-            KeyboardTab();
-            ImGui::EndChild();
+        if (tab(ICON_GAMEPAD, T("Controles", "Controls"), "controls")) {
+            on_controls = true;
+            ControlsTab();
             ImGui::EndTabItem();
-        } else if (g_key_capture >= 0) {
-            g_key_capture = -1;  // left the tab while waiting for a key
         }
-        if (ImGui::BeginTabItem(T("Parches", "Patches"))) {
+        if (tab(ICON_PUZZLE, T("Parches", "Patches"), "patches")) {
             ImGui::BeginChild("patches");
             PatchesTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("Guardados", "Saves"))) {
+        if (tab(ICON_SAVE, T("Guardados", "Saves"), "saves")) {
             ImGui::BeginChild("saves");
             SavesTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("DLC")) {
+        if (tab(ICON_PACKAGE, "DLC", "dlc")) {
             ImGui::BeginChild("dlc");
             DlcTab();
             ImGui::EndChild();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem(T("Herramientas", "Tools"))) {
+        if (tab(ICON_TOOLS, T("Herramientas", "Tools"), "tools")) {
+            ImGui::BeginChild("tools");
             ToolsTab();
+            ImGui::EndChild();
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
     }
+    if (!on_controls) LeaveControls();
 
     SaveConfirmations();
     if (a.confirm_clear_cache) {
@@ -3019,6 +3801,86 @@ static LRESULT WINAPI WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
 
+// Text in Segoe UI, with Segoe UI Symbol for the PlayStation shapes and the icon font merged in;
+// section titles in Segoe UI Semibold; the header in Bahnschrift. Missing fonts fall back.
+void LoadFonts() {
+    ImGuiIO& io = ImGui::GetIO();
+    wchar_t windows[MAX_PATH];
+    const UINT n = GetWindowsDirectoryW(windows, MAX_PATH);
+    const fs::path dir = fs::path(std::wstring(windows, n)) / L"Fonts";
+    std::error_code ec;
+    auto font = [&](std::initializer_list<const wchar_t*> names) -> std::string {
+        for (const wchar_t* name : names)
+            if (fs::is_regular_file(dir / name, ec)) return PathText(dir / name);
+        return {};
+    };
+    const std::string body = font({L"segoeui.ttf"}), semibold = font({L"seguisb.ttf", L"segoeuib.ttf", L"segoeui.ttf"});
+    const std::string title = font({L"bahnschrift.ttf", L"seguisb.ttf", L"segoeui.ttf"});
+    const std::string symbols = font({L"seguisym.ttf"}), icons = font({L"SegoeIcons.ttf", L"segmdl2.ttf"});
+    static const ImWchar kIconRanges[] = {0xE700, 0xF8FF, 0};
+    auto merge = [&] {
+        ImFontConfig cfg;
+        cfg.MergeMode = true;
+        if (!symbols.empty()) io.Fonts->AddFontFromFileTTF(symbols.c_str(), 0.0f, &cfg);
+        if (!icons.empty()) {
+            ImFontConfig ic;
+            ic.MergeMode = true;
+            ic.GlyphRanges = kIconRanges;
+            ic.GlyphOffset = ImVec2(0.0f, 2.0f);
+            io.Fonts->AddFontFromFileTTF(icons.c_str(), 0.0f, &ic);
+        }
+    };
+    if (body.empty()) {
+        io.Fonts->AddFontDefault();
+        return;
+    }
+    io.Fonts->AddFontFromFileTTF(body.c_str());
+    merge();
+    g_font_heading = io.Fonts->AddFontFromFileTTF(semibold.c_str());
+    merge();
+    g_font_title = io.Fonts->AddFontFromFileTTF(title.c_str());
+    merge();
+}
+
+// The application icon (resource 1) as a texture for the header.
+void LoadLogo(HINSTANCE instance) {
+    constexpr int px = 128;
+    HICON icon = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, px, px, LR_DEFAULTCOLOR));
+    if (!icon) return;
+    ICONINFO ii{};
+    if (!GetIconInfo(icon, &ii)) {
+        DestroyIcon(icon);
+        return;
+    }
+    std::vector<uint32_t> pixels(size_t(px) * px);
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = px;
+    bi.bmiHeader.biHeight = -px;  // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    HDC dc = GetDC(nullptr);
+    const int rows = ii.hbmColor ? GetDIBits(dc, ii.hbmColor, 0, px, pixels.data(), &bi, DIB_RGB_COLORS) : 0;
+    ReleaseDC(nullptr, dc);
+    if (ii.hbmColor) DeleteObject(ii.hbmColor);
+    if (ii.hbmMask) DeleteObject(ii.hbmMask);
+    DestroyIcon(icon);
+    if (rows != px) return;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = td.Height = px;
+    td.MipLevels = td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data{pixels.data(), UINT(px * 4), 0};
+    ID3D11Texture2D* texture = nullptr;
+    if (FAILED(g_device->CreateTexture2D(&td, &data, &texture))) return;
+    g_device->CreateShaderResourceView(texture, nullptr, &g_logo);
+    texture->Release();
+}
+
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
 #ifdef LAUNCHER_SELFTEST
     // Test build only (CMake never defines it): file operations without the window.
@@ -3060,7 +3922,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
                                                 GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     RegisterClassExW(&wc);
-    const int width = int(820 * scale), height = int(720 * scale);
+    const int width = int(940 * scale), height = int(800 * scale);
     RECT work{};
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
     const int x = work.left + std::max(0, int(work.right - work.left - width) / 2);
@@ -3087,20 +3949,20 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     style.FontSizeBase = 17.0f;
     style.ScaleAllSizes(scale);
     style.FontScaleDpi = scale;
-    style.WindowPadding = ImVec2(16 * scale, 14 * scale);
-    style.FramePadding = ImVec2(10 * scale, 6 * scale);
-    style.ItemSpacing = ImVec2(10 * scale, 8 * scale);
-    style.FrameRounding = 4 * scale;
-    style.TabRounding = 4 * scale;
-    wchar_t fonts[MAX_PATH];
-    const UINT n = GetWindowsDirectoryW(fonts, MAX_PATH);
-    const fs::path segoe = fs::path(std::wstring(fonts, n)) / L"Fonts" / L"segoeui.ttf";
-    std::error_code ec;
-    if (fs::is_regular_file(segoe, ec)) io.Fonts->AddFontFromFileTTF(PathText(segoe).c_str());
-    else io.Fonts->AddFontDefault();
+    g_ui_scale = scale;
+    ApplyTheme(scale);
+    LoadFonts();
+    // A dark title bar in the theme's colour (Windows 10 2004+ / 11; ignored elsewhere).
+    {
+        const BOOL dark = TRUE;
+        DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof dark);
+        const COLORREF caption = RGB(0x11, 0x13, 0x1A);
+        DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &caption, sizeof caption);
+    }
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_device, g_context);
+    LoadLogo(instance);
     LoadState();
 
     bool done = false;
@@ -3135,7 +3997,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         ImGui::NewFrame();
         Frame();
         ImGui::Render();
-        const float clear[4] = {0.08f, 0.08f, 0.10f, 1.0f};
+        const float clear[4] = {kBg.x, kBg.y, kBg.z, 1.0f};
         g_context->OMSetRenderTargets(1, &g_rtv, nullptr);
         g_context->ClearRenderTargetView(g_rtv, clear);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
@@ -3148,6 +4010,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         else g_app.worker.join();
     }
     if (g_app.probe.joinable()) g_app.probe.join();
+    Pads::Stop();
+    if (g_logo) g_logo->Release();
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
