@@ -2889,7 +2889,7 @@ void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, floa
     using namespace Pads;
     const bool ps = info.family == Family::PlayStation;
     const float W = std::min(ImGui::GetContentRegionAvail().x, 430.0f * g_ui_scale);
-    const float H = W * 0.62f;
+    const float H = W * 0.56f;
     const ImVec2 o = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     auto P = [&](float x, float y) { return ImVec2(o.x + x * W, o.y + y * W); };
@@ -2901,9 +2901,9 @@ void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, floa
         dl->AddText(ImVec2(c.x - t.x * 0.5f, c.y - t.y * 0.5f), color, label.c_str());
     };
     // Body and grips.
-    dl->AddCircleFilled(P(0.24f, 0.46f), R(0.135f), body, 48);
-    dl->AddCircleFilled(P(0.76f, 0.46f), R(0.135f), body, 48);
-    dl->AddRectFilled(P(0.10f, 0.11f), P(0.90f, 0.47f), body, R(0.10f));
+    dl->AddCircleFilled(P(0.235f, 0.405f), R(0.125f), body, 48);
+    dl->AddCircleFilled(P(0.765f, 0.405f), R(0.125f), body, 48);
+    dl->AddRectFilled(P(0.11f, 0.115f), P(0.89f, 0.43f), body, R(0.095f));
     // Triggers (analog fill) and shoulders.
     auto trigger = [&](float x0, float x1, int axis, int button) {
         const float v = std::clamp(st.axes[axis] / 32767.0f, 0.0f, 1.0f);
@@ -2991,7 +2991,6 @@ void DrawPad(const Pads::Info& info, const Pads::State& st, float dz_inner, floa
     };
     stick(lstick, AxLeftX, AxLeftY, BtnLeftStick);
     stick(ImVec2(0.63f, 0.37f), AxRightX, AxRightY, BtnRightStick);
-    dl->AddRect(P(0.10f, 0.11f), P(0.90f, 0.47f), edge, R(0.10f), 0, 1.0f);
     ImGui::Dummy(ImVec2(W, H));
 }
 
