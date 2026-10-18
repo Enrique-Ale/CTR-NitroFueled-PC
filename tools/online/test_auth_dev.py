@@ -46,6 +46,12 @@ def main():
     check(b'"auth_task":46' in body and b'"code":700' in body, "numbers unquoted in JSON")
     check(b'"iv_seed":3139301806' in auth_dev.build_auth_reply(7, 3139301806), "iv_seed echoed numeric")
     check(auth_dev.request_iv_seed(b'{"iv_seed":"3139301806"}') == 3139301806, "iv_seed parsed from request")
+    marked = auth_dev.build_auth_reply(46, 0, ticket_markers=True)
+    decoded = json.loads(marked.decode("utf-8"))
+    client_raw = base64.b64decode(decoded["client_ticket"])
+    server_raw = base64.b64decode(decoded["server_ticket"])
+    check(client_raw[4:12] == b"CLI04___" and server_raw[4:12] == b"SRV04___",
+          "position markers in tickets")
 
     signature = auth_dev.sign_body(args.key, body)
     pub = subprocess.run(["openssl", "rsa", "-in", args.key, "-pubout"],

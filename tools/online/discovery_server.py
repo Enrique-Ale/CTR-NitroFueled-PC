@@ -146,23 +146,61 @@ def classify(scheme, host, path):
 
 
 class Tcp:
-    def __init__(self, port):
+    def __init__(self, port, hold_seconds=0.0, echo_lobby=False, lobby_84=False, lobby_81=False,
+                 lobby_u32=210):
         self.port = port
+        self.hold_seconds = hold_seconds
+        self.echo_lobby = echo_lobby and port == 3074
+        self.lobby_84 = lobby_84 and port == 3074
+        self.lobby_81 = lobby_81 and port == 3074
+        self.lobby_u32 = lobby_u32
 
     async def handle(self, reader, writer):
         peer = writer.get_extra_info("peername")
         log(f"TCP {self.port}: connection from {peer[0]}:{peer[1]}")
         total = 0
+        chunks = 0
+        probed = False
         try:
             while True:
-                data = await reader.read(65536)
+                try:
+                    data = await asyncio.wait_for(reader.read(65536),
+                                                  self.hold_seconds or None)
+                except asyncio.TimeoutError:
+                    log(f"TCP {self.port}: hold expired after {self.hold_seconds}s "
+                        f"({total} bytes in {chunks} chunks)")
+                    break
                 if not data:
                     break
                 total += len(data)
-                log(f"TCP {self.port}: {len(data)} bytes\n{dump(data)}")
+                chunks += 1
+                log(f"TCP {self.port}: chunk #{chunks}, {len(data)} bytes\n{dump(data)}")
+                if not probed:
+                    probed = True
+                    if self.lobby_81:
+                        import os
+                        import struct
+                        reply = (struct.pack("<I", 22) + bytes((0x81,)) +
+                                 struct.pack("<I", self.lobby_u32) + os.urandom(17))
+                        log(f"TCP {self.port}: PROBE 0x81 greeting "
+                            f"({len(reply)} bytes, not a confirmed reply)")
+                        writer.write(reply)
+                        await writer.drain()
+                    elif self.lobby_84:
+                        import struct
+                        reply = struct.pack("<I", 6) + bytes((0x84, 0, 0, 0, 0, 0))
+                        log(f"TCP {self.port}: PROBE 0x84 challenge "
+                            f"({len(reply)} bytes, not a confirmed reply)")
+                        writer.write(reply)
+                        await writer.drain()
+                    elif self.echo_lobby:
+                        log(f"TCP {self.port}: PROBE echoing {len(data)} bytes back "
+                            f"(not a valid reply, only framing test)")
+                        writer.write(data)
+                        await writer.drain()
         except (ConnectionError, OSError) as error:
             log(f"TCP {self.port}: {error}")
-        log(f"TCP {self.port}: closed after {total} bytes")
+        log(f"TCP {self.port}: closed after {total} bytes in {chunks} chunks")
         writer.close()
 
 
@@ -178,13 +216,17 @@ class Udp(asyncio.DatagramProtocol):
 
 
 class Http:
-    def __init__(self, port, status, save_dir="", auth_status=None, sign_key=None, reply_task=None):
+    def __init__(self, port, status, save_dir="", auth_status=None, sign_key=None, reply_task=None,
+                 ticket_fill=0, ticket_markers=False, lobby_u32=210):
         self.port = port
         self.status = status
         self.save_dir = save_dir
         self.auth_status = status if auth_status is None else auth_status
         self.sign_key = sign_key
         self.reply_task = reply_task
+        self.ticket_fill = ticket_fill
+        self.ticket_markers = ticket_markers
+        self.lobby_u32 = lobby_u32
 
     async def handle(self, reader, writer):
         try:
@@ -265,7 +307,9 @@ class Http:
             return None
         try:
             task = self.reply_task if self.reply_task is not None else auth_dev.request_task_id(body)
-            reply_body = auth_dev.build_auth_reply(task, auth_dev.request_iv_seed(body))
+            reply_body = auth_dev.build_auth_reply(task, auth_dev.request_iv_seed(body),
+                                                   ticket_fill=self.ticket_fill,
+                                                   ticket_markers=self.ticket_markers)
             signature = auth_dev.sign_body(self.sign_key, reply_body)
         except (ValueError, RuntimeError, OSError) as error:
             log(f"    auth-dev #{seq}: signer failed ({error}); unsigned reply")
@@ -309,14 +353,16 @@ async def main(args):
     loop = asyncio.get_running_loop()
     servers = []
     http = Http(args.http, args.http_status, args.save_dir, args.auth_status, args.sign_key,
-                args.reply_task)
+                args.reply_task, args.ticket_fill, args.ticket_markers, args.lobby_u32)
     servers.append(await asyncio.start_server(http.handle, args.bind, args.http))
     log(f"HTTP on {args.bind}:{args.http} (answers {args.http_status}, captures to {args.save_dir or '(disabled)'})")
     for port in ports(args.tcp):
         if port == args.http:
             continue
         try:
-            servers.append(await asyncio.start_server(Tcp(port).handle, args.bind, port))
+            handler = Tcp(port, args.hold_seconds, args.tcp_echo, args.lobby_84, args.lobby_81,
+                            args.lobby_u32)
+            servers.append(await asyncio.start_server(handler.handle, args.bind, port))
         except OSError as error:
             log(f"TCP {port}: cannot listen ({error})")
     log(f"TCP on {args.tcp}")
@@ -339,6 +385,28 @@ if __name__ == "__main__":
                         help="status only for Demonware /auth/ replies (default: same as --http-status); "
                              "H2 test: 200-empty vs 404 vs 503 with an empty body, no invented content")
     parser.add_argument("--tcp", default="3074-3080,443", help="TCP ports to listen on")
+    parser.add_argument("--hold-seconds", type=float, default=0.0,
+                        help="keep TCP connections open this long after last data (0: close on EOF); "
+                             "reveals client follow-ups/timeouts on the lobby port")
+    parser.add_argument("--tcp-echo", action="store_true",
+                        help="PROBE only: echo the first chunk back once on TCP 3074 "
+                             "(framing test, NOT a valid lobby reply)")
+    parser.add_argument("--lobby-84", action="store_true",
+                        help="PROBE only: answer the lobby handshake with a framed 0x84 "
+                             "challenge ([len=6][84 00 00 00 00 00]) on TCP 3074; "
+                             "client should answer with 8 bytes (FUN_0001a120)")
+    parser.add_argument("--lobby-81", action="store_true",
+                        help="PROBE only: answer the lobby handshake with a framed 0x81 "
+                             "greeting ([len=22][81][u32 --lobby-u32][16 zero bytes]) on TCP 3074; "
+                             "client crypto core (FUN_0001b060) should answer (FUN_0001b8e0)")
+    parser.add_argument("--lobby-u32", type=int, default=210,
+                        help="u32 value in the 0x81 probe (client accepts 210-220)")
+    parser.add_argument("--ticket-fill", type=int, default=0,
+                        help="dev-only: fill byte for ticket bodies after the magic "
+                             "(0-255; PROBE whether zero bodies stall the crypto core)")
+    parser.add_argument("--ticket-markers", action="store_true",
+                        help="dev-only: ticket bodies carry position markers (CLI/SRV) to "
+                             "trace the ticket->session flow in BB_DW_DUMPTASK dumps")
     parser.add_argument("--udp", default="3074-3080", help="UDP ports to listen on")
     parser.add_argument("--log", default="online-discovery.log", help="log file")
     parser.add_argument("--save-dir", default="captures-online", help="directory for raw HTTP bodies ('': disabled)")

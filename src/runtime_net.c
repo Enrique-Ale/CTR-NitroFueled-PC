@@ -31,6 +31,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h> /* VirtualQuery for the dev-only task dump (winsock first) */
 typedef SOCKET NativeSocket;
 #define NATIVE_INVALID INVALID_SOCKET
 #define native_close closesocket
@@ -161,7 +162,27 @@ static const unsigned char dw_handler_force700[6] = {0xb8, 0xbc, 0x02, 0x00, 0x0
 #define DW_CHECK40_IMAGE_OFF ((uintptr_t)0x13e73) /* call [rax+0x40]: reply task-id check virtual */
 static const unsigned char dw_check40_orig[3] = {0xff, 0x50, 0x40};
 static const unsigned char dw_check40_bypass[3] = {0xb0, 0x01, 0x90}; /* mov al,1; nop */
-static int dw_nosig_applied, dw_novalidate_applied, dw_force700_applied, dw_no40check_applied;
+#define DW_MODE600_IMAGE_OFF ((uintptr_t)0x1c5ef) /* jne past +0x600=1 when +0xe4 != 2 */
+static const unsigned char dw_mode600_orig[2] = {0x75, 0x20};
+static const unsigned char dw_mode600_bypass[2] = {0x90, 0x90}; /* nop;nop: always set dispatch mode 1 */
+#define DW_DISPATCH_MODE_IMAGE_OFF ((uintptr_t)0x1a1cd) /* jne 0x1a2a8: reject if mode != 1 at dispatch */
+static const unsigned char dw_dispatch_mode_orig[6] = {0x0f, 0x85, 0xd5, 0x00, 0x00, 0x00}; /* jne 0x1a2a8 */
+static const unsigned char dw_dispatch_mode_bypass[6] = {0x90, 0x90, 0x90, 0x90, 0x90, 0x90}; /* nop*6: accept mode 0 for 0x81 */
+#define DW_HANDLER_81_CRYPTO_IMAGE_OFF ((uintptr_t)0x1b97f) /* je 0x1b9fa: skip pre-check in 0x81 handler */
+static const unsigned char dw_handler_81_crypto_orig[2] = {0x74, 0x79}; /* je 0x1b9fa */
+static const unsigned char dw_handler_81_crypto_bypass[2] = {0x90, 0x90}; /* nop;nop: always proceed to crypto core */
+#define DW_HANDLER_81_CRYPTO2_IMAGE_OFF ((uintptr_t)0x1b9ca) /* je 0x1b9fa: crypto core (0x1b060) fail in 0x81 handler */
+static const unsigned char dw_handler_81_crypto2_orig[2] = {0x74, 0x2e}; /* je 0x1b9fa */
+static const unsigned char dw_handler_81_crypto2_bypass[2] = {0x90, 0x90}; /* nop;nop: always proceed past crypto result */
+#define DW_HANDLER_81_TYPE_IMAGE_OFF ((uintptr_t)0x1b98b) /* ja 0x1b9fa: reject type not in 210-220 */
+static const unsigned char dw_handler_81_type_orig[2] = {0x77, 0x6d}; /* ja 0x1b9fa */
+static const unsigned char dw_handler_81_type_bypass[2] = {0x90, 0x90}; /* nop;nop: accept 0x81 type */
+#define DW_HANDLER_81_CRYPTO_CALL_OFF ((uintptr_t)0x1b9c3) /* call 0x1b060: crypto core in 0x81 handler */
+static const unsigned char dw_handler_81_crypto_call_orig[5] = {0xe8, 0x98, 0xf6, 0xff, 0xff}; /* call 0x1b060 */
+static const unsigned char dw_handler_81_crypto_call_bypass[5] = {0xb0, 0x01, 0x90, 0x90, 0x90}; /* mov al,1; nop*3: force crypto success */
+static int dw_nosig_applied, dw_novalidate_applied, dw_force700_applied, dw_no40check_applied,
+           dw_mode600_applied, dw_dispatch_mode_applied, dw_handler_81_crypto_applied,
+           dw_handler_81_crypto2_applied, dw_handler_81_type_applied, dw_handler_81_crypto_call_applied;
 static void dw_test_key_load(void) {
     const char *path=getenv("BB_DW_TEST_KEY");
     if (!path || !*path || dw_test_key_ready) return;
@@ -197,6 +218,193 @@ static int dw_swap_at(uintptr_t addr) {
            (unsigned long long)(addr - runtime_probe_image(NULL)));
     return 1;
 }
+/* ---- Lobby task state dump (development only) ----
+ * The 28-byte lobby hello carries 8 fresh nonce bytes that also sit at
+ * task+0x264. With BB_DW_DUMPTASK=1, the first SSocket hello triggers one
+ * bounded scan of mapped guest memory for those bytes; each hit verified by
+ * task+0x9c==0x10000 and task+0xe4==2 dumps the crypto-relevant task state
+ * (+0x100/+0x252/+0x264/+0x26c/+0x288../+0x360/+0x600/+0x700), ending all
+ * speculation about what the lobby crypto needs. Slow (one full scan), once. */
+static void dw_dump_field(const char *name, const unsigned char *base, uint64_t off, uint64_t len) {
+    unsigned char buf[64];
+    if (len > sizeof buf) len = sizeof buf;
+    memcpy(buf, base + off, (size_t)len);
+    char hex[129];
+    for (uint64_t i = 0; i < len; ++i) snprintf(hex + i * 2, 3, "%02x", buf[i]);
+    hex[len * 2] = 0;
+    printf("Net: online: task+0x%llx %s = %s\n", (unsigned long long)off, name, hex);
+}
+#ifdef _WIN32
+/* Whole-process scan (dev only): every committed readable region is searched for
+ * the 8-byte hello nonce; each hit verified as a lobby task (+0x9c==0x10000 and
+ * +0xe4==2) before dumping crypto-relevant state. Faults resume below. */
+static void dw_dump_task(const unsigned char *nonce) {
+    const char *env = getenv("BB_DW_DUMPTASK");
+    if (!env || strcmp(env, "1")) return;
+    /* Re-dump on each new hello (new connection/task), up to 3: shows whether the
+     * +0x750 child and +0x600/+0x700 modes appear later in the task lifecycle. */
+    static int dw_dump_count;
+    static unsigned char dw_dump_last_nonce[8];
+    static const unsigned char *dw_dump_prev_task;
+    if (dw_dump_count > 0 && !memcmp(nonce, dw_dump_last_nonce, 8)) return;
+    if (dw_dump_count >= 3) return;
+    memcpy(dw_dump_last_nonce, nonce, 8);
+    ++dw_dump_count;
+    printf("Net: online: task dump #%d: enumerating task-shaped objects...\n",
+           dw_dump_count);
+    /* Re-read the previous dump's task first (same host mapping): shows whether
+     * +0x600/+0x700/modes evolve after server messages arrived. */
+    if (dw_dump_prev_task) {
+        sigjmp_buf jb2;
+        runtime_fault_recover = &jb2;
+        if (!sigsetjmp(jb2, 1)) {
+            uint32_t p600 = 0, p700 = 0, pa0 = 0, pmode = 0;
+            memcpy(&p600, dw_dump_prev_task + 0x600, 4);
+            memcpy(&p700, dw_dump_prev_task + 0x700, 4);
+            memcpy(&pa0, dw_dump_prev_task + 0xa0, 4);
+            memcpy(&pmode, dw_dump_prev_task + 0x258, 4);
+            printf("Net: online: task redump %p: +0x258=%u +0x600=%u +0x700=%u +0xa0=%u\n",
+                   dw_dump_prev_task, pmode, p600, p700, pa0);
+        } else {
+            printf("Net: online: task redump: previous task gone\n");
+            dw_dump_prev_task = NULL;
+        }
+        runtime_fault_recover = NULL;
+    }
+    int found = 0;
+    uint64_t regions = 0, scanned = 0;
+    const uint64_t t0 = runtime_wait_clock();
+    sigjmp_buf jb;
+    for (uintptr_t at = 0; ; ) {
+        MEMORY_BASIC_INFORMATION info;
+        if (!VirtualQuery((void *)at, &info, sizeof info) || !info.RegionSize) break;
+        const uintptr_t end = (uintptr_t)info.BaseAddress + info.RegionSize;
+        /* Skip slow/irrelevant mappings: images (exe/DLLs), uncacheable GPU apertures. */
+        const int slow = (info.Protect & (PAGE_NOACCESS | PAGE_GUARD | PAGE_WRITECOMBINE | PAGE_NOCACHE));
+        if (info.State == MEM_COMMIT && !slow && info.Type != MEM_IMAGE) {
+            ++regions;
+            scanned += info.RegionSize;
+            if ((scanned >> 30) != ((scanned - info.RegionSize) >> 30))
+                printf("Net: online: task dump: %llu GB...\n", (unsigned long long)(scanned >> 30));
+            if ((runtime_wait_clock() - t0) / 1000000000ull >= 30) {
+                printf("Net: online: task dump: time budget exceeded, stopping\n");
+                break;
+            }
+            const unsigned char *base = (const unsigned char *)info.BaseAddress;
+            const uint64_t len = info.RegionSize;
+            const unsigned char n0 = nonce[0];
+            runtime_fault_recover = &jb;
+            uint64_t pos = 0;
+            int done = 0;
+            if (!sigsetjmp(jb, 1)) {
+                while (pos + 8 <= len && found < 3) {
+                    const unsigned char *hit = memchr(base + pos, n0, (size_t)(len - 8 - pos + 1));
+                    if (!hit) break;
+                    pos = (uint64_t)(hit - base) + 1;
+                    if (memcmp(hit, nonce, 8)) continue;
+                    /* The send buffer itself holds the nonce at +20: skip it by prefix. */
+                    {
+                    static const unsigned char hello_prefix[20]={
+                        0xc8,0,0,0, 0xc8,0,0,0, 0xd2,0,0,0, 0xdc,0,0,0, 0,0,1,0};
+                    if (hit - base >= 20 && !memcmp(hit - 20, hello_prefix, sizeof hello_prefix))
+                        continue;
+                    }
+                    const unsigned char *task = hit - 0x264;
+                    uint32_t v9c = 0, ve4 = 0;
+                    memcpy(&v9c, task + 0x9c, 4);
+                    memcpy(&ve4, task + 0xe4, 4);
+                    if (v9c != 0x10000 || ve4 != 2) continue;
+                    printf("Net: online: task dump: candidate at %p (+0x9c=0x10000, +0xe4=2)\n",
+                           task);
+                    if (!dw_dump_prev_task) dw_dump_prev_task = task;
+                    dw_dump_field("u32", task, 0x9c, 4);
+                    dw_dump_field("u32", task, 0xe4, 4);
+                    dw_dump_field("u32", task, 0xa0, 4);
+                    dw_dump_field("mode", task, 0x258, 4);
+                    dw_dump_field("u32", task, 0x600, 4);
+                    dw_dump_field("u32", task, 0x700, 4);
+                    dw_dump_field("sess+0", task, 0x100, 64);
+                    dw_dump_field("sess+64", task, 0x140, 64);
+                    dw_dump_field("sess+0x258", task, 0x358, 4);
+                    dw_dump_field("byte", task, 0x252, 1);
+                    dw_dump_field("nonce", task, 0x264, 8);
+                    dw_dump_field("u64", task, 0x26c, 8);
+                    dw_dump_field("session", task, 0x288, 36);
+                    dw_dump_field("u32", task, 0x360, 4);
+                    dw_dump_field("key?", task, 0x364, 32);
+                    dw_dump_field("u32", task, 0x120, 4);
+                    {
+                        /* The message dispatch (0x1a120) runs on the CHILD task at
+                         * parent+0x750 (a guest address: read it via backing). */
+                        uintptr_t child = 0;
+                        memcpy(&child, task + 0x750, 8);
+                        printf("Net: online: child task at guest 0x%llx\n",
+                               (unsigned long long)child);
+                        if (child) {
+                            unsigned char cf[48];
+                            runtime_memory_read_backing(child, cf, sizeof cf);
+                            printf("Net: online: child+0x0..0x2f = ");
+                            for (int k = 0; k < 48; ++k) printf("%02x", cf[k]);
+                            printf("\n");
+                            uint32_t c9c = 0, ce4 = 0, ca0 = 0, c600 = 0, c700 = 0, cb0 = 0;
+                            runtime_memory_read_backing(child + 0x9c, &c9c, 4);
+                            runtime_memory_read_backing(child + 0xe4, &ce4, 4);
+                            runtime_memory_read_backing(child + 0xa0, &ca0, 4);
+                            runtime_memory_read_backing(child + 600, &c600, 4);
+                            runtime_memory_read_backing(child + 0x700, &c700, 4);
+                            runtime_memory_read_backing(child + 0xb0, &cb0, 4);
+                            printf("Net: online: child +0x9c=%u +0xe4=%u +0xa0=%u +0x600=%u +0x700=%u +0xb0=%u\n",
+                                   c9c, ce4, ca0, c600, c700, cb0);
+                        }
+                    }
+                    ++found;
+                }
+                done = 1;
+            }
+            runtime_fault_recover = NULL;
+            (void)done;
+        }
+        if (found >= 3) break;
+        at = end;
+        if (!end) break;
+    }
+    printf("Net: online: task dump: %d candidate(s), %llu regions, %llu MB scanned\n",
+           found, (unsigned long long)regions, (unsigned long long)(scanned >> 20));
+}
+#else
+static void dw_dump_task(const unsigned char *nonce) {
+    /* Linux: vma walk (best effort, see _WIN32 branch for the full version). */
+    const char *env = getenv("BB_DW_DUMPTASK");
+    static int done = 0;
+    if (!env || strcmp(env, "1") || done) return;
+    done = 1;
+    printf("Net: online: task dump: scanning mapped guest memory for the hello nonce...\n");
+    static unsigned char page[1048576];
+    int found = 0;
+    for (uintptr_t base = 0x100000000ull; base < 0x100000000ull + ((uint64_t)16384 << 20) && found < 3;) {
+        int prot = 0, type = -1;
+        uintptr_t end = 0;
+        if (!runtime_memory_vma_info(base, &prot, &type, &end) || end <= base) { base += 1048576; continue; }
+        for (uintptr_t at = base; at < end && found < 3; at += sizeof page) {
+            uint64_t chunk = end - at < sizeof page ? end - at : sizeof page;
+            runtime_memory_read_backing(at, page, chunk);
+            for (uint64_t i = 0; i + 8 <= chunk; ++i) {
+                if (memcmp(page + i, nonce, 8)) continue;
+                const uintptr_t task = at + i - 0x264;
+                uint32_t v9c = 0, ve4 = 0;
+                runtime_memory_read_backing(task + 0x9c, &v9c, 4);
+                runtime_memory_read_backing(task + 0xe4, &ve4, 4);
+                if (v9c != 0x10000 || ve4 != 2) continue;
+                printf("Net: online: task dump: candidate at guest 0x%llx (+0x9c=0x10000, +0xe4=2)\n",
+                       (unsigned long long)task);
+                ++found;
+            }
+        }
+        base = end;
+    }
+    printf("Net: online: task dump: %d candidate(s)\n", found);
+}
+#endif
 /* Called with online on: from configure() and before each Demonware /auth/ request. */
 static void dw_test_key_ensure(void) {
     pthread_mutex_lock(&net_lock);
@@ -297,7 +505,8 @@ static void dw_test_key_ensure(void) {
             }
         }
     }
-    /* BB_DW_FORCE700=1: force the whole auth reply handler to return 700.     * Tells whether the retry loop even depends on FUN_00013d30's result: if the
+    /* BB_DW_FORCE700=1: force the whole auth reply handler to return 700.
+     * Tells whether the retry loop even depends on FUN_00013d30's result: if the
      * client still retries, another loop drives it; if it advances or faults on
      * the (uninitialized) ticket state, the handler's internals are the gate. */
     {
@@ -319,7 +528,145 @@ static void dw_test_key_ensure(void) {
             }
         }
     }
-    pthread_mutex_unlock(&net_lock);
+    /* BB_DW_FORCE600=1: always set dispatch mode (+0x600=1) after queueing the
+     * hello, even if the connection is still establishing (+0xe4 != 2). Our
+     * loopback answers differently from a real server, so the poll may never
+     * revisit; without mode 1 every server message is rejected. Single site. */
+    {
+        const char *mode=getenv("BB_DW_FORCE600");
+        if (mode && !strcmp(mode,"1") && !dw_mode600_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_MODE600_IMAGE_OFF+sizeof dw_mode600_bypass <= image_size) {
+                const uintptr_t site=image+DW_MODE600_IMAGE_OFF;
+                unsigned char cur[sizeof dw_mode600_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_mode600_bypass,sizeof cur)) dw_mode600_applied=1;
+                else if (!memcmp(cur,dw_mode600_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_mode600_bypass,sizeof dw_mode600_bypass)) {
+                    dw_mode600_applied=1;
+                    printf("Net: online: test BYPASS: dispatch mode forced to 1 (private server dev only)\n");
+                } else printf("Net: online: test mode600 bypass not applied (bytes %02x %02x)\n",
+                              cur[0],cur[1]);
+            }
+        }
+    }
+    /* BB_DW_DISPATCH_MODE=1: force the dispatch routine to accept mode 0 for 0x81 greeting.
+     * The dispatch at 0x1a120 reads mode from +0x258 and rejects if not in {1,2,3}.
+     * Our loopback never sets mode 1 (server answers differently), so 0x81 is dropped.
+     * Patching the jne at 0x1a1cd (6 bytes) to NOPs lets mode 0 fall through to 0x81 handling. */
+    {
+        const char *dmode=getenv("BB_DW_DISPATCH_MODE");
+        if (dmode && !strcmp(dmode,"1") && !dw_dispatch_mode_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_DISPATCH_MODE_IMAGE_OFF+sizeof dw_dispatch_mode_bypass <= image_size) {
+                const uintptr_t site=image+DW_DISPATCH_MODE_IMAGE_OFF;
+                unsigned char cur[sizeof dw_dispatch_mode_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_dispatch_mode_bypass,sizeof cur)) dw_dispatch_mode_applied=1;
+                else if (!memcmp(cur,dw_dispatch_mode_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_dispatch_mode_bypass,sizeof dw_dispatch_mode_bypass)) {
+                    dw_dispatch_mode_applied=1;
+                    printf("Net: online: test BYPASS: dispatch mode check disabled for 0x81 (private server dev only)\n");
+                } else printf("Net: online: test dispatch-mode bypass not applied (bytes %02x %02x %02x %02x %02x %02x)\n",
+                              cur[0],cur[1],cur[2],cur[3],cur[4],cur[5]);
+            }
+        }
+    }
+        /* BB_DW_HANDLER_81_CRYPTO=1: force the 0x81 handler (0x1b8e0) to skip the
+     * crypto core call (0x1b060) and proceed to send the response.
+     * The crypto core validates tickets with RSA/DH; our dummy tickets fail.
+     * Patching the je at 0x1b97c (2 bytes) to NOPs lets it fall through to
+     * the send-message path which sets mode=2 and replies. */
+    {
+        const char *h81=getenv("BB_DW_HANDLER_81_CRYPTO");
+        if (h81 && !strcmp(h81,"1") && !dw_handler_81_crypto_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_HANDLER_81_CRYPTO_IMAGE_OFF+sizeof dw_handler_81_crypto_bypass <= image_size) {
+                const uintptr_t site=image+DW_HANDLER_81_CRYPTO_IMAGE_OFF;
+                unsigned char cur[sizeof dw_handler_81_crypto_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_handler_81_crypto_bypass,sizeof cur)) dw_handler_81_crypto_applied=1;
+                else if (!memcmp(cur,dw_handler_81_crypto_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_handler_81_crypto_bypass,sizeof dw_handler_81_crypto_bypass)) {
+                    dw_handler_81_crypto_applied=1;
+                    printf("Net: online: test BYPASS: 0x81 handler crypto core bypassed (private server dev only)\n");
+                } else printf("Net: online: test handler-81-crypto bypass not applied (bytes %02x %02x)\n",
+                              cur[0],cur[1]);
+            }
+        }
+       /* BB_DW_HANDLER_81_CRYPTO2=1: force the 0x81 handler to accept crypto core failure.
+     * After call 0x1b060, a je at 0x1b9ca jumps to failure if crypto returns 0.
+     * Our dummy tickets make crypto fail; NOP this je to fall through to send path.
+     * This sets mode=2 at +0x258 and sends the 8-byte response. */
+    {
+        const char *h81=getenv("BB_DW_HANDLER_81_CRYPTO2");
+        if (h81 && !strcmp(h81,"1") && !dw_handler_81_crypto2_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_HANDLER_81_CRYPTO2_IMAGE_OFF+sizeof dw_handler_81_crypto2_bypass <= image_size) {
+                const uintptr_t site=image+DW_HANDLER_81_CRYPTO2_IMAGE_OFF;
+                unsigned char cur[sizeof dw_handler_81_crypto2_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_handler_81_crypto2_bypass,sizeof cur)) dw_handler_81_crypto2_applied=1;
+                else if (!memcmp(cur,dw_handler_81_crypto2_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_handler_81_crypto2_bypass,sizeof dw_handler_81_crypto2_bypass)) {
+                    dw_handler_81_crypto2_applied=1;
+                    printf("Net: online: test BYPASS: 0x81 handler crypto result check bypassed (private server dev only)\r\n");
+                } else printf("Net: online: test handler-81-crypto2 bypass not applied (bytes %02x %02x)\r\n",
+                              cur[0],cur[1]);
+            }
+        }
+    }
+ }
+
+    /* BB_DW_HANDLER_81_TYPE=1: accept 0x81 message type in handler.
+     * The handler at 0x1b8e0 checks message type (at msg+4) is in 210-220.
+     * The 0x81 greeting has type 0x81 at msg+4, which fails this check.
+     * NOP the ja at 0x1b98b to accept 0x81. */
+    {
+        const char *h81=getenv("BB_DW_HANDLER_81_TYPE");
+        if (h81 && !strcmp(h81,"1") && !dw_handler_81_type_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_HANDLER_81_TYPE_IMAGE_OFF+sizeof dw_handler_81_type_bypass <= image_size) {
+                const uintptr_t site=image+DW_HANDLER_81_TYPE_IMAGE_OFF;
+                unsigned char cur[sizeof dw_handler_81_type_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_handler_81_type_bypass,sizeof cur)) dw_handler_81_type_applied=1;
+                else if (!memcmp(cur,dw_handler_81_type_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_handler_81_type_bypass,sizeof dw_handler_81_type_bypass)) {
+                    dw_handler_81_type_applied=1;
+                    printf("Net: online: test BYPASS: 0x81 handler type check bypassed (private server dev only)\r\n");
+                } else printf("Net: online: test handler-81-type bypass not applied (bytes %02x %02x)\r\n",
+                              cur[0],cur[1]);
+            }
+        }
+    }
+    /* BB_DW_HANDLER_81_CRYPTO_CALL=1: force the crypto core call (0x1b060) in     * the 0x81 handler to return success (AL=1) without actually running it.     * The crypto core validates tickets with RSA/DH; our dummy tickets fail.     * Replacing the call at 0x1b9c3 (5 bytes) with mov al,1; nop*3 lets the     * handler proceed to send the 8-byte response which sets mode=2. */
+    {
+        const char *h81=getenv("BB_DW_HANDLER_81_CRYPTO_CALL");
+        if (h81 && !strcmp(h81,"1") && !dw_handler_81_crypto_call_applied) {
+            uint64_t image_size=0;
+            const uintptr_t image=runtime_probe_image(&image_size);
+            if (image && DW_HANDLER_81_CRYPTO_CALL_OFF+sizeof dw_handler_81_crypto_call_bypass <= image_size) {
+                const uintptr_t site=image+DW_HANDLER_81_CRYPTO_CALL_OFF;
+                unsigned char cur[sizeof dw_handler_81_crypto_call_bypass];
+                runtime_probe_read_image(site,cur,sizeof cur);
+                if (!memcmp(cur,dw_handler_81_crypto_call_bypass,sizeof cur)) dw_handler_81_crypto_call_applied=1;
+                else if (!memcmp(cur,dw_handler_81_crypto_call_orig,sizeof cur) &&
+                         runtime_probe_write_image(site,dw_handler_81_crypto_call_bypass,sizeof dw_handler_81_crypto_call_bypass)) {
+                    dw_handler_81_crypto_call_applied=1;
+                    printf("Net: online: test BYPASS: 0x81 handler crypto call forced success (private server dev only)\r\n");
+                } else printf("Net: online: test handler-81-crypto-call bypass not applied (bytes %02x %02x %02x %02x %02x)\r\n",
+                              cur[0],cur[1],cur[2],cur[3],cur[4]);
+            }
+        }
+    }
+
+pthread_mutex_unlock(&net_lock);
 }
 
 static void ip_text(uint32_t addr, char *out, size_t size) {
@@ -415,8 +762,8 @@ static int allowed(uint32_t addr) {
 /* ---- Logging ---- */
 static void hexdump(const char *what, int id, const void *data, size_t size) {
     const unsigned char *b=data;
-    const size_t shown=size<64 ? size : 64;
-    char hex[64*3+1], text[65];
+    const size_t shown=size<(cfg.trace ? 256 : 64) ? size : (cfg.trace ? 256 : 64);
+    char hex[256*3+1], text[257];
     for (size_t i=0;i<shown;++i) { snprintf(hex+i*3,4,"%02x ",b[i]); text[i]=b[i]>=32 && b[i]<127 ? (char)b[i] : '.'; }
     hex[shown*3]=0; text[shown]=0;
     printf("Net: %s %d: %zu bytes: %s|%s|%s\n",what,id,size,hex,text,size>shown ? " ..." : "");
@@ -604,6 +951,7 @@ static ABI int32_t net_socket_abort(int id,int flags) {
     return 0;
 }
 #define SOCKET_OR_FAIL(o, id) NetObj *o=object(id,OBJ_SOCKET); if (!o) return fail(E_BADF)
+static void log_send_caller(NetObj *o, int id, void *ret);
 
 static ABI int32_t net_connect(int id,const void *addr,uint32_t len) {
     SOCKET_OR_FAIL(o,id);
@@ -612,6 +960,7 @@ static ABI int32_t net_connect(int id,const void *addr,uint32_t len) {
     if (e) return fail(e);
     char text[48];
     addr_text(&to,text,sizeof text);
+    if (!o->sent_logged && !o->received_logged) log_send_caller(o,id,__builtin_return_address(0));
     if (!allowed(to.sin_addr.s_addr)) {
         printf("Net: connect %d '%s' to %s refused: not the private server\n",id,o->name,text);
         return fail(E_NETUNREACH);
@@ -686,11 +1035,67 @@ static void log_packet(NetObj *o, int id, const char *what, const void *data, in
     snprintf(label,sizeof label,"%s '%s'",what,o->name);
     hexdump(label,id,data,(size_t)size);
 }
+/* Guest return address of the first send on a socket: pinpoints the protocol's
+ * send site (image offset) without guessing. Same frame as the send call. */
+static void log_send_caller(NetObj *o, int id, void *ret) {
+    uint64_t image_size=0;
+    const uintptr_t image=runtime_probe_image(&image_size);
+    printf("Net: socket %d '%s' first use from guest %p",id,o->name,ret);
+    if (image && image_size && (uintptr_t)ret>=image && (uintptr_t)ret<image+image_size)
+        printf(" (image +0x%llx)",(unsigned long long)((uintptr_t)ret-image));
+    printf("\n");
+    /* The send wrapper is one frame below the real builder: scan this thread's stack
+     * for more image return addresses (each verified by a preceding call opcode).
+     * Faults (guard pages) resume below via the runtime's recovery point. */
+    if (image && image_size) {
+        static int warned;
+        sigjmp_buf jb;
+        runtime_fault_recover=&jb;
+        int prospects=0, confirmed=0;
+        if (!sigsetjmp(jb,1)) {
+            const uintptr_t rsp=(uintptr_t)__builtin_frame_address(0);
+            for (uintptr_t a=(rsp+7)&~(uintptr_t)7;
+                 a<rsp+262144 && confirmed<16 && prospects<4000; a+=8) {
+                const uintptr_t v=*(uintptr_t volatile *)a;
+                if (v<image || v>=image+image_size || v-image<16) continue;
+                ++prospects;
+                const unsigned char *p=(const unsigned char *)v;
+                /* Return address: preceded by E8 (direct) or FF /2 (register/memory
+                 * indirect: FF D0-D7, FF 10-17 incl. [rip+rel], FF 50-57, FF 90-97). */
+                const int direct=p[-5]==0xe8;
+                int indirect=0;
+                if (!direct && p[-3]==0xff) {
+                    const unsigned char m=p[-2];
+                    indirect=(m>=0xd0 && m<=0xd7) || (m>=0x10 && m<=0x17) ||
+                             (m>=0x50 && m<=0x57) || (m>=0x90 && m<=0x97);
+                }
+                if (!direct && !indirect && p[-2]==0xff && p[-1]>=0xd0 && p[-1]<=0xd7)
+                    indirect=1;
+                if (!direct && !indirect) continue;
+                printf("Net: socket %d stack: image +0x%llx (%s call)\n",
+                       id,(unsigned long long)(v-image),direct ? "direct" : "in");
+                ++confirmed;
+            }
+        }
+        runtime_fault_recover=NULL;
+        if (!warned && !confirmed) {
+            warned=1;
+            printf("Net: socket %d stack: no guest frames found (build without frame pointers?)\n",id);
+        }
+    }
+}
 static ABI int32_t net_send(int id,const void *data,uint64_t size,int flags) {
     SOCKET_OR_FAIL(o,id);
     if (would_block(o,flags,1)) return fail(E_AGAIN);
     const int n=send(o->s,data,(int)size,native_flags(flags & ~(PS_MSG_PEEK|PS_MSG_WAITALL)));
     if (n<0) return fail(native_error());
+    if (!o->sent_logged) log_send_caller(o,id,__builtin_return_address(0));
+    if (o->name[0]=='S' && size==28 && data) {
+        static const unsigned char hello_prefix[20]={
+            0xc8,0,0,0, 0xc8,0,0,0, 0xd2,0,0,0, 0xdc,0,0,0, 0,0,1,0};
+        if (!memcmp(data,hello_prefix,sizeof hello_prefix))
+            dw_dump_task((const unsigned char *)data+20);
+    }
     log_packet(o,id,"send",data,n,&o->sent_logged);
     return n;
 }
@@ -699,6 +1104,7 @@ static ABI int32_t net_recv(int id,void *data,uint64_t size,int flags) {
     if (would_block(o,flags,0)) return fail(E_AGAIN);
     const int n=recv(o->s,data,(int)size,native_flags(flags));
     if (n<0) return fail(native_error());
+    if (!o->received_logged) log_send_caller(o,id,__builtin_return_address(0));
     log_packet(o,id,"recv",data,n,&o->received_logged);
     return n;
 }
@@ -716,6 +1122,7 @@ static ABI int32_t net_sendto(int id,const void *data,uint64_t size,int flags,co
     if (would_block(o,flags,1)) return fail(E_AGAIN);
     const int n=sendto(o->s,data,(int)size,native_flags(flags & ~(PS_MSG_PEEK|PS_MSG_WAITALL)),(struct sockaddr *)&to,sizeof to);
     if (n<0) return fail(native_error());
+    if (!o->sent_logged) log_send_caller(o,id,__builtin_return_address(0));
     if (!o->sent_logged || cfg.trace) {
         char text[48];
         printf("Net: sendto %d '%s' to %s\n",id,o->name,addr_text(&to,text,sizeof text));
@@ -738,6 +1145,7 @@ static ABI int32_t net_recvfrom(int id,void *data,uint64_t size,int flags,void *
         return fail(native_error());
     }
     from_native(&from,addr,len);
+    if (!o->received_logged) log_send_caller(o,id,__builtin_return_address(0));
     log_packet(o,id,"recvfrom",data,n,&o->received_logged);
     return n;
 }

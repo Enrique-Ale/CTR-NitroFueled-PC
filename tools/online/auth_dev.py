@@ -20,23 +20,40 @@ TICKET_MAGIC = 0xEFBDADDE
 TICKET_LEN = 128
 
 
-def make_ticket_128():
-    """128-byte decoded ticket v1: magic header, zero body (semantics TBD)."""
-    ticket = bytearray(TICKET_LEN)
+def make_ticket_128(fill=0):
+    """128-byte decoded ticket v1: magic header + fill body (semantics TBD)."""
+    ticket = bytearray((fill,) * TICKET_LEN)
     struct.pack_into("<I", ticket, 0, TICKET_MAGIC)
     return bytes(ticket)
 
 
-def build_auth_reply(auth_task=46, iv_seed=0, client_id="dev-client", account_type="dev", identity="1"):
+def make_marker_ticket(prefix):
+    """128-byte ticket with 8-byte position markers (trace ticket->session flow).
+
+    Bytes 4..124 hold b"<PRF><off>___" markers (prefix e.g. 'CLI'/'SRV').
+    """
+    ticket = bytearray(TICKET_LEN)
+    struct.pack_into("<I", ticket, 0, TICKET_MAGIC)
+    for off in range(4, 124, 8):
+        ticket[off:off + 8] = f"{prefix}{off:02d}___".encode("ascii")[:8]
+    return bytes(ticket)
+
+
+def build_auth_reply(auth_task=46, iv_seed=0, client_id="dev-client", account_type="dev", identity="1",
+                     ticket_fill=0, ticket_markers=False):
     """Reply body: auth_task/code/iv_seed as NUMBERS (the client rejects quoted ones)."""
+    if ticket_markers:
+        client_raw, server_raw = make_marker_ticket("CLI"), make_marker_ticket("SRV")
+    else:
+        client_raw = server_raw = make_ticket_128(ticket_fill)
     reply = {
         "auth_task": int(auth_task),
         "code": 700,
         "iv_seed": int(iv_seed),
         "client_id": client_id[:64],
         "account_type": account_type[:10],
-        "client_ticket": base64.b64encode(make_ticket_128()).decode(),
-        "server_ticket": base64.b64encode(bytes(TICKET_LEN)).decode(),
+        "client_ticket": base64.b64encode(client_raw).decode(),
+        "server_ticket": base64.b64encode(server_raw).decode(),
         "identity": identity,
     }
     return json.dumps(reply, separators=(",", ":")).encode("utf-8")
