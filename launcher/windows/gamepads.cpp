@@ -5,6 +5,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cctype>
 #include <chrono>
 #include <cstring>
 
@@ -263,8 +264,14 @@ const char* InputName(int input) {
 }
 
 int InputFromName(const std::string& name) {
+    auto same = [](const std::string& a, const char* b) {  // ASCII, any case (no SDL call: the DLL may not be loaded)
+        size_t i = 0;
+        for (; i < a.size() && b[i]; ++i)
+            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) return false;
+        return i == a.size() && !b[i];
+    };
     for (int i = 0; i < BtnInputCount; ++i)
-        if (SDL_strcasecmp(name.c_str(), InputName(i)) == 0) return i;
+        if (same(name, InputName(i))) return i;
     return -1;
 }
 
