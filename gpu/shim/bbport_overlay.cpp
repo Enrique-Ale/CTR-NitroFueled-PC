@@ -529,12 +529,15 @@ void Menu() {
     // SacredFire: one upscaler at a time (bbport.ini temporal): FSR 1 (spatial) or the temporal
     // ones, FSR 3, DLSS and FSR 4 (vk_ctr_fsr3). Live; DLSS's quality mode and output need a restart.
     {
+        // Labels by setting value (BbSettings::Temporal); the list shows them in `order`.
         static constexpr const char* labels[BbSettings::TemporalCount] = {
-            "Off", "AMD FSR 1", "AMD FSR 3 (experimental)", "NVIDIA DLSS (experimental)",
-            "AMD FSR 4 (experimental)"};
+            "Off", "AMD FSR 1", "AMD FSR 3", "NVIDIA DLSS", "AMD FSR 4 (experimental)"};
+        static constexpr int order[BbSettings::TemporalCount] = {
+            BbSettings::TemporalOff, BbSettings::TemporalFsr1, BbSettings::TemporalFsr3,
+            BbSettings::TemporalFsr4, BbSettings::TemporalDlss};
         const int current = std::clamp(s.temporal.load(), 0, BbSettings::TemporalCount - 1);
         if (ImGui::BeginCombo(BbSettings::MenuText("Upscaling", "Апскейл"), labels[current])) {
-            for (int t = 0; t < BbSettings::TemporalCount; ++t) {
+            for (const int t : order) {
                 if (ImGui::Selectable(labels[t], t == current)) {
                     Store(s.temporal, t, t != current);
                 }

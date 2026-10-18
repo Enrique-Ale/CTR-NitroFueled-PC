@@ -143,6 +143,18 @@ def uw_disabled(game, config):
                            render_config=str(config))
 
 
+def uw_aspect(config):
+    """bbport.ini aspect_ratio ('16:9' when unset)."""
+    try:
+        for line in Path(config).read_text(encoding='utf-8', errors='replace').splitlines():
+            key, sep, value = line.partition('=')
+            if sep and key.strip() == 'aspect_ratio':
+                return value.strip()
+    except OSError:
+        pass
+    return '16:9'
+
+
 def uw_prepare_native(port, data, env, game, config):
     """v0.3 native ultrawide dispatch (Settings > Display > Aspect ratio).
 
@@ -287,11 +299,22 @@ def main():
     if check.returncode:
         fail(check.stdout.strip() or 'Game check failed.', 2)
     env['BB_GAME_PROFILE'] = check.stdout.strip() or 'ctr'
-    say(f'Game profile: {env["BB_GAME_PROFILE"]}')
+    # The game's own title ID and version: the European edition (CUSA14876) has its own patches.
+    info = subprocess.run([sys.executable, '-X', 'utf8', str(PORT / 'scripts' / 'game_check.py'), '--info',
+                           str(game)], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
+                          encoding='utf-8', errors='replace', creationflags=no_console()).stdout.split()
+    title_id, app_version = (info + [TITLE_ID, APP_VERSION][len(info):])[:2]
+    say(f'Game profile: {env["BB_GAME_PROFILE"]} ({title_id} {app_version})')
 
     # UltraWide v1.0: dispatch the selected aspect-ratio patch (v0.3 native, Settings > Display).
+    # tcosi's patches and HUD shaders are made for the Americas build (CUSA13795) only.
     try:
-        uw_mode = uw_prepare(PORT, data, env, game, config)
+        if title_id != TITLE_ID:
+            if uw_aspect(config) in ('21:9', '32:9'):
+                say(f'Ultrawide: made for {TITLE_ID}; {title_id} runs at 16:9')
+            uw_mode = uw_disabled(game, config)
+        else:
+            uw_mode = uw_prepare(PORT, data, env, game, config)
     except RuntimeError as error:
         fail(f'Ultrawide: {error}')
     game, config = uw_mode.game, uw_mode.config
@@ -326,7 +349,7 @@ def main():
         say(f'PS4 Pro mode: {env["BB_NEO"]} (BB_NEO=1 turns it on)')
         user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
         if env.get('BB_CLEAR_SHADER_CACHE', '0') == '1':
-            shutil.rmtree(user_dir / 'cache' / TITLE_ID, ignore_errors=True)
+            shutil.rmtree(user_dir / 'cache' / title_id, ignore_errors=True)
             say('Shader cache: cleared for this launch (BB_CLEAR_SHADER_CACHE=1)')
         env.setdefault('BB_PREUPLOAD', '1')
         # The PC memory model (dma-buf guest memory) is Linux only: the 0.3 model on Windows.
@@ -364,7 +387,7 @@ def main():
             first = False
             run_python('scripts/patches.py', '--patches-dir', env.get('BB_PATCHES_DIR', 'patches'),
                        '--patches-config', env.get('BB_PATCHES_CONFIG', data / 'patches.json'),
-                       '--app-version', APP_VERSION, '--title-id', TITLE_ID, '--out', out,
+                       '--app-version', app_version, '--title-id', title_id, '--out', out,
                        '--settings', uw_mode.render_config if uw_mode.enabled else config)
             if user_vblank:
                 env['BB_VBLANK_HZ'] = user_vblank

@@ -41,6 +41,12 @@ class GameCheckTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_european_edition_is_accepted_by_title(self):
+        game = self.game('CUSA14876', '01.21', b'any executable')
+        self.assertIsNone(game_check.problem(game))
+        profile = game_check.profile(game)
+        self.assertEqual((profile['name'], profile['title'], profile['variant']), ('ctr', 'CUSA14876', 'eu'))
+
     def test_base_game_without_the_update(self):
         game = self.game('CUSA13795', '01.00')
         self.assertEqual(game_check.problem(game), ('missing_update', 'CUSA13795', '01.00'))

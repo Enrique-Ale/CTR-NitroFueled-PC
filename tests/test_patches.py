@@ -46,6 +46,18 @@ class ExternalPatchTests(unittest.TestCase):
             writes = compile_external(external_selection(found, config), SEGMENTS)
             self.assertEqual(writes, [(0x100010, b'\x44\x33\x22\x11')])
 
+    def test_european_file_shares_the_menu_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / 'CrashTeamRacingEU.xml').write_text(EXTERNAL.replace('CUSA13795', 'CUSA14876'))
+            self.assertEqual(external_patches(folder), [])  # the US title skips it
+            found = external_patches(folder, title_id='CUSA14876')
+            config = folder / 'patches.json'
+            config.write_text(json.dumps({'enabled': ['CrashTeamRacing.xml/Off'],
+                                          'disabled': ['CrashTeamRacing.xml/On']}))
+            writes = compile_external(external_selection(found, config), SEGMENTS)
+            self.assertEqual(writes, [(0x100010, b'\x44\x33\x22\x11')])
+
     def test_out_of_segment_patch_is_skipped(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)

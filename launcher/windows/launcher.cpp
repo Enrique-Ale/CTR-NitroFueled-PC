@@ -42,7 +42,15 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// The Americas build (CUSA13795) and the European one (CUSA14876, as in martijnhe's
+// OCTR-NitroFueled-PC-EU): the port runs both.
 constexpr const char* kTitleId = "CUSA13795";
+constexpr const char* kTitleIds[] = {"CUSA13795", "CUSA14876"};
+bool IsCtrTitle(const std::string& title) {
+    for (const char* id : kTitleIds)
+        if (title == id) return true;
+    return false;
+}
 constexpr const char* kUpdateVersion = "01.21";
 constexpr const char* kRepoUrl = "https://github.com/GetLostIn/CTR-NitroFueled-PC";
 // The 1.21 update alone is about 8.5 GB; base game + update is much larger.
@@ -323,7 +331,7 @@ FolderInfo Analyze(const fs::path& dir) {
     info.title = get("TITLE_ID");
     info.version = get("APP_VER");
     info.category = get("CATEGORY");
-    if (info.title != kTitleId) {
+    if (!IsCtrTitle(info.title)) {
         info.kind = Kind::OtherTitle;
     } else if (info.category == "gd") {
         info.kind = Kind::Base;
@@ -516,6 +524,21 @@ constexpr Choice kGameLanguages[] = {
     {"Francés", "French", "2"},
     {"Portugués (Brasil)", "Portuguese (Brazil)", "17"},
 };
+// The European build (CUSA14876): the languages of the PAL release, as PS4 codes (English UK 18,
+// French 2, German 4, Italian 5, Spain's Spanish 3, Dutch 6, Portuguese 7, Russian 8, Polish 16,
+// Arabic 21). A language the files do not hold falls back to English in the game.
+constexpr Choice kGameLanguagesEu[] = {
+    {"Inglés (Reino Unido)", "English (UK)", "18"},
+    {"Español (España)", "Spanish (Spain)", "3"},
+    {"Francés", "French", "2"},
+    {"Alemán", "German", "4"},
+    {"Italiano", "Italian", "5"},
+    {"Neerlandés", "Dutch", "6"},
+    {"Portugués", "Portuguese", "7"},
+    {"Ruso", "Russian", "8"},
+    {"Polaco", "Polish", "16"},
+    {"Árabe", "Arabic", "21"},
+};
 constexpr Choice kPresentModes[] = {
     {"Mailbox (recomendado)", "Mailbox (recommended)", "Mailbox"},
     {"FIFO (VSync)", "FIFO (VSync)", "Fifo"},
@@ -616,6 +639,16 @@ struct App {
 
 App g_app;
 
+/// The title ID of the chosen game (the merged folder, else the update or the base game): the
+/// saves, the shader cache, the languages and the merged folder's name follow it.
+std::string GameTitleId() {
+    for (const FolderInfo* info : {&g_app.game_info, &g_app.update_info, &g_app.base_info})
+        if (IsCtrTitle(info->title)) return info->title;
+    return kTitleId;
+}
+std::wstring GameTitle() { return Widen(GameTitleId()); }
+bool EuEdition() { return GameTitle() == L"CUSA14876"; }
+
 std::string EffectiveRenderRes();
 std::string GameAspect();
 bool UltrawideCacheWarm();
@@ -684,9 +717,9 @@ void StartCheck() {
 fs::path MergeTarget(const fs::path& near_dir) {
     App& a = g_app;
     const fs::path parent = near_dir.parent_path();
-    fs::path target = parent / L"CUSA13795-1.21";
+    fs::path target = parent / (GameTitle() + L"-1.21");
     if (target == near_dir || target == a.base_dir || target == a.update_dir || target == a.game_dir) {
-        target = parent / L"CUSA13795-1.21-merged";
+        target = parent / (GameTitle() + L"-1.21-merged");
     }
     return target;
 }
@@ -746,12 +779,22 @@ void StartMerge(std::vector<fs::path> sources) {
     });
 }
 
-const char* DefaultGameLanguage() { return g_spanish ? "20" : "1"; }
+const char* DefaultGameLanguage() {
+    if (EuEdition()) return g_spanish ? "3" : "18";
+    return g_spanish ? "20" : "1";
+}
 
 /// The game language to start with: the saved one when the build has it, else the default (older
 /// launchers saved codes this build lacks, such as 3 for Spain's Spanish).
 std::string GameLanguage() {
     const std::string saved = g_app.launcher.Get("language");
+    if (EuEdition()) {
+        for (const auto& c : kGameLanguagesEu)
+            if (saved == c.value) return saved;
+        if (saved == "20") return "3"; // Spanish: Spain's, the one this build has
+        if (saved == "1") return "18"; // English: the UK one
+        return DefaultGameLanguage();
+    }
     for (const auto& c : kGameLanguages)
         if (saved == c.value) return saved;
     if (saved == "3") return "20"; // Spanish: the Latin American one this build has
@@ -1009,9 +1052,9 @@ fs::path SaveRoot() {
     std::error_code ec;
     for (fs::directory_iterator it(base, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code e2;
-        if (fs::is_directory(it->path() / L"CUSA13795", e2)) return it->path() / L"CUSA13795";
+        if (fs::is_directory(it->path() / GameTitle(), e2)) return it->path() / GameTitle();
     }
-    return base / L"1" / L"CUSA13795";
+    return base / L"1" / GameTitle();
 }
 
 fs::path BackupRoot() { return g_app.root / L"backups"; }
@@ -1164,7 +1207,7 @@ std::string ImportSaves(const fs::path& from) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Patches: every eboot patch for CUSA13795 01.21 in patches\*.xml (shadPS4/GoldHEN XML format).
+// Patches: every eboot patch for the game's title (CUSA13795 or CUSA14876) 01.21 in patches\*.xml (shadPS4/GoldHEN XML format).
 // The three community patches keep their bbport.ini keys (shared with the in-game menu); others
 // are switched in patches.json ({"enabled": [...], "disabled": [...]}), as scripts/patches.py reads.
 
@@ -1224,7 +1267,7 @@ std::vector<PatchInfo> LoadPatches() {
             const size_t close = xml.find("</ID>", at);
             if (close == std::string::npos) break;
             any_id = true;
-            if (Trim(xml.substr(at + 4, close - at - 4)) == kTitleId) ours = true;
+            if (Trim(xml.substr(at + 4, close - at - 4)) == GameTitleId()) ours = true;
         }
         if (any_id && !ours) continue;
         for (size_t at = 0; (at = xml.find("<Metadata", at)) != std::string::npos; ++at) {
@@ -1239,7 +1282,10 @@ std::vector<PatchInfo> LoadPatches() {
             if (get("AppVer") != kUpdateVersion || !(elf.empty() || elf == "eboot.bin")) continue;
             PatchInfo p;
             p.name = get("Name");
-            p.key = PathText(file.filename()) + "/" + p.name;
+            // The EU edition's bundled file shares CrashTeamRacing.xml's keys (scripts/patches.py
+            // selection_key), so the in-game menu and patches.json switch the same patches.
+            const std::string file_name = PathText(file.filename());
+            p.key = (file_name == "CrashTeamRacingEU.xml" ? std::string("CrashTeamRacing.xml") : file_name) + "/" + p.name;
             p.author = get("Author");
             p.note = get("Note");
             p.version = get("PatchVer");
@@ -1422,9 +1468,10 @@ void PlayTab() {
         }
         ImGui::PushTextWrapPos(0.0f);
         ImGui::TextUnformatted(T("Necesitas tu propio dump de PS4: el juego base (CUSA13795) y la actualización 1.21 "
-                                 "(CUSA13795-patch). Si ya los tienes juntos en una carpeta, elige esa.",
+                                 "(CUSA13795-patch; o la edición europea CUSA14876 con su 1.21). Si ya los tienes juntos en una carpeta, elige esa.",
                                  "You need your own PS4 dump: the base game (CUSA13795) and the 1.21 update "
-                                 "(CUSA13795-patch). If they are already merged in one folder, choose that one."));
+                                 "(CUSA13795-patch; or the European edition CUSA14876 with its 1.21). If they are already merged in one folder, "
+                                 "choose that one."));
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         if (ImGui::BeginTable("setup", 3, ImGuiTableFlags_SizingStretchProp)) {
@@ -1563,6 +1610,7 @@ std::string GameTemporal() {
 /// v0.3 native ultrawide (by tcosi): bbport.ini aspect_ratio, Settings > Display.
 /// 16:9 off; 21:9 needs a 2560x1080/3440x1440 output; 32:9 needs 5120x1440.
 std::string GameAspect() {
+    if (EuEdition()) return "16:9"; // tcosi's ultrawide patches are for CUSA13795 only (run.py too)
     const std::string v = g_app.game.Get("aspect_ratio", "16:9");
     if (v == "21:9" || v == "21x9") return "21:9";
     if (v == "32:9" || v == "32x9") return "32:9";
@@ -1579,7 +1627,7 @@ bool IsUltrawideKey(const std::string& key) {
 /// scripts/ultrawide_*_shader.py require_warm_cache. Otherwise every new player
 /// would hit the launch-time refusal on their first ultrawide try.
 bool UltrawideCacheWarm() {
-    const fs::path cache = g_app.root / L"user" / L"cache" / L"CUSA13795";
+    const fs::path cache = g_app.root / L"user" / L"cache" / GameTitle();
     std::error_code ec;
     auto present = [&](const wchar_t* name) {
         std::error_code e2;
@@ -1707,8 +1755,15 @@ void SettingsTab() {
         // The ultrawide rows unlock only with a warm shader cache (a normal 16:9
         // launch to the menu first); otherwise every new player would hit the
         // launch-time refusal. run.py keeps the same guard as a safety net.
-        const bool warm = UltrawideCacheWarm();
-        if (!warm) {
+        const bool eu = EuEdition();
+        const bool warm = !eu && UltrawideCacheWarm();
+        if (eu) {
+            ImGui::TextColored(kYellow, "%s",
+                               T("Edición europea (CUSA14876): el ultra-panorámico aún no está disponible (sus parches "
+                                 "son para CUSA13795). Las salidas 16:9 sí.",
+                                 "European edition (CUSA14876): ultrawide is not available yet (its patches are for "
+                                 "CUSA13795). The 16:9 outputs are."));
+        } else if (!warm) {
             ImGui::TextColored(kYellow, "%s",
                                T("El ultra-panorámico se desbloquea tras jugar una vez en 16:9 hasta el menú.",
                                  "Ultrawide unlocks after playing once in 16:9 up to the menu."));
@@ -1764,9 +1819,9 @@ void SettingsTab() {
         // v0.3: off while ultrawide is on (run.py forces it).
         static constexpr Choice kTemporal[] = {{"Desactivado", "Off", "off"},
                                                {"AMD FSR 1", "AMD FSR 1", "fsr1"},
-                                               {"AMD FSR 3 (experimental)", "AMD FSR 3 (experimental)", "fsr3"},
+                                               {"AMD FSR 3", "AMD FSR 3", "fsr3"},
                                                {"AMD FSR 4 (experimental)", "AMD FSR 4 (experimental)", "fsr4"},
-                                               {"NVIDIA DLSS (experimental)", "NVIDIA DLSS (experimental)", "dlss"}};
+                                               {"NVIDIA DLSS", "NVIDIA DLSS", "dlss"}};
         ImGui::BeginDisabled(uw_on);
         if (GameChoiceCombo(T("Escalado", "Upscaling"), "temporal", kTemporal, temporal.c_str(), 16.0f)) {
             a.game.Erase("fsr1");
@@ -1782,11 +1837,11 @@ void SettingsTab() {
                      "FSR 3, FSR 4 y DLSS reconstruyen el detalle a lo largo de varios cuadros con la profundidad y el movimiento "
                      "del juego, y a la misma resolución también suavizan los bordes. DLSS necesita una tarjeta NVIDIA "
                      "RTX (si no, se usa FSR 3); FSR 4 necesita soporte INT8 y sus modelos (si no, se usa FSR 3). "
-                     "Experimentales: si ves estelas o parpadeos, cambia a FSR 1.",
+                     "FSR 4 es experimental. Si ves estelas o parpadeos, cambia a FSR 1.",
                      "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3, FSR 4 and DLSS "
                      "rebuild detail over several frames from the game's depth and motion, and smooth edges even at the "
                      "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise); FSR 4 needs INT8 support "
-                     "and its model files (FSR 3 runs otherwise). Experimental: switch to "
+                     "and its model files (FSR 3 runs otherwise). FSR 4 is experimental. Switch to "
                      "FSR 1 if you see trails or shimmering."));
     }
     if (temporal == "dlss") {
@@ -1949,11 +2004,21 @@ void SettingsTab() {
     ImGui::SeparatorText(T("Consola", "Console"));
     if (a.launcher.Get("language") != GameLanguage()) a.launcher.Set("language", GameLanguage());
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
-    ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
-    HelpMarker(T("Los idiomas que trae esta versión del juego (CUSA13795, América): inglés, español latinoamericano, "
-                 "francés y portugués de Brasil. El español de España no está en ella. Se aplica al pulsar Jugar.",
-                 "The languages this build of the game has (CUSA13795, the Americas): English, Latin American "
-                 "Spanish, French and Brazilian Portuguese. Spain's Spanish is not in it. Applied when you press Play."));
+    if (EuEdition()) {
+        ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguagesEu, DefaultGameLanguage());
+        HelpMarker(T("Edición europea (CUSA14876): los idiomas de la versión PAL. Si el juego no trae uno, sale en "
+                     "inglés. Se aplica al pulsar Jugar.",
+                     "European edition (CUSA14876): the PAL release's languages. A language the game lacks shows "
+                     "English. Applied when you press Play."));
+    } else {
+        ChoiceCombo(T("Idioma del juego", "Game language"), "language", kGameLanguages, DefaultGameLanguage());
+        HelpMarker(T("Los idiomas que trae esta versión del juego (CUSA13795, América): inglés, español "
+                     "latinoamericano, francés y portugués de Brasil. El español de España no está en ella. Se aplica "
+                     "al pulsar Jugar.",
+                     "The languages this build of the game has (CUSA13795, the Americas): English, Latin American "
+                     "Spanish, French and Brazilian Portuguese. Spain's Spanish is not in it. Applied when you press "
+                     "Play."));
+    }
 }
 
 void PatchesTab() {
@@ -2234,8 +2299,9 @@ DlcInfo DescribeDlc(const fs::path& path) {
     const size_t dash = content.rfind('-');
     d.label = dash == std::string::npos ? std::string() : content.substr(dash + 1);
     d.title = get("TITLE");
-    if (get("TITLE_ID") != kTitleId || get("CATEGORY") != "ac" || d.label.size() != 16) {
-        d.problem = T("no es un DLC de CTR Nitro-Fueled (CUSA13795)", "not a CTR Nitro-Fueled (CUSA13795) DLC");
+    if (!IsCtrTitle(get("TITLE_ID")) || get("CATEGORY") != "ac" || d.label.size() != 16) {
+        d.problem = T("no es un DLC de CTR Nitro-Fueled (CUSA13795 / CUSA14876)",
+                      "not a CTR Nitro-Fueled (CUSA13795 / CUSA14876) DLC");
         return d;
     }
     if (d.title.empty()) d.title = d.label;
@@ -2668,7 +2734,7 @@ void ToolsTab() {
 
 void ClearShaderCache() {
     std::error_code ec;
-    const fs::path cache = g_app.root / L"user" / L"cache" / L"CUSA13795";
+    const fs::path cache = g_app.root / L"user" / L"cache" / GameTitle();
     const auto removed = fs::remove_all(cache, ec);
     g_app.notice = ec ? std::string(T("No se pudo borrar la caché: ", "Could not clear the cache: ")) + ec.message()
                       : std::string(T("Caché borrada (", "Cache cleared (")) + std::to_string(removed) +
@@ -2800,15 +2866,17 @@ void LoadState() {
     a.update_dir = TextPath(a.launcher.Get("update_dir"));
     // First start of a portable package: a merged folder next to the launcher is picked up.
     if (a.game_dir.empty()) {
-        for (const wchar_t* name : {L"CUSA13795-1.21", L"CUSA13795"}) {
+        for (const wchar_t* name : {L"CUSA13795-1.21", L"CUSA14876-1.21", L"CUSA13795", L"CUSA14876"}) {
             if (Analyze(a.root / name).kind == Kind::Complete) {
                 a.game_dir = a.root / name;
                 break;
             }
         }
-        if (a.base_dir.empty() && Analyze(a.root / L"CUSA13795").kind == Kind::Base) a.base_dir = a.root / L"CUSA13795";
-        if (a.update_dir.empty() && Analyze(a.root / L"CUSA13795-patch").kind == Kind::Update)
-            a.update_dir = a.root / L"CUSA13795-patch";
+        for (const wchar_t* title : {L"CUSA13795", L"CUSA14876"}) {
+            const std::wstring base = title, update = base + L"-patch";
+            if (a.base_dir.empty() && Analyze(a.root / base).kind == Kind::Base) a.base_dir = a.root / base;
+            if (a.update_dir.empty() && Analyze(a.root / update).kind == Kind::Update) a.update_dir = a.root / update;
+        }
     }
     a.base_info = Analyze(a.base_dir);
     a.update_info = Analyze(a.update_dir);

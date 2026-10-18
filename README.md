@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -57,9 +57,9 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
   archives (originals kept); launch once normally to the menu first for the shader cache.
 - *Upscaling*, one at a time, switched live (off while ultrawide is on):
   - **AMD FSR 1** (default): a sharper spatial enlargement than the game's own stretch.
-  - **AMD FSR 3** (experimental, any GPU), **AMD FSR 4** (experimental, the v07 INT8 model; needs INT8
+  - **AMD FSR 3** (any GPU), **AMD FSR 4** (experimental, the v07 INT8 model; needs INT8
     dot product support, checked at start; FSR 3 runs while the model loads) and **NVIDIA
-    DLSS** (experimental, GeForce RTX; the files come in the package): temporal upscaling that
+    DLSS** (GeForce RTX; the files come in the package): temporal upscaling that
     rebuilds detail over several frames from the game's depth and motion, and works as
     anti-aliasing at the same resolution. Turn them off if you see trails.
 - *Frame generation* (v0.3, experimental, live): AMD FSR 3.1.6 frame interpolation shows a

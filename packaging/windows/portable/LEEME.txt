@@ -45,9 +45,9 @@ monitor, el mando, el idioma del juego y la imagen:
     desplegable se desbloquean solas tras ese arranque).
   - Escalado (uno a la vez, se cambia en vivo; apagado con ultra-panoramico):
     AMD FSR 1 (por defecto, escalado espacial ligero), AMD FSR 3
-    (experimental, cualquier GPU), AMD FSR 4 (experimental, necesita
-    soporte INT8 en la GPU; mientras carga el modelo va FSR 3) o NVIDIA
-    DLSS (experimental, tarjetas RTX; sus archivos vienen incluidos).
+    (cualquier GPU), AMD FSR 4 (experimental, necesita soporte INT8 en
+    la GPU; mientras carga el modelo va FSR 3) o NVIDIA DLSS (tarjetas
+    RTX; sus archivos vienen incluidos).
     FSR 3, FSR 4 y DLSS reconstruyen detalle con varios cuadros; si ves
     estelas, vuelve a FSR 1.
   - Generacion de cuadros (v0.3, experimental, en vivo): AMD FSR 3 muestra

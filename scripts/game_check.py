@@ -11,6 +11,11 @@ param.sfo; the image in SUPPORTED, which the port was developed on) and the orig
 firmware 6.72+. Same game, different executable. A 1.21 executable that is not a known old one is
 accepted as `variant='6.72+'`: patches.py finds its patch sites by signature instead of address,
 and the log says it is the less-tested build.
+
+The European edition (CUSA14876) is accepted by title at any version (variant='eu'), as in
+martijnhe's OCTR-NitroFueled-PC-EU: its 1.21 runs the same code as the USA 1.21 build, so the
+community patches come from patches/CrashTeamRacingEU.xml (the 1.21 signatures, and the 1.00
+base game's own) and the render patches apply by signature.
 """
 import hashlib
 import os
@@ -27,6 +32,13 @@ SUPPORTED = {
         modules=('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'), patches=True),
 }
 BY_TITLE = {p['title']: p for p in SUPPORTED.values()}
+# Editions accepted by title at any version, whatever their executable.
+EDITIONS = {
+    'CUSA14876': dict(
+        name='ctr', title='CUSA14876', version='01.21', game='Crash Team Racing Nitro-Fueled (EU)',
+        update='CUSA14876-patch', modules=('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
+        patches=True),
+}
 # Images that are known NOT to be 1.21: the base game's executable (1.00). With a 1.21 param.sfo
 # these mean the update's eboot.bin was not copied in.
 OLD_IMAGES = {
@@ -57,6 +69,9 @@ def profile(game, image_hash=None):
         image_hash = None
     if image_hash in SUPPORTED:
         return dict(SUPPORTED[image_hash], variant='5.05')
+    edition = sfo_info(game).get('TITLE_ID')
+    if edition in EDITIONS:
+        return dict(EDITIONS[edition], version=sfo_info(game).get('APP_VER', '?'), variant='eu')
     if image_hash and problem(game, image_hash) is None and os.environ.get('BB_SKIP_GAME_CHECK') != '1':
         info = sfo_info(game)
         return dict(BY_TITLE[info['TITLE_ID']], variant='6.72+')
@@ -125,6 +140,9 @@ def problem(game, image_hash=None):
     except (OSError, ValueError, IndexError):
         info = {}
     title, version = info.get('TITLE_ID', '?'), info.get('APP_VER', '?')
+    if title in EDITIONS:
+        damaged = damaged_archives(game)
+        return ('damaged_archives', title, version) if damaged else None
     try:
         image_hash = image_hash or image_sha256(game)
     except (OSError, ValueError, IndexError, StopIteration, KeyError):
@@ -169,7 +187,13 @@ def explain(kind, title, version):
 
 if __name__ == '__main__':
     # game_check.py GAME_DIR: prints the profile name (run.sh branches on it), or fails with the reason.
-    game = Path(sys.argv[1]) if len(sys.argv) > 1 else Path('.')
+    # game_check.py --info GAME_DIR: prints "TITLE_ID APP_VER" (run.py passes them to patches.py).
+    args = sys.argv[1:]
+    if args[:1] == ['--info']:
+        info = sfo_info(Path(args[1]) if len(args) > 1 else Path('.'))
+        print(info.get('TITLE_ID', SUPPORTED_TITLE), info.get('APP_VER', SUPPORTED_VERSION))
+        sys.exit()
+    game = Path(args[0]) if args else Path('.')
     found = problem(game)
     if found:
         message = 'Unsupported game files: ' + explain(*found)
