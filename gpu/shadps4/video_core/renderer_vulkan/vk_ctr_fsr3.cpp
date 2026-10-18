@@ -1100,7 +1100,11 @@ vk::ImageView CtrFsr3::Upscale(VideoCore::ImageId source_id, vk::Format view_for
                 std::fflush(stdout);
             }
         } else {
-            Fsr4KickPreload(fsr4_preset, out.width, out.height); // no-op while running
+            const bool built = fsr4_built && fsr4_built_preset == fsr4_preset &&
+                               fsr4_built_ow == out.width && fsr4_built_oh == out.height;
+            if (!built) {
+                Fsr4KickPreload(fsr4_preset, out.width, out.height); // no-op while running
+            }
             if (Fsr4BackendReady(fsr4_preset, out.width, out.height)) {
                 want_fsr4 = true;
             } else if (!fsr4_preloading) {
