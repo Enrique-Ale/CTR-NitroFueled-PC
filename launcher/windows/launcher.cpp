@@ -617,6 +617,8 @@ struct App {
 App g_app;
 
 std::string EffectiveRenderRes();
+std::string GameAspect();
+bool UltrawideCacheWarm();
 
 fs::path LauncherIni() { return g_app.root / L"launcher.ini"; }
 fs::path GameIni() { return g_app.root / L"bbport.ini"; }
@@ -765,6 +767,15 @@ void StartGame() {
     if (!a.python || a.game_running) return;
     SaveGameIni();
     SaveLauncher();
+    // Friendly pre-check (run.py refuses the same way): no cold-cache ultrawide
+    // launch that could only end in an error code.
+    if (GameAspect() != "16:9" && !UltrawideCacheWarm()) {
+        a.notice = T("Primero juega una vez en 16:9 hasta el menú y ciérralo normal; "
+                     "entonces se desbloquea el ultra-panorámico.",
+                     "First play once in 16:9 up to the menu and close normally; "
+                     "ultrawide unlocks then.");
+        return;
+    }
     JoinWorker();
     {
         std::scoped_lock lock{a.mutex};
@@ -1543,10 +1554,48 @@ std::string EffectiveRenderRes() {
 std::string GameTemporal() {
     const Ini& game = g_app.game;
     const std::string value = game.Get("temporal");
-    for (const char* known : {"off", "fsr1", "fsr3", "dlss"})
+    for (const char* known : {"off", "fsr1", "fsr3", "dlss", "fsr4"})
         if (value == known) return value;
     if (game.Flag("fsr3", false)) return "fsr3";
     return game.Flag("fsr1", true) ? "fsr1" : "off";
+}
+
+/// v0.3 native ultrawide (by tcosi): bbport.ini aspect_ratio, Settings > Display.
+/// 16:9 off; 21:9 needs a 2560x1080/3440x1440 output; 32:9 needs 5120x1440.
+std::string GameAspect() {
+    const std::string v = g_app.game.Get("aspect_ratio", "16:9");
+    if (v == "21:9" || v == "21x9") return "21:9";
+    if (v == "32:9" || v == "32x9") return "32:9";
+    return "16:9";
+}
+
+bool IsUltrawideKey(const std::string& key) {
+    return key == "CTR-UltraWide21x9-v1.0.xml/21:9 UltraWide" ||
+           key == "CTR-SuperUltraWide32x9-v1.0.xml/32:9 Super UltraWide";
+}
+
+/// v0.3: the ultrawide options unlock only with a warm HUD shader cache
+/// (user/cache/CUSA13795 from a normal 16:9 launch to the menu), mirroring
+/// scripts/ultrawide_*_shader.py require_warm_cache. Otherwise every new player
+/// would hit the launch-time refusal on their first ultrawide try.
+bool UltrawideCacheWarm() {
+    const fs::path cache = g_app.root / L"user" / L"cache" / L"CUSA13795";
+    std::error_code ec;
+    auto present = [&](const wchar_t* name) {
+        std::error_code e2;
+        return fs::is_regular_file(cache / name, e2) && fs::file_size(cache / name, e2) > 0;
+    };
+    if (!present(L"profile.bin") || !present(L"0x00000000d4aaf527_0.spv") ||
+        !present(L"0x0000000008948e32_0.spv")) {
+        return false;
+    }
+    bool meta = false, key = false;
+    for (fs::directory_iterator it(cache, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto ext = it->path().extension();
+        if (ext == L".meta") meta = true;
+        if (ext == L".key") key = true;
+    }
+    return meta && key;
 }
 
 /// A combo over a bbport.ini key; true when the player picked another value (already set).
@@ -1630,7 +1679,71 @@ void SettingsTab() {
                "Fewer hitches when an effect is first seen; an effect may show up a frame late."));
 
     ImGui::SeparatorText(T("Pantalla", "Display"));
+    {
+        // v0.3 native (by tcosi): ONE dropdown sets aspect + output together, so they
+        // can never mismatch. The two ultrawide XMLs stay hidden in Patches.
+        struct AspectOutput { const char* es; const char* en; const char* aspect; const char* output; };
+        static constexpr AspectOutput kOptions[] = {
+            {"16:9 — 1280 x 720", "16:9 — 1280 x 720", "16:9", "1280x720"},
+            {"16:9 — 1920 x 1080", "16:9 — 1920 x 1080", "16:9", "1920x1080"},
+            {"16:9 — 2560 x 1440", "16:9 — 2560 x 1440", "16:9", "2560x1440"},
+            {"16:9 — 3840 x 2160 (4K)", "16:9 — 3840 x 2160 (4K)", "16:9", "3840x2160"},
+            {"21:9 UltraWide — 2560 x 1080", "21:9 UltraWide — 2560 x 1080", "21:9", "2560x1080"},
+            {"21:9 UltraWide — 3440 x 1440", "21:9 UltraWide — 3440 x 1440", "21:9", "3440x1440"},
+            {"32:9 Super UltraWide — 5120 x 1440", "32:9 Super UltraWide — 5120 x 1440", "32:9", "5120x1440"},
+        };
+        const std::string aspect = GameAspect();
+        const std::string output = g_app.game.Get("output_res", "1920x1080");
+        const AspectOutput* selected = &kOptions[1];
+        for (const auto& o : kOptions) {
+            if (output == o.output && aspect == o.aspect) { selected = &o; break; }
+        }
+        if (selected->output != output) {
+            for (const auto& o : kOptions) {
+                if (output == o.output) { selected = &o; break; }
+            }
+        }
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
+        // The ultrawide rows unlock only with a warm shader cache (a normal 16:9
+        // launch to the menu first); otherwise every new player would hit the
+        // launch-time refusal. run.py keeps the same guard as a safety net.
+        const bool warm = UltrawideCacheWarm();
+        if (!warm) {
+            ImGui::TextColored(kYellow, "%s",
+                               T("El ultra-panorámico se desbloquea tras jugar una vez en 16:9 hasta el menú.",
+                                 "Ultrawide unlocks after playing once in 16:9 up to the menu."));
+        }
+        if (ImGui::BeginCombo(T("Aspecto / salida", "Aspect / output"), T(selected->es, selected->en))) {
+            for (const auto& o : kOptions) {
+                const bool locked = std::strcmp(o.aspect, "16:9") != 0 && !warm;
+                ImGui::BeginDisabled(locked);
+                if (ImGui::Selectable(T(o.es, o.en), &o == selected)) {
+                    a.game.Set("aspect_ratio", o.aspect);
+                    a.game.Set("output_res", o.output);
+                    SaveGameIni();
+                }
+                ImGui::EndDisabled();
+            }
+            ImGui::EndCombo();
+        }
+        HelpMarker(T("Una sola opción: aspecto y salida juntos, con HUD centrado en ultra-panorámico. "
+                     "Mientras hay ultra-panorámico el escalado se desactiva y la resolución interna se limita a 1440p. "
+                     "La primera vez prepara unos 9 GB de archivos; tus archivos originales no cambian. "
+                     "Antes de usarlo, una vez en 16:9: 1) JUGAR hasta el menú principal y quédate unos segundos "
+                     "(entra a Opciones y sal); 2) cierra el juego desde su menú, no lo mates ni uses Alt+F4, "
+                     "para que la caché se guarde. Si al lanzar el ultra te pide caché igualmente, entra a una "
+                     "carrera 30 segundos y sal: eso compila el segundo shader del HUD.",
+                     "One choice: aspect and output together, with centered HUD in ultrawide. "
+                     "Upscaling is off while ultrawide is on and internal resolution is capped at 1440p. "
+                     "The first run prepares about 9 GB of files; your original files are kept. "
+                     "Before using it, once in 16:9: 1) PLAY to the main menu and stay a few seconds "
+                     "(open Options and exit); 2) close the game from its menu, do not kill it nor Alt+F4, "
+                     "so the cache is saved. If launching ultrawide still asks for cache, enter a race "
+                     "for 30 seconds and exit: that compiles the second HUD shader."));
+    }
     const std::string temporal = GameTemporal();
+    const std::string aspect_now = GameAspect();
+    const bool uw_on = aspect_now != "16:9";
     const bool dlss_sized = temporal == "dlss" && a.game.Get("dlss_quality", "auto") != "auto";
     ImGui::BeginDisabled(dlss_sized);
     RenderResCombo();
@@ -1640,23 +1753,33 @@ void SettingsTab() {
         ImGui::TextColored(kGrey, "%s", T("(la decide la calidad de DLSS)", "(set by the DLSS quality)"));
     }
     {
-        // temporal=off|fsr1|fsr3|dlss (bbport.ini): one upscaler at a time.
+        // temporal=off|fsr1|fsr3|dlss|fsr4 (bbport.ini): one upscaler at a time.
+        // v0.3: off while ultrawide is on (run.py forces it).
         static constexpr Choice kTemporal[] = {{"Desactivado", "Off", "off"},
                                                {"AMD FSR 1", "AMD FSR 1", "fsr1"},
                                                {"AMD FSR 3 (experimental)", "AMD FSR 3 (experimental)", "fsr3"},
+                                               {"AMD FSR 4 (experimental)", "AMD FSR 4 (experimental)", "fsr4"},
                                                {"NVIDIA DLSS (experimental)", "NVIDIA DLSS (experimental)", "dlss"}};
+        ImGui::BeginDisabled(uw_on);
         if (GameChoiceCombo(T("Escalado", "Upscaling"), "temporal", kTemporal, temporal.c_str(), 16.0f)) {
             a.game.Erase("fsr1");
             a.game.Erase("fsr3");
             SaveGameIni();
         }
+        ImGui::EndDisabled();
+        if (uw_on) {
+            ImGui::SameLine();
+            ImGui::TextColored(kGrey, "%s", T("(desactivado con ultra-panorámico)", "(off with ultrawide)"));
+        }
         HelpMarker(T("FSR 1 agranda una escena más pequeña con bordes más nítidos que el estirado simple del juego. "
-                     "FSR 3 y DLSS reconstruyen el detalle a lo largo de varios cuadros con la profundidad y el movimiento "
+                     "FSR 3, FSR 4 y DLSS reconstruyen el detalle a lo largo de varios cuadros con la profundidad y el movimiento "
                      "del juego, y a la misma resolución también suavizan los bordes. DLSS necesita una tarjeta NVIDIA "
-                     "RTX (si no, se usa FSR 3). Experimentales: si ves estelas o parpadeos, cambia a FSR 1.",
-                     "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3 and DLSS "
+                     "RTX (si no, se usa FSR 3); FSR 4 necesita soporte INT8 y sus modelos (si no, se usa FSR 3). "
+                     "Experimentales: si ves estelas o parpadeos, cambia a FSR 1.",
+                     "FSR 1 enlarges a smaller scene with sharper edges than the game's plain stretch. FSR 3, FSR 4 and DLSS "
                      "rebuild detail over several frames from the game's depth and motion, and smooth edges even at the "
-                     "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise). Experimental: switch to "
+                     "same resolution. DLSS needs an NVIDIA RTX card (FSR 3 runs otherwise); FSR 4 needs INT8 support "
+                     "and its model files (FSR 3 runs otherwise). Experimental: switch to "
                      "FSR 1 if you see trails or shimmering."));
     }
     if (temporal == "dlss") {
@@ -1721,6 +1844,35 @@ void SettingsTab() {
     }
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
     ChoiceCombo(T("Presentación", "Presentation"), "present_mode", kPresentModes, "Mailbox");
+    {
+        // framegen=off|fsr3 (bbport.ini): AMD FSR 3 frame generation, one interpolated
+        // frame between each pair of game frames. Live in game (Insert menu) too.
+        static constexpr Choice kFramegen[] = {{"Desactivada", "Off", "off"},
+                                               {"AMD FSR 3 (experimental)", "AMD FSR 3 (experimental)", "fsr3"}};
+        std::string current = g_app.game.Get("framegen", "off");
+        if (current == "fsr" || current == "on" || current == "1") current = "fsr3"; // test builds
+        const Choice* selected = &kFramegen[0];
+        for (const auto& c : kFramegen)
+            if (current == c.value) selected = &c;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+        if (ImGui::BeginCombo(T("Generación de cuadros", "Frame generation"), T(selected->es, selected->en))) {
+            for (const auto& c : kFramegen) {
+                if (ImGui::Selectable(T(c.es, c.en), &c == selected)) {
+                    a.game.Set("framegen", c.value);
+                    SaveGameIni();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        HelpMarker(T("Muestra un cuadro interpolado entre cada par de cuadros del juego: casi el doble en pantalla. "
+                     "El juego, su límite de FPS y su ritmo no cambian. Ideal en monitores de 120 Hz o más con el juego "
+                     "a la mitad de la frecuencia (p. ej. límite 72 en 144 Hz). Funciona con cualquier escalado; FSR 3/4 "
+                     "y DLSS le dan además el movimiento del juego. Experimental: el HUD rápido puede vibrar.",
+                     "Shows an interpolated frame between each pair of game frames: about twice the frames on screen. "
+                     "The game, its FPS limit and its timing do not change. Best on 120 Hz+ screens with the game at "
+                     "half the refresh rate (e.g. a 72 limit at 144 Hz). Works with any upscaler; FSR 3/4 and DLSS "
+                     "also give it the game's motion. Experimental: fast HUD elements may shimmer."));
+    }
 
     ImGui::SeparatorText(T("Mando", "Controller"));
     {
@@ -1778,6 +1930,8 @@ void PatchesTab() {
     ImGui::PushTextWrapPos(0.0f);
     ImGui::TextColored(kGrey, "%s", T("Se aplican al iniciar el juego (o con \"Apply and restart\" del menú del juego).",
                                       "Applied when the game starts (or with the in-game menu's \"Apply and restart\")."));
+    ImGui::TextColored(kGrey, "%s", T("El ultra-panorámico 21:9/32:9 está en Ajustes > Pantalla > Aspecto / salida.",
+                                      "Ultrawide 21:9/32:9 is in Settings > Display > Aspect / output."));
     ImGui::PopTextWrapPos();
     const bool neo = a.launcher.Flag("neo", false);
     if (a.patches.empty()) {
@@ -1794,7 +1948,10 @@ void PatchesTab() {
             on = listed_on || (p.default_on && !listed_off);
         }
         const bool needs_neo = p.ini_key && std::strcmp(p.ini_key, "patch_pro_1080p") == 0;
-        if (needs_neo) {  // replaced by Settings > Internal resolution
+        // v0.3 native: ultrawide lives in Settings > Display > Aspect ratio (aspect_ratio),
+        // not here. Old patches.json toggles still work until an aspect is picked.
+        const bool is_ultrawide = IsUltrawideKey(p.key);
+        if (needs_neo || is_ultrawide) {  // replaced by Settings
             ImGui::PopID();
             continue;
         }
@@ -2626,6 +2783,47 @@ void LoadState() {
     a.update_info = Analyze(a.update_dir);
     a.patches = LoadPatches();
     ReadPatchConfig(a.patch_enabled, a.patch_disabled);
+    // v0.3 one-time migration: ultrawide moves from the Patches tab (patches.json)
+    // to Settings > Display > Aspect ratio (bbport.ini aspect_ratio, single dropdown).
+    // If the game settings have no aspect key yet but a Patches toggle enabled an
+    // ultrawide XML, adopt it as the aspect and drop both XMLs from patches.json so
+    // Patches (which hides them now) can never re-enable them behind the dropdown.
+    if (a.game.Get("aspect_ratio").empty()) {
+        const char* adopted = nullptr;
+        bool both = false;
+        for (const auto& key : a.patch_enabled) {
+            const char* mine = nullptr;
+            if (key == "CTR-UltraWide21x9-v1.0.xml/21:9 UltraWide") mine = "21:9";
+            if (key == "CTR-SuperUltraWide32x9-v1.0.xml/32:9 Super UltraWide") mine = "32:9";
+            if (mine) {
+                if (adopted) both = true;
+                adopted = mine;
+            }
+        }
+        if (both) adopted = nullptr;  // both on: leave off, the player picks one
+        auto drop_uw = [&](std::vector<std::string>& v) {
+            v.erase(std::remove_if(v.begin(), v.end(), [](const std::string& k) { return IsUltrawideKey(k); }), v.end());
+        };
+        if (adopted) {
+            a.game.Set("aspect_ratio", adopted);
+            SaveGameIni();
+            drop_uw(a.patch_enabled);
+            drop_uw(a.patch_disabled);
+            WritePatchConfig(a.patch_enabled, a.patch_disabled);
+            a.notice = T("Ultra-panorámico movido a Ajustes > Pantalla > Aspecto / salida.",
+                         "Ultrawide moved to Settings > Display > Aspect / output.");
+        } else {
+            // No single legacy toggle: just hide any stale entries from the JSON.
+            bool had = false;
+            for (const auto& k : a.patch_enabled) had = had || IsUltrawideKey(k);
+            for (const auto& k : a.patch_disabled) had = had || IsUltrawideKey(k);
+            if (had) {
+                drop_uw(a.patch_enabled);
+                drop_uw(a.patch_disabled);
+                WritePatchConfig(a.patch_enabled, a.patch_disabled);
+            }
+        }
+    }
     StartCheck();
     StartProbe();
 }
