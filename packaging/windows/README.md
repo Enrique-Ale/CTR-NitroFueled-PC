@@ -77,7 +77,7 @@ C:\msys64\clang64\bin\python.exe run.py
 ```
 
 On CPUs without MOVBE, BMI1 or LZCNT (Sandy Bridge, Ivy Bridge) the Python that runs `run.py`
-also needs `iced-x86` for the start-up rewrite (15-isa-rewrite.md): install it in a python.org
+also needs `iced-x86` for the start-up rewrite (17-isa-rewrite.md): install it in a python.org
 Python 3 (`pip install iced-x86`) and run `run.py` with that one. MSYS2's Python has no compatible
 wheel (its source build needs Rust); the portable ZIP bundles iced-x86 through
 `make_portable.py`.

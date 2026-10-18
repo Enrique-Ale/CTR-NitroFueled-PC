@@ -241,7 +241,7 @@ with the desktop apps closed.
 
 - Sandy Bridge and Ivy Bridge CPUs (issue #31: i5-3570, i7-3770) lack the Haswell instructions the
   image uses (MOVBE 391 sites, BMI1 3528, LZCNT 324) and the game stopped at the first one. The ISA
-  rewrite (15-isa-rewrite.md, the design of gow3_pc's G3PROBE5) scans the linked image with iced-x86
+  rewrite (17-isa-rewrite.md, the design of gow3_pc's G3PROBE5) scans the linked image with iced-x86
   at launch and rewrites the sites at load: 4243 sites, 0 unsupported. The portable ZIP bundles
   iced-x86 (MIT) through `packaging/windows/make_portable.py`; source runs need `pip install
   iced-x86` in the Python that runs `run.py`.

@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -74,7 +74,8 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
 
 **Game language** (launcher: Settings > Console): the languages this build (CUSA13795, the
 Americas) has: English, Latin American Spanish, French and Brazilian Portuguese. Spain's Spanish is
-not in it.
+not in it. With the European edition (CUSA14876) the list shows the PAL release's languages instead
+(English UK, Spain's Spanish, French, German, Italian, Dutch, Portuguese, Russian, Polish, Arabic).
 
 The launcher also has the game patches, FPS limit, display, monitor and controller settings, save
 backups and imports (including decrypted PS4 saves), and optional DLC: add your own DLC packages
@@ -84,7 +85,9 @@ content is in the game). Spanish and English.
 ### Which game dumps work
 
 The launcher needs the game as **folders of decrypted files** from **CUSA13795** (the USA
-edition): the base game (v01.00) and the 1.21 update. The folder names do not matter. When you
+edition) or, from v0.3, **CUSA14876** (the European edition, as in
+[martijnhe/OCTR-NitroFueled-PC-EU](https://github.com/martijnhe/OCTR-NitroFueled-PC-EU)): the base
+game (v01.00) and the 1.21 update. The folder names do not matter. When you
 choose a folder, the launcher says in green or red what it found.
 
 | Your dump | What it looks like | Works? |
@@ -93,7 +96,8 @@ choose a folder, the launcher says in green or red what it found.
 | Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.3: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
 | Any other tool | Works if the files end up in one of the two layouts above | Yes |
 | A `.pkg` file that was not extracted | | No: extract it first. Only the DLC tab takes `.pkg` files |
-| Another region or edition (EU CUSA14876, JP…) | | No: each one has a different executable |
+| The European edition (CUSA14876) | Same layouts | Yes, from v0.3 (less tested; no ultrawide yet: tcosi's patches are for CUSA13795) |
+| Another region or edition (JP…) | | No: each one has a different executable |
 | Encrypted files (straight from a disc or an official package) | `eboot.bin could not be read as a decrypted PS4 executable` | No: dump the game again |
 
 Both builds of the 1.21 update work (for firmware 5.05 and for 6.72+). If something fails, the
@@ -113,7 +117,7 @@ launcher's log and `user\last_run.log` say which file is missing; attach `last_r
 
 CPUs without MOVBE, BMI1 or LZCNT (Sandy Bridge, Ivy Bridge) also need `iced-x86` for the Python
 that runs `run.py`, which the port uses to rewrite those instructions at start
-([15-isa-rewrite.md](docs/sacredfire/15-isa-rewrite.md), issue #31). MSYS2's Python cannot install
+([17-isa-rewrite.md](docs/sacredfire/17-isa-rewrite.md), issue #31). MSYS2's Python cannot install
 the wheel: use a python.org Python 3 (`pip install iced-x86`) or the portable ZIP from Releases,
 which bundles it.
 
@@ -199,7 +203,7 @@ full play-through has not been verified, and the Steam Deck (RADV) is the only t
   (it also reads PS4 PKG Tool's Image0 + Sc0 layout; see "Which game dumps work" above). The launcher and `run.sh` check
   the executable image and say what is missing (`BB_SKIP_GAME_CHECK=1` skips the check).
 - To build: GCC, CMake, Ninja, Python 3 (for CPUs without MOVBE, BMI1 or LZCNT,
-  `pip install iced-x86`: [15-isa-rewrite.md](docs/sacredfire/15-isa-rewrite.md)), glslang, SDL3,
+  `pip install iced-x86`: [17-isa-rewrite.md](docs/sacredfire/17-isa-rewrite.md)), glslang, SDL3,
   Vulkan headers and the libraries in `shell.nix` (with [Nix](https://nixos.org), `shell.nix`
   provides them). On Arch: `tools/deps.sh` fetches the header-only libraries the distribution
   lacks.

@@ -8,7 +8,9 @@ REQUISITOS (no incluidos, los pones tu)
 1. Tu dump del juego base (carpeta CUSA13795) y de la actualizacion 1.21
    (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
    Que dumps sirven:
-   - Archivos descifrados de CUSA13795 (la edicion USA). El nombre de las
+   - Archivos descifrados de CUSA13795 (la edicion USA) o CUSA14876 (la
+     edicion europea, desde v0.3, menos probada y sin ultra-panoramico;
+     gracias a martijnhe). El nombre de las
      carpetas da igual; el launcher dice en verde o rojo que encontro.
    - Dump hecho desde tu PS4 con un dumper: eboot.bin, sce_module y
      sce_sys\param.sfo directamente en cada carpeta. Funciona.
@@ -16,7 +18,7 @@ REQUISITOS (no incluidos, los pones tu)
      datos) y Sc0 (param.sfo). Funciona: elige la carpeta que contiene
      Image0 y Sc0 y pulsa "Preparar el juego".
    - No sirven: un .pkg sin extraer (solo la pestana DLC usa .pkg), otra
-     region o edicion (EU CUSA14876, JP...) ni archivos cifrados ("eboot.bin
+     region o edicion (JP...) ni archivos cifrados ("eboot.bin
      could not be read as a decrypted PS4 executable").
 2. GPU con Vulkan 1.3 y sus drivers al dia.
 Python ya viene incluido (carpeta python\): no hay que instalar nada.
@@ -62,6 +64,8 @@ monitor, el mando, el idioma del juego y la imagen:
     de DLSS (Transformer recomendado, o CNN mas ligero).
   - Idioma del juego (Ajustes > Consola): ingles, espanol latinoamericano,
     frances y portugues de Brasil (los que trae esta version del juego).
+    Con la edicion europea: los idiomas PAL (ingles UK, espanol de
+    Espana, frances, aleman, italiano, neerlandes, portugues, ruso...).
 En Parches, los
 parches del juego; en Guardados, copias de seguridad e importar partidas;
 en DLC, tus paquetes DLC de PS4 (.pkg), opcionales: el juego funciona

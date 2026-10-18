@@ -38,7 +38,7 @@ PYTHON_VERSION = '3.14.8'
 PYTHON_URL = f'https://www.python.org/ftp/python/{PYTHON_VERSION}/python-{PYTHON_VERSION}-embed-amd64.zip'
 PYTHON_SHA256 = 'a93abe456ab01bd96d7a085b3cdb6566b3063f4241360d114142fbdb07f0a310'
 # iced-x86: run.py scans the linked image for Haswell-only instructions on CPUs without MOVBE,
-# BMI1 or LZCNT (docs/sacredfire/15-isa-rewrite.md). The cp38-abi3 wheel is a zip and loads on
+# BMI1 or LZCNT (docs/sacredfire/17-isa-rewrite.md). The cp38-abi3 wheel is a zip and loads on
 # the bundled 3.14 without pip. Pinned by version and SHA-256.
 ICED_X86_VERSION = '1.21.0'
 ICED_X86_URL = ('https://files.pythonhosted.org/packages/04/9e/'
@@ -129,7 +129,7 @@ def third_party(dlls, python=None, dlss=False):
                   '  home:    https://www.python.org/',
                   f'  source:  https://www.python.org/downloads/release/python-{PYTHON_VERSION.replace(".", "")}/', '']
         lines += [f'iced-x86 {ICED_X86_VERSION}, in python\\Lib\\site-packages\\ (run.py\'s ISA',
-                  '  rewrite table for CPUs without MOVBE/BMI1/LZCNT, docs/sacredfire/15-isa-rewrite.md)',
+                  '  rewrite table for CPUs without MOVBE/BMI1/LZCNT, docs/sacredfire/17-isa-rewrite.md)',
                   '  license: MIT (https://github.com/icedland/iced/blob/master/LICENSE.txt)',
                   '  home:    https://github.com/icedland/iced',
                   f'  source:  https://pypi.org/project/iced-x86/{ICED_X86_VERSION}/#files', '']
@@ -172,7 +172,7 @@ def bundle_python(folder, cache):
 
 def bundle_iced_x86(folder, cache):
     """python/Lib/site-packages in the package: iced-x86, which run.py needs to build the ISA
-    rewrite table on CPUs without MOVBE/BMI1/LZCNT (docs/sacredfire/15-isa-rewrite.md). A wheel
+    rewrite table on CPUs without MOVBE/BMI1/LZCNT (docs/sacredfire/17-isa-rewrite.md). A wheel
     is a zip, so no pip is needed; the cp38-abi3 extension loads on the bundled Python."""
     wheel = cache / Path(ICED_X86_URL).name
     if not wheel.is_file():
