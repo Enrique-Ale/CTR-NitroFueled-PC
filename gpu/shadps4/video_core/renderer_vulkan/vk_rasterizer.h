@@ -63,6 +63,20 @@ public:
         return ctr_fsr3.get();
     }
 
+    /// SacredFire: frame generation's HUD-less frame: the display buffer copied right after
+    /// CTR's display pass stretched the scene into it and before its first HUD draw (SHADER_READ_
+    /// ONLY, the display buffer's format and size). `serial` grows with every capture.
+    struct Hudless {
+        vk::Image image{};
+        vk::Format format{};
+        u32 width = 0, height = 0;
+        VAddr address = 0; ///< the display buffer it was copied from
+        u64 serial = 0;
+    };
+    [[nodiscard]] const Hudless& GetHudless() const noexcept {
+        return hudless;
+    }
+
     [[nodiscard]] VideoCore::TextureCache& GetTextureCache() noexcept {
         return texture_cache;
     }
@@ -629,6 +643,13 @@ private:
     bool pipeline_is_compute = false; ///< bbport: the bound pipeline of BindResources
     bool scene_debug_frame = false; ///< BB_SCENE_DEBUG: this frame's passes are printed
     bool last_draw_display = false; ///< the previous draw targeted a display buffer
+    /// SacredFire: frame generation's HUD-less copy (GetHudless): due at the second draw of a
+    /// display pass, when the first (the scene stretch) is recorded and no HUD draw yet.
+    bool hudless_due = false;
+    VAddr hudless_address = 0;
+    VideoCore::UniqueImage hudless_image;
+    Hudless hudless{};
+    void CaptureHudless(VideoCore::ImageId display);
     // SacredFire: FSR 1 in the display pass (bbport.ini fsr1). CTR stretches its finished scene
     // (the last pass before the display pass) into the larger display buffer and draws the HUD
     // on top; while the display pass samples that image it reads its FSR 1 upscale instead.

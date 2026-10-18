@@ -172,8 +172,8 @@ void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::Com
 }
 
 void DumpFrameGenIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
-                       vk::Image generated, vk::Image real, u32 width, u32 height,
-                       vk::Format format) {
+                       vk::Image generated, vk::Image real, vk::Image hudless, u32 width,
+                       u32 height, vk::Format format) {
     static const char* trigger = std::getenv("BB_FG_DUMP_TRIGGER");
     static int remaining = 0, index = 0;
     if (!trigger) {
@@ -188,9 +188,14 @@ void DumpFrameGenIfDue(const Instance& instance, Scheduler& scheduler, vk::Comma
     --remaining;
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
     const char* order = bgra ? "bgra" : "rgba";
-    DumpImages(instance, scheduler, cmdbuf, 900 + index++,
+    const int frame = 900 + index++;
+    DumpImages(instance, scheduler, cmdbuf, frame,
                {{generated, width, height, 4, "fg_generated", order},
                 {real, width, height, 4, "fg_real", order}});
+    if (hudless) {
+        DumpImages(instance, scheduler, cmdbuf, frame,
+                   {{hudless, width, height, 4, "fg_hudless", order}});
+    }
 }
 
 TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& scheduler_,

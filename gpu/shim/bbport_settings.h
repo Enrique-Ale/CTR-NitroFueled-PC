@@ -114,6 +114,11 @@ struct Values {
     /// vblank are untouched). Works with any upscaler; FSR 3/4 and DLSS add the game's
     /// motion vectors. Applies live.
     std::atomic<int> framegen{FrameGenOff};
+    /// SacredFire: frame generation's motion (bbport.ini framegen_motion=flow|game,
+    /// BB_FRAMEGEN_MOTION): 0 optical flow alone (default; CTR's velocity leaves moving karts
+    /// with the camera's motion, which smears them), 1 the game's motion vectors plus optical
+    /// flow when a temporal upscaler wrote them. Applies at once (history reset).
+    std::atomic<int> framegen_motion{0};
     /// SacredFire: graphics pipelines compiled on worker threads (BB_ASYNC_PIPELINES): a new
     /// shader no longer stops the game; a pass drawn every frame may miss a frame or two.
     /// Experimental (STATUS.md, issue #2). Applies at once. BB_ASYNC_PIPELINES overrides it.

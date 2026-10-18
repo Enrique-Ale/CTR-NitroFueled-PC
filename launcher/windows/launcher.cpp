@@ -1872,6 +1872,30 @@ void SettingsTab() {
                      "The game, its FPS limit and its timing do not change. Best on 120 Hz+ screens with the game at "
                      "half the refresh rate (e.g. a 72 limit at 144 Hz). Works with any upscaler; FSR 3/4 and DLSS "
                      "also give it the game's motion. Experimental: fast HUD elements may shimmer."));
+        if (current != "off") {
+            static constexpr Choice kMotion[] = {
+                {"Flujo óptico (recomendado)", "Optical flow (recommended)", "flow"},
+                {"Movimiento del juego + flujo óptico", "Game motion + optical flow", "game"}};
+            const std::string motion = g_app.game.Get("framegen_motion", "flow");
+            const Choice* chosen = &kMotion[0];
+            for (const auto& c : kMotion)
+                if (motion == c.value) chosen = &c;
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+            if (ImGui::BeginCombo(T("Movimiento para generar", "Frame generation motion"),
+                                  T(chosen->es, chosen->en))) {
+                for (const auto& c : kMotion) {
+                    if (ImGui::Selectable(T(c.es, c.en), &c == chosen)) {
+                        a.game.Set("framegen_motion", c.value);
+                        SaveGameIni();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            HelpMarker(T("El flujo óptico sigue lo que se mueve en pantalla, karts incluidos. El movimiento del juego "
+                         "(con FSR 3/4 o DLSS) mueve los karts con la cámara y puede emborronarlos.",
+                         "Optical flow follows what moves on screen, karts included. The game's motion (with FSR 3/4 "
+                         "or DLSS) moves karts with the camera and can smear them."));
+        }
     }
 
     ImGui::SeparatorText(T("Mando", "Controller"));

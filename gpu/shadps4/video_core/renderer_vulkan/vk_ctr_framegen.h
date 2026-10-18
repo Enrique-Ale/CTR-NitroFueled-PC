@@ -68,6 +68,9 @@ public:
         vk::Format color_format{}; ///< its format (the swapchain's)
         u32 width = 0, height = 0;
         Vectors vectors{};
+        /// The same frame without the HUD (General, same format and size), or null: FSR then
+        /// interpolates the scene alone and takes the HUD from `color`.
+        vk::Image hudless{};
         float frame_ms = 16.6f;   ///< since the previous real frame
         bool reset = false;       ///< a discontinuity the caller knows of (load, pause)
     };
@@ -88,7 +91,7 @@ public:
     void Reset();
 
     struct Stats {
-        u64 frames = 0, generated = 0, resets = 0, game_vectors = 0;
+        u64 frames = 0, generated = 0, resets = 0, game_vectors = 0, hudless = 0;
     };
     [[nodiscard]] const Stats& GetStats() const {
         return stats;
@@ -115,13 +118,14 @@ private:
     bool announced = false;
     bool needs_reset = true;
     bool last_vectors = false;
+    int last_motion = -1;
     u64 next_frame_id = 1;
     /// Recorded frame ids and the draw tick that carries them: retired once the GPU is past it.
     std::deque<std::pair<u64, u64>> in_flight;
 
     // FSR 3.1.6 takes R8G8B8A8_UNORM: the converted frame and the interpolated output.
-    VideoCore::UniqueImage rgba_image, generated_image;
-    vk::UniqueImageView rgba_view, generated_view;
+    VideoCore::UniqueImage rgba_image, generated_image, hudless_rgba_image;
+    vk::UniqueImageView rgba_view, generated_view, hudless_rgba_view;
     // Optical-flow-only stand-ins at the frame size: far depth, zero motion.
     VideoCore::UniqueImage flat_depth_image, flat_motion_image;
 

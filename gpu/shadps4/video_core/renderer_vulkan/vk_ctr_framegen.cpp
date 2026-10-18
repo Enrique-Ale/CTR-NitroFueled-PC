@@ -107,8 +107,10 @@ void CtrFrameGen::Reset() {
     }
     rgba_view.reset();
     generated_view.reset();
+    hudless_rgba_view.reset();
     rgba_image.Destroy();
     generated_image.Destroy();
+    hudless_rgba_image.Destroy();
     flat_depth_image.Destroy();
     flat_motion_image.Destroy();
     for (auto& output : outputs) {
@@ -265,6 +267,7 @@ bool CtrFrameGen::Ensure(u32 w, u32 h) {
     const auto rw = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled;
     make(rgba_image, &rgba_view, vk::Format::eR8G8B8A8Unorm, rw);
     make(generated_image, &generated_view, vk::Format::eR8G8B8A8Unorm, rw);
+    make(hudless_rgba_image, &hudless_rgba_view, vk::Format::eR8G8B8A8Unorm, rw);
     make(flat_depth_image, nullptr, vk::Format::eR32Sfloat,
          rw | vk::ImageUsageFlagBits::eTransferDst);
     make(flat_motion_image, nullptr, vk::Format::eR16G16Sfloat,
@@ -274,8 +277,9 @@ bool CtrFrameGen::Ensure(u32 w, u32 h) {
     // Out of Undefined: the working images to General, the stand-ins cleared (far depth, no
     // motion) and left in SHADER_READ_ONLY, the layout every import declares for them.
     const auto cmdbuf = scheduler.CommandBuffer();
-    std::array<vk::ImageMemoryBarrier2, 4> first{};
-    const std::array<vk::Image, 4> images{vk::Image(rgba_image), vk::Image(generated_image),
+    std::array<vk::ImageMemoryBarrier2, 5> first{};
+    const std::array<vk::Image, 5> images{vk::Image(rgba_image), vk::Image(generated_image),
+                                         vk::Image(hudless_rgba_image),
                                          vk::Image(flat_depth_image),
                                          vk::Image(flat_motion_image)};
     for (u32 i = 0; i < first.size(); ++i) {
@@ -284,7 +288,7 @@ bool CtrFrameGen::Ensure(u32 w, u32 h) {
             .dstStageMask = AllCommands,
             .dstAccessMask = MemoryRw,
             .oldLayout = vk::ImageLayout::eUndefined,
-            .newLayout = i < 2 ? vk::ImageLayout::eGeneral : vk::ImageLayout::eTransferDstOptimal,
+            .newLayout = i < 3 ? vk::ImageLayout::eGeneral : vk::ImageLayout::eTransferDstOptimal,
             .image = images[i],
             .subresourceRange = ColorRange,
         };
@@ -380,12 +384,16 @@ bool CtrFrameGen::Record(const Inputs& in) {
     RetireCompleted(false);
 
     const Vectors& vec = in.vectors;
-    const bool vectors = vec.fresh && vec.depth && vec.motion && vec.width != 0 &&
+    const int motion_setting = BbSettings::Get().framegen_motion.load(std::memory_order_relaxed);
+    const bool vectors = motion_setting == 1 && vec.fresh && vec.depth && vec.motion &&
+                         vec.width != 0 &&
                          vec.height != 0 && vec.width <= in.width && vec.height <= in.height;
     const u32 render_w = vectors ? vec.width : in.width;
     const u32 render_h = vectors ? vec.height : in.height;
-    const bool reset = in.reset || needs_reset || vectors != last_vectors;
+    const bool reset =
+        in.reset || needs_reset || vectors != last_vectors || motion_setting != last_motion;
     last_vectors = vectors;
+    last_motion = motion_setting;
     needs_reset = false;
 
     const vk::CommandBuffer cmdbuf = scheduler.CommandBuffer();
@@ -408,9 +416,15 @@ bool CtrFrameGen::Record(const Inputs& in) {
     }
     Convert(cmdbuf, SourceView(in.color, in.color_format), *rgba_view, in.width, in.height,
             false);
-    Barrier(cmdbuf, vk::Image(rgba_image), vk::ImageLayout::eGeneral,
-            vk::ImageLayout::eShaderReadOnlyOptimal, Compute, vk::AccessFlagBits2::eShaderWrite,
-            Compute, vk::AccessFlagBits2::eShaderRead);
+    // The HUD-less source: the frame without its HUD when the presenter has one, else the
+    // frame itself (FSR then finds no HUD; the mode stays the same, so no history reset).
+    Convert(cmdbuf, SourceView(in.hudless ? in.hudless : in.color, in.color_format),
+            *hudless_rgba_view, in.width, in.height, false);
+    for (const vk::Image image : {vk::Image(rgba_image), vk::Image(hudless_rgba_image)}) {
+        Barrier(cmdbuf, image, vk::ImageLayout::eGeneral, vk::ImageLayout::eShaderReadOnlyOptimal,
+                Compute, vk::AccessFlagBits2::eShaderWrite, Compute,
+                vk::AccessFlagBits2::eShaderRead);
+    }
 
     // 2. Optical flow + interpolation preparation, then the interpolation itself. The
     //    bridge leaves sampled imports in SHADER_READ_ONLY: they are imported that way and
@@ -425,8 +439,10 @@ bool CtrFrameGen::Record(const Inputs& in) {
         }
     }
     const auto restore = [&] {
-        Barrier(cmdbuf, vk::Image(rgba_image), vk::ImageLayout::eShaderReadOnlyOptimal,
-                vk::ImageLayout::eGeneral, Compute, ShaderRw, AllCommands, MemoryRw);
+        for (const vk::Image image : {vk::Image(rgba_image), vk::Image(hudless_rgba_image)}) {
+            Barrier(cmdbuf, image, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    vk::ImageLayout::eGeneral, Compute, ShaderRw, AllCommands, MemoryRw);
+        }
         if (vectors) {
             for (const vk::Image image : {depth, motion}) {
                 Barrier(cmdbuf, image, vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -470,6 +486,8 @@ bool CtrFrameGen::Record(const Inputs& in) {
     }
     prepare.frameId = frame_id;
     prepare.reset = reset ? VK_TRUE : VK_FALSE;
+    prepare.colorHudless = {vk::Image(hudless_rgba_image), VK_FORMAT_R8G8B8A8_UNORM, in.width,
+                            in.height, read_only, usage};
     const auto prepared = ffxVkFsr3_3_1_6FrameGenerationContextRecordPrepare(context, &prepare);
     if (prepared != FFX_VK_FSR3_3_1_6_FRAMEGEN_OK) {
         restore();
@@ -531,10 +549,12 @@ bool CtrFrameGen::Record(const Inputs& in) {
     ++stats.frames;
     stats.resets += reset ? 1 : 0;
     stats.game_vectors += vectors ? 1 : 0;
+    stats.hudless += in.hudless ? 1 : 0;
     if (!announced) {
         announced = true;
-        std::printf("FrameGen: generating at %ux%u (%s)\n", in.width, in.height,
-                    vectors ? "game motion + optical flow" : "optical flow");
+        std::printf("FrameGen: generating at %ux%u (%s, %s)\n", in.width, in.height,
+                    vectors ? "game motion + optical flow" : "optical flow",
+                    in.hudless ? "HUD kept out" : "no HUD-less frame yet");
         std::fflush(stdout);
     }
     // A reset dispatch only starts the history: there is no previous frame to interpolate

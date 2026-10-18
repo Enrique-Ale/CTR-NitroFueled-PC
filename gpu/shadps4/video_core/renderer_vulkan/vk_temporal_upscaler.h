@@ -43,11 +43,12 @@ void DumpFinalFrameIfDue(const Instance& instance, Scheduler& scheduler, vk::Com
                          vk::Image image, u32 width, u32 height, vk::Format format);
 
 /// SacredFire BB_FG_DUMP_TRIGGER: the next four frame-generation pairs (the generated frame
-/// shown first and the real one after it) are saved as f9NN_fg_generated / f9NN_fg_real in
-/// BB_DUMP_DIR when the trigger file exists (consumed). Both images in General.
+/// shown first and the real one after it, and the HUD-less frame when there is one) are saved
+/// as f9NN_fg_generated / _real / _hudless in BB_DUMP_DIR when the trigger file exists
+/// (consumed). All images in General.
 void DumpFrameGenIfDue(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
-                       vk::Image generated, vk::Image real, u32 width, u32 height,
-                       vk::Format format);
+                       vk::Image generated, vk::Image real, vk::Image hudless, u32 width,
+                       u32 height, vk::Format format);
 
 class TemporalUpscaler {
 public:

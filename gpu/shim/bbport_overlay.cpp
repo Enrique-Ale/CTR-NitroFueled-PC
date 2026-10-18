@@ -573,6 +573,24 @@ void Menu() {
             "Показывает промежуточный кадр между каждой парой кадров игры: примерно вдвое больше "
             "кадров на экране (сама игра, её лимит FPS и тайминг не меняются). Лучше всего на "
             "экранах 120 Гц+. Работает с любым апскейлом. Применяется сразу."));
+        if (fg != BbSettings::FrameGenOff) {
+            static constexpr const char* motions[] = {"Optical flow (recommended)",
+                                                      "Game motion + optical flow"};
+            const int m = std::clamp(s.framegen_motion.load(), 0, 1);
+            if (ImGui::BeginCombo(BbSettings::MenuText("Frame generation motion", "Движение"),
+                                  motions[m])) {
+                for (int i = 0; i < 2; ++i) {
+                    if (ImGui::Selectable(motions[i], i == m)) {
+                        Store(s.framegen_motion, i, i != m);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            Hint(BbSettings::MenuText(
+                "Optical flow follows what moves on screen, karts included. The game's motion "
+                "needs FSR 3/4 or DLSS and moves karts with the camera, which can smear them.",
+                "Оптический поток следует за тем, что движется на экране."));
+        }
     }
     if (s.temporal == BbSettings::TemporalDlss) {
         static constexpr const char* qualities[BbSettings::DlssQualityCount] = {

@@ -65,6 +65,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.show_fps = i != 0;
     } else if (key == "fps_limit") {
         v.fps_limit = std::clamp(i, 0, 1000);
+    } else if (key == "framegen_motion") {
+        v.framegen_motion = value == "game" ? 1 : 0;
     } else if (key == "framegen") {
         // off | fsr3 (fsr, on and 1 from test builds). Anything else: off.
         v.framegen = (value == "fsr3" || value == "fsr" || value == "on" || value == "1")
@@ -199,7 +201,7 @@ void Load() {
         }
     }
     const std::pair<const char*, const char*> env_keys[] = {
-        {"BB_FRAMEGEN", "framegen"},
+        {"BB_FRAMEGEN", "framegen"},              {"BB_FRAMEGEN_MOTION", "framegen_motion"},
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
@@ -325,6 +327,7 @@ void Save() {
     put("show_fps", flag(v.show_fps));
     put("fps_limit", std::to_string(v.fps_limit.load()));
     put("framegen", FrameGenNames[std::clamp(v.framegen.load(), 0, FrameGenCount - 1)]);
+    put("framegen_motion", v.framegen_motion ? "game" : "flow");
     put("async_pipelines", flag(v.async_pipelines));
     put("fullscreen", flag(v.fullscreen));
     put("fsr4_auto_exposure", flag(v.fsr4_auto_exposure));

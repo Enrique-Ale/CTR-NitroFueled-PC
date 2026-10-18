@@ -43,6 +43,7 @@ struct Frame {
     /// SacredFire: frame generation recorded a generated frame to show before this one
     /// (CtrFrameGen::OutputImage(id)); set while preparing, read when presenting.
     bool fg_ready{false};
+    bool fg_hudless{false}; ///< it had a HUD-less frame (BB_FG_DUMP_TRIGGER dumps)
     /// The smoothed time between game frames when it was prepared (frame pacing).
     float fg_interval_ms{16.6f};
 
@@ -117,7 +118,11 @@ private:
     void SetExpectedGameSize(s32 width, s32 height);
 
     /// SacredFire: frame generation for the frame being prepared (after post-processing).
-    void GenerateFrame(Frame* frame);
+    void GenerateFrame(Frame* frame, vk::Image hudless);
+    /// SacredFire: the HUD-less display buffer copy (Rasterizer::GetHudless) through the same
+    /// post-processing as the frame, into a frame-sized image; null when there is none.
+    vk::Image PrepareHudless(Frame* frame, VAddr cpu_address, vk::Extent2D image_size,
+                             vk::Format view_format);
     /// SacredFire: presents the generated frame recorded for `frame` (the half-way image
     /// between the previous game frame and this one), before the frame itself. False when it
     /// could not be presented (the frame then goes out alone).
@@ -158,6 +163,11 @@ private:
     std::chrono::steady_clock::time_point fg_last_prepare{};
     float fg_interval_ms = 16.6f; ///< smoothed time between game frames
     u64 fg_vector_sequence = 0;   ///< the upscaler's last vectors handed to frame generation
+    u64 fg_hudless_serial = 0;    ///< the rasterizer's last HUD-less copy used
+    VideoCore::UniqueImage fg_hudless_image; ///< the HUD-less frame after post-processing
+    vk::ImageView fg_hudless_view{};
+    u32 fg_hudless_width = 0, fg_hudless_height = 0;
+    vk::Format fg_hudless_format{};
     u64 fg_flips = 0, fg_presented = 0, fg_skipped = 0;
     std::chrono::steady_clock::time_point fg_stats_since{};
 };

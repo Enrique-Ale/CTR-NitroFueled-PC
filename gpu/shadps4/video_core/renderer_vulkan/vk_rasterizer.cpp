@@ -1493,6 +1493,19 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         regs.color_buffers[0] && FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address());
     const bool display_start = display_draw && !last_draw_display;
     last_draw_display = display_draw;
+    // SacredFire: frame generation's HUD-less frame: the display buffer as the first draw of
+    // the display pass (the scene stretch) left it, copied before the first HUD draw.
+    if (display_draw && !display_start && hudless_due) {
+        hudless_due = false;
+        CaptureHudless(cb_descs[0].first);
+    }
+    if (display_start) {
+        hudless_due = BbSettings::Get().framegen.load(std::memory_order_relaxed) !=
+                      BbSettings::FrameGenOff;
+        hudless_address = regs.color_buffers[0].Address();
+    } else if (!display_draw) {
+        hudless_due = false;
+    }
     if (display_start) {
         // The previous draw's target is the finished scene the display pass stretches.
         fsr_pending = (BbSettings::Get().temporal == BbSettings::TemporalFsr1 || ctr_fsr3->Enabled()) &&
@@ -4476,6 +4489,73 @@ vk::ImageView Rasterizer::DisplayFsr(VideoCore::ImageId id, vk::ImageView game_v
     settings.rcas_attenuation = 0.25f;
     fsr_view = display_fsr.Render(scheduler.CommandBuffer(), game_view, in, out, settings, false);
     return fsr_view;
+}
+
+void Rasterizer::CaptureHudless(VideoCore::ImageId display) {
+    if (!display) {
+        return;
+    }
+    auto& image = texture_cache.GetImage(display);
+    if (image.info.num_samples > 1 || image.info.props.is_depth) {
+        return;
+    }
+    const u32 w = image.info.size.width, h = image.info.size.height;
+    const vk::Format format = image.info.pixel_format;
+    scheduler.EndRendering();
+    if (!hudless_image || hudless.width != w || hudless.height != h || hudless.format != format) {
+        scheduler.Finish(); // the presenter may still read the old copy (a size change: rare)
+        const auto device = instance.GetDevice();
+        hudless_image = VideoCore::UniqueImage(device, instance.GetAllocator());
+        hudless_image.Create(vk::ImageCreateInfo{
+            .flags = vk::ImageCreateFlagBits::eMutableFormat,
+            .imageType = vk::ImageType::e2D,
+            .format = format,
+            .extent = {w, h, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = vk::SampleCountFlagBits::e1,
+            .tiling = vk::ImageTiling::eOptimal,
+            .usage = vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        });
+        hudless = {.image = vk::Image(hudless_image), .format = format, .width = w, .height = h};
+    }
+    runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
+    const auto cmdbuf = scheduler.CommandBuffer();
+    constexpr vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
+    const vk::ImageMemoryBarrier2 to_dst{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferWrite,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eTransferDstOptimal,
+        .image = hudless.image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_dst});
+    const vk::ImageCopy region{
+        .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .extent = {w, h, 1},
+    };
+    cmdbuf.copyImage(image.GetImage(), vk::ImageLayout::eTransferSrcOptimal, hudless.image,
+                     vk::ImageLayout::eTransferDstOptimal, region);
+    const vk::ImageMemoryBarrier2 to_read{
+        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+        .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+        .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+        .image = hudless.image,
+        .subresourceRange = range,
+    };
+    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+    hudless.address = hudless_address;
+    ++hudless.serial;
 }
 
 void Rasterizer::NoteFrameStart() {

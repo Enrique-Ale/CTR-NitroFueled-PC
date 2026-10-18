@@ -165,6 +165,12 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
 
 Presenter::~Presenter() {
     framegen.Reset(); // SacredFire: before the schedulers stop
+    if (fg_hudless_view) {
+        draw_scheduler.Finish();
+        instance.GetDevice().destroyImageView(fg_hudless_view);
+        fg_hudless_view = nullptr;
+    }
+    fg_hudless_image.Destroy();
 
     draw_scheduler.Finish();
     present_scheduler.Finish();
@@ -450,7 +456,11 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
 
     // SacredFire: frame generation on the finished frame (HUD included), recorded right after
     // the post-processing pass on the same command stream. No-op while the setting is off.
-    GenerateFrame(frame);
+    vk::Image hudless{};
+    if (framegen.Enabled() && !upscaled) {
+        hudless = PrepareHudless(frame, cpu_address, image_size, view_info.format);
+    }
+    GenerateFrame(frame, hudless);
 
     // Flush frame creation commands.
     BbStats::frame_number.fetch_add(1, std::memory_order_relaxed); // bbport: game frames shown
@@ -614,12 +624,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
             const auto& stats = framegen.GetStats();
             const float seconds = std::chrono::duration<float>(now - fg_stats_since).count();
             std::printf("FrameGen: %.1f game FPS -> %.1f shown; totals: %llu generated, %llu "
-                        "not shown, %llu history resets, %llu with game motion (%s)\n",
+                        "not shown, %llu history resets, %llu with game motion, %llu HUD-less (%s)\n",
                         float(fg_flips) / seconds, float(fg_flips + fg_presented) / seconds,
                         static_cast<unsigned long long>(stats.generated),
                         static_cast<unsigned long long>(fg_skipped),
                         static_cast<unsigned long long>(stats.resets),
                         static_cast<unsigned long long>(stats.game_vectors),
+                        static_cast<unsigned long long>(stats.hudless),
                         vk::to_string(swapchain.GetPresentMode()).c_str());
             std::fflush(stdout);
             fg_stats_since = now;
@@ -833,7 +844,106 @@ Frame* Presenter::GetRenderFrame() {
     return frame;
 }
 
-void Presenter::GenerateFrame(Frame* frame) {
+vk::Image Presenter::PrepareHudless(Frame* frame, VAddr cpu_address, vk::Extent2D image_size,
+                                    vk::Format view_format) {
+    const auto& hud = rasterizer->GetHudless();
+    const char* why = !hud.image                        ? "no copy from the display pass"
+                      : hud.serial == fg_hudless_serial ? "no new copy this frame"
+                      : hud.address != cpu_address      ? "copied from another display buffer"
+                      : (hud.width != image_size.width || hud.height != image_size.height)
+                          ? "copy size differs from the frame"
+                          : nullptr;
+    static const char* last_why = "";
+    static int reports = 0;
+    if (why != last_why && reports < 6) {
+        last_why = why;
+        ++reports;
+        std::printf("FrameGen: HUD-less frame %s%s (copy %ux%u at %llx, frame %ux%u at %llx)\n",
+                    why ? "not used: " : "in use", why ? why : "", hud.width, hud.height,
+                    static_cast<unsigned long long>(hud.address), image_size.width,
+                    image_size.height, static_cast<unsigned long long>(cpu_address));
+        std::fflush(stdout);
+    }
+    if (why) {
+        return {};
+    }
+    fg_hudless_serial = hud.serial;
+    // The presenter's own upscale would give the two images different filtering paths.
+    if (fsr_settings.enable &&
+        (image_size.width < frame->width || image_size.height < frame->height)) {
+        return {};
+    }
+    const auto device = instance.GetDevice();
+    const vk::Format format = swapchain.GetSurfaceFormat().format;
+    if (!fg_hudless_image || fg_hudless_width != frame->width ||
+        fg_hudless_height != frame->height || fg_hudless_format != format) {
+        draw_scheduler.Finish();
+        if (fg_hudless_view) {
+            device.destroyImageView(fg_hudless_view);
+            fg_hudless_view = nullptr;
+        }
+        fg_hudless_image = VideoCore::UniqueImage(device, instance.GetAllocator());
+        fg_hudless_image.Create(vk::ImageCreateInfo{
+            .flags = vk::ImageCreateFlagBits::eMutableFormat,
+            .imageType = vk::ImageType::e2D,
+            .format = format,
+            .extent = {frame->width, frame->height, 1},
+            .mipLevels = 1,
+            .arrayLayers = 1,
+            .samples = vk::SampleCountFlagBits::e1,
+            .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                     vk::ImageUsageFlagBits::eTransferSrc,
+            .initialLayout = vk::ImageLayout::eUndefined,
+        });
+        fg_hudless_view = Check(device.createImageView({
+            .image = vk::Image(fg_hudless_image),
+            .viewType = vk::ImageViewType::e2D,
+            .format = format,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        }));
+        fg_hudless_width = frame->width;
+        fg_hudless_height = frame->height;
+        fg_hudless_format = format;
+    }
+    // Sampled exactly like the display buffer (same view format, alpha excluded).
+    const vk::ImageView input = Check(device.createImageView({
+        .image = hud.image,
+        .viewType = vk::ImageViewType::e2D,
+        .format = view_format,
+        .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                       vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eOne},
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    draw_scheduler.DeferOperation([device, input] { device.destroyImageView(input); });
+    Frame target{};
+    target.width = frame->width;
+    target.height = frame->height;
+    target.image = vk::Image(fg_hudless_image);
+    target.image_view = fg_hudless_view;
+    target.is_hdr = frame->is_hdr;
+    draw_scheduler.Record([this, target, input, image_size, fsr = fsr_settings,
+                           pp = pp_settings](vk::CommandBuffer cmdbuf) mutable {
+        std::scoped_lock lock{passes_mutex};
+        const auto pre_barrier = vk::ImageMemoryBarrier2{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead,
+            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+            .oldLayout = vk::ImageLayout::eUndefined,
+            .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            .image = target.image,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &pre_barrier});
+        const vk::ImageView source = fsr_pass.Render(cmdbuf, input, image_size,
+                                                     {target.width, target.height}, fsr,
+                                                     target.is_hdr);
+        pp_pass.Render(cmdbuf, source, image_size, target, pp);
+    });
+    return vk::Image(fg_hudless_image);
+}
+
+void Presenter::GenerateFrame(Frame* frame, vk::Image hudless) {
     frame->fg_ready = false;
     const auto now = std::chrono::steady_clock::now();
     float frame_ms = 100.0f;
@@ -853,6 +963,7 @@ void Presenter::GenerateFrame(Frame* frame) {
     in.width = frame->width;
     in.height = frame->height;
     in.frame_ms = frame_ms;
+    in.hudless = hudless;
     // A load, a pause or a hitch: interpolating across it would only smear two unrelated
     // frames, so the history starts over.
     in.reset = frame_ms >= 100.0f;
@@ -878,6 +989,7 @@ void Presenter::GenerateFrame(Frame* frame) {
         }
     }
     frame->fg_ready = framegen.Record(in);
+    frame->fg_hudless = bool(hudless);
 }
 
 bool Presenter::PresentGenerated(Frame* frame) {
@@ -900,8 +1012,9 @@ bool Presenter::PresentGenerated(Frame* frame) {
     const vk::Extent2D extent = swapchain.GetExtent();
     auto& scheduler = present_scheduler;
     const auto cmdbuf = scheduler.CommandBuffer();
-    DumpFrameGenIfDue(instance, scheduler, cmdbuf, image, frame->image, frame->width,
-                      frame->height, swapchain.GetSurfaceFormat().format);
+    DumpFrameGenIfDue(instance, scheduler, cmdbuf, image, frame->image,
+                      frame->fg_hudless ? vk::Image(fg_hudless_image) : vk::Image{},
+                      frame->width, frame->height, swapchain.GetSurfaceFormat().format);
     const vk::ImageSubresourceRange color_range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
     const std::array pre_barriers{
         vk::ImageMemoryBarrier{
