@@ -36,11 +36,26 @@ monitor, el mando, el idioma del juego y la imagen:
   - Resolucion interna: de 480p (PCs modestos) a 4K nativo; por encima
     de 1080p la imagen sale en 4K (en pantallas 1080p suaviza los bordes).
     Necesita reiniciar el juego (el menu lo hace).
-  - Escalado (uno a la vez, se cambia en vivo): AMD FSR 1 (por defecto,
-    escalado espacial ligero), AMD FSR 3 (experimental, cualquier GPU) o
-    NVIDIA DLSS (experimental, tarjetas RTX; sus archivos vienen incluidos).
-    FSR 3 y DLSS reconstruyen detalle con varios cuadros; si ves estelas,
-    vuelve a FSR 1.
+  - Relacion de aspecto / salida (v0.3, por tcosi): una sola opcion —
+    16:9 (1280x720, 1920x1080, 2560x1440, 4K), 21:9 UltraWide (2560x1080 o
+    3440x1440) o 32:9 Super UltraWide (5120x1440), con HUD centrado.
+    Mientras hay ultra-panoramico el escalado se desactiva y la interna se
+    limita a 1440p. La primera vez prepara unos 9 GB; haz un arranque normal
+    previo hasta el menu para tener cache de shaders (las filas ultra del
+    desplegable se desbloquean solas tras ese arranque).
+  - Escalado (uno a la vez, se cambia en vivo; apagado con ultra-panoramico):
+    AMD FSR 1 (por defecto, escalado espacial ligero), AMD FSR 3
+    (experimental, cualquier GPU), AMD FSR 4 (experimental, necesita
+    soporte INT8 en la GPU; mientras carga el modelo va FSR 3) o NVIDIA
+    DLSS (experimental, tarjetas RTX; sus archivos vienen incluidos).
+    FSR 3, FSR 4 y DLSS reconstruyen detalle con varios cuadros; si ves
+    estelas, vuelve a FSR 1.
+  - Generacion de cuadros (v0.3, experimental, en vivo): AMD FSR 3 muestra
+    un cuadro interpolado entre cada par de cuadros del juego, casi el
+    doble en pantalla; el juego y su limite de FPS no cambian. Ideal en
+    monitores de 120 Hz o mas con el juego a la mitad de la frecuencia
+    (p. ej. limite 72 en 144 Hz). Funciona con cualquier escalado. El HUD
+    rapido puede vibrar; si molesta, desactivala.
   - Con DLSS: Calidad de DLSS (Automatica = la resolucion interna; DLAA,
     Calidad, Equilibrado, Rendimiento, Ultra rendimiento dibujan a la
     proporcion de NVIDIA de la salida 1080p o 4K; tras reiniciar) y Modelo

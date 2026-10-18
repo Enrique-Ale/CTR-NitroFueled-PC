@@ -45,11 +45,17 @@ Win32 + Direct3D 11, linked statically, no DLLs) is what players open:
 - **Play**: base game and 1.21 update folders (told apart by `param.sfo`), merged with hard links
   into `CUSA13795-1.21`, checked with `scripts/game_check.py`; starts `run.py` with the bundled
   Python in a job object and shows its output.
-- **Settings**: FPS limit, background shader compiles, fullscreen, FPS counter (`bbport.ini`, the
-  in-game menu's keys); monitor, present mode, controller, game language, PS4 Pro mode
-  (`launcher.ini`, passed as `BB_*` variables).
+- **Settings**: FPS limit, background shader compiles, fullscreen, FPS counter, internal
+  resolution, upscaling, aspect/output in one dropdown (16:9 outputs, 21:9 UltraWide,
+  32:9 Super UltraWide; `bbport.ini`, the in-game menu's keys); monitor, present mode,
+  controller, game language
+  (`launcher.ini`, passed as `BB_*` variables, plus `bbport.ini` language).
+  Aspect/output (v0.3, by tcosi) replaces the Patches-tab toggles; upscaling is off
+  while ultrawide is on.
 - **Patches**: every patch for CUSA13795 01.21 in `patches\*.xml`; the three community patches
-  keep their `bbport.ini` keys, others go through `patches.json`.
+  keep their `bbport.ini` keys, others go through `patches.json`. The two ultrawide XMLs
+  (21:9, 32:9) are hidden here: they are driven by Settings > Display > Aspect ratio
+  (`aspect_ratio` in `bbport.ini`; old `patches.json` toggles still apply as fallback).
 - **Saves**: backups to `backups\`, restore, export, import of another PC's saves or a decrypted
   PS4 save (`sce_sys\param.sfo`, converted to the runtime's `<dir>` + `<dir>.sce_sys\param.bin`).
 - **DLC** (optional): the player's own add-on packages (`.pkg`) copied into `dlc\`.

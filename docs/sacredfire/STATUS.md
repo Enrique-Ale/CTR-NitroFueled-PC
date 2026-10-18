@@ -1,6 +1,21 @@
 # SacredFire status
 
-Updated 2026-10-09.
+Updated 2026-10-18 (v0.3 Windows: internal resolution, upscaling list with FSR 4, ultrawide in
+Settings, frame generation).
+
+## v0.3 Windows (branch v0.3)
+
+- Internal resolution 480p-2160p via the game's own render scale (`render_res`,
+  docs/sacredfire/13-resolution.md); PS4 Pro switch and 1080p Pro patch removed.
+- One Upscaling list (`temporal` off/fsr1/fsr3/dlss/fsr4) with DLSS quality/output/model; the
+  FSR 3 context is made on first FSR 3 use and retried after a failure.
+- Frame generation (`framegen` off/fsr3): FSR 3.1.6 interpolation at flip time, generated frame
+  first, paced (docs/sacredfire/16-framegen.md). Measured on an RTX 3070 at 144 Hz: FSR 4 +
+  frame generation, FPS limit 72, Fifo: 72 game FPS, 144 shown.
+- Aspect ratio 16:9/21:9/32:9 in Settings > Display (`aspect_ratio`, by tcosi),
+  not the Patches tab; `run.py` calls `scripts/ultrawide_dispatch.py` natively with
+  `patches.json` fallback. Outputs 2560x1080, 3440x1440, 5120x1440 added.
+- Game languages of CUSA13795; PS4 PKG Tool dumps; fullscreen fix. See notas-v0.3.md.
 
 ## Milestones
 

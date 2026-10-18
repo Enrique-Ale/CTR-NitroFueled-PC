@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -49,13 +49,25 @@ links, no extra disk space) and then *Play*. Python is bundled; you only need a 
 
 - *Internal resolution*: the size the game draws its 3D scene at. 480p and 720p for modest PCs;
   1440p to 2160p output a 4K picture, which also smooths edges on a 1080p screen. Needs a restart
-  (the in-game menu does it).
-- *Upscaling*, one at a time, switched live:
+  (the in-game menu does it). Capped at 1440p while ultrawide is on.
+- *Aspect ratio* (v0.3, by tcosi; in Settings, not Patches): one *Aspect / output* choice —
+  16:9 with 1280x720, 1920x1080, 2560x1440 or 3840x2160; 21:9 UltraWide with
+  2560x1080 or 3440x1440; 32:9 Super UltraWide with 5120x1440 — with centered HUD.
+  Upscaling is off while ultrawide is on. The first launch prepares about 9 GB of patched
+  archives (originals kept); launch once normally to the menu first for the shader cache.
+- *Upscaling*, one at a time, switched live (off while ultrawide is on):
   - **AMD FSR 1** (default): a sharper spatial enlargement than the game's own stretch.
-  - **AMD FSR 3** (experimental, any GPU) and **NVIDIA DLSS** (experimental, GeForce RTX; the files
-    come in the package): temporal upscaling that rebuilds detail over several frames from the
-    game's depth and motion, and works as anti-aliasing at the same resolution. Turn them off if
-    you see trails.
+  - **AMD FSR 3** (experimental, any GPU), **AMD FSR 4** (experimental, the v07 INT8 model; needs INT8
+    dot product support, checked at start; FSR 3 runs while the model loads) and **NVIDIA
+    DLSS** (experimental, GeForce RTX; the files come in the package): temporal upscaling that
+    rebuilds detail over several frames from the game's depth and motion, and works as
+    anti-aliasing at the same resolution. Turn them off if you see trails.
+- *Frame generation* (v0.3, experimental, live): AMD FSR 3.1.6 frame interpolation shows a
+  generated frame halfway between each pair of game frames, about twice the images on screen; the
+  game, its FPS limit and its timing do not change. Best on a 120 Hz+ screen with the game at half
+  the refresh rate (e.g. FPS limit 72 at 144 Hz, with V-Sync/Fifo or Mailbox). Works with any
+  upscaler (FSR 3/4 and DLSS also give it the game's motion). Fast HUD elements may shimmer.
+  Details: [docs/sacredfire/16-framegen.md](docs/sacredfire/16-framegen.md).
 - With DLSS: *DLSS quality* (Auto follows the internal resolution; DLAA, Quality, Balanced,
   Performance and Ultra Performance render at NVIDIA's share of the *DLSS output*, 1080p or 4K,
   after a restart) and *DLSS model* (Transformer, recommended, or the lighter CNN).
@@ -111,9 +123,13 @@ This fork stands on the work of:
   (branch `windows`), whose Windows layer is merged here.
 - **[shadPS4](https://github.com/shadps4-emu/shadPS4)**: the video core and shader recompiler.
 - **illusion** and **TroyWarez**: the game patches ([illusionyy/PS-Game-Patch](https://github.com/illusionyy/PS-Game-Patch)).
+- **tcosi**: the 21:9 UltraWide and 32:9 Super UltraWide aspect patches with centered HUD
+  (`patches/CTR-UltraWide21x9-v1.0.xml`, `patches/CTR-SuperUltraWide32x9-v1.0.xml`,
+  `scripts/ultrawide_*`), integrated in v0.3 under Settings > Display > Aspect ratio.
 - **[IFreemz](https://github.com/IFreemz)**: [shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR),
   whose DLSS bridge (MIT, `dlss_bridge/`) and NGX loader this fork uses.
-- **[FireBurn/FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)**: AMD FidelityFX FSR 3.1 on Vulkan (MIT).
+- **[FireBurn/FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan)**: AMD FidelityFX FSR 3.1, FSR 3.1.6
+  frame generation and the FSR 4 v07 provider on Vulkan (MIT).
 - **NVIDIA DLSS**: `nvngx_dlss.dll` from the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS),
   redistributed under its license (in `licenses\` of the package). NVIDIA, the NVIDIA logo, DLSS
   and GeForce RTX are trademarks and/or registered trademarks of NVIDIA Corporation. The GPL

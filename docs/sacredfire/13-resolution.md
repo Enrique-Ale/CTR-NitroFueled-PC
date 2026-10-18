@@ -69,3 +69,26 @@ runs the Pro path with the scales above and a 4K output; 720 and 480 use scales 
 also drop the Pro path's output doubling (`add %ecx,%ecx` at 0x17aa648 and `add %r8d,%r8d` at
 0x17aa658 become NOPs), so the picture stays 1920x1080. All six tested on an RTX 3070
 (2026-10-12). The game sizes its targets at start, so a change needs a restart (the menu does it).
+
+## Ultrawide aspect (v0.3, by tcosi)
+
+bbport.ini `aspect_ratio` + `output_res` (launcher: Settings > Display > Aspect / output,
+single dropdown; in-game menu: Aspect / output + Apply and restart) pick one combined
+choice: 16:9 with 1280x720, 1920x1080, 2560x1440 or 3840x2160; 21:9 with 2560x1080 or
+3440x1440; 32:9 with 5120x1440. It is configuration,
+not a Patches-tab toggle: `scripts/ultrawide_dispatch.py` (run.py calls it natively)
+selects `scripts/ultrawide_21x9.py` or `scripts/ultrawide_32x9.py`, which prepare a
+hard-linked `view/game` with patched archives (`scripts/ultrawide_*_data/manifest*.json`),
+a resolution-specific executable patch and centered-HUD SPIR-V corrections. Old
+`patches.json` toggles (`CTR-UltraWide21x9-v1.0.xml/21:9 UltraWide`,
+`CTR-SuperUltraWide32x9-v1.0.xml/32:9 Super UltraWide`) still apply when the aspect
+is 16:9/unset, so previous installs keep working; an explicit 21:9/32:9 wins.
+
+21:9 needs `output_res` 2560x1080 or 3440x1440; 32:9 needs 5120x1440 (the single
+dropdown always writes a matching pair; a hand-edited mismatch fails fast with the
+shapes above). While ultrawide is on,
+`temporal`/`upscaler` are forced off and the compiler sees `render_res=1080` with
+`BB_NEO=0`; the scene size comes from the ultrawide patch (`dimensions()`), capped at
+1440p height. Needs one prior normal launch to the menu (warm HUD shader cache in
+`user/cache/CUSA13795`) and about 9 GB free for the first preparation; originals are
+never edited.
