@@ -3912,6 +3912,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     }
 #endif
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    // --tab <play|settings|controls|patches|saves|dlc|tools>: the tab to open first (shortcuts, docs).
+    static std::string first_tab;
+    {
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        for (int i = 1; argv && i + 1 < argc; ++i)
+            if (std::wstring(argv[i]) == L"--tab") first_tab = PathText(fs::path(argv[i + 1]));
+        if (argv) LocalFree(argv);
+        if (!first_tab.empty()) g_goto_tab = first_tab.c_str();
+    }
     ImGui_ImplWin32_EnableDpiAwareness();
     const float scale = ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
