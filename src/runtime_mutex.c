@@ -8,7 +8,18 @@
 #include <errno.h>
 #include <time.h>
 typedef struct { int type; } GuestAttr;
-typedef struct { pthread_mutex_t native; } GuestMutex;
+/* v0.4: destroyed mutexes and condition variables are never freed. Games keep copies of a handle
+ * and use or destroy it again after it was destroyed (seen on the European build of CTR: a
+ * trylock and a destroy through freed memory inside winpthreads, an access violation); a dead
+ * object answers EINVAL instead, as the PS4 does for a destroyed id. */
+#define LIVE 0x4d757478u /* "Mutx" */
+#define DEAD 0xdeadbeefu
+typedef struct { pthread_mutex_t native; uint32_t magic; } GuestMutex;
+static size_t dead_uses;
+static int dead_use(const char *what) {
+    if (__atomic_fetch_add(&dead_uses,1,__ATOMIC_RELAXED)<5) printf("Runtime: %s on a destroyed handle (EINVAL)\n",what);
+    return EINVAL;
+}
 static size_t created, locks, unlocks;
 static int32_t orbis_error(int e) {
     if (!e) return 0;
@@ -58,6 +69,7 @@ static ABI int32_t mutex_init(GuestMutex **out, GuestAttr **attr, const char *na
     if (!e) e = pthread_mutex_init(&mutex->native, &native_attr);
     pthread_mutexattr_destroy(&native_attr);
     if (e) { free(mutex); return orbis_error(e); }
+    mutex->magic = LIVE;
     *out = mutex; ++created; return 0;
 }
 static pthread_mutex_t static_init = PTHREAD_MUTEX_INITIALIZER;
@@ -66,7 +78,7 @@ static int32_t ensure_mutex(GuestMutex **mutex) {
     if (!mutex) return orbis_error(EINVAL);
     uintptr_t value = __atomic_load_n((uintptr_t *)mutex, __ATOMIC_ACQUIRE);
     if (value == 2) return orbis_error(EINVAL);
-    if (value >= 2) return 0;
+    if (value >= 2) return ((GuestMutex *)value)->magic == LIVE ? 0 : orbis_error(dead_use("mutex use"));
     pthread_mutex_lock(&static_init);
     int32_t e = 0;
     if ((uintptr_t)*mutex < 2) {
@@ -100,6 +112,7 @@ static ABI int32_t mutex_trylock(GuestMutex **mutex) {
 static ABI int32_t mutex_unlock(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*mutex < 2) return orbis_error(EPERM);
+    if ((*mutex)->magic != LIVE) return orbis_error(dead_use("mutex unlock"));
     int32_t e = orbis_error(pthread_mutex_unlock(&(*mutex)->native));
     if (!e) ++unlocks;
     return e;
@@ -107,8 +120,9 @@ static ABI int32_t mutex_unlock(GuestMutex **mutex) {
 static ABI int32_t mutex_destroy(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*mutex < 2) return 0;
+    if ((*mutex)->magic != LIVE) return orbis_error(dead_use("mutex destroy"));
     int e = pthread_mutex_destroy(&(*mutex)->native);
-    if (!e) { free(*mutex); *mutex = (GuestMutex *)(uintptr_t)2; }
+    if (!e) { (*mutex)->magic = DEAD; *mutex = (GuestMutex *)(uintptr_t)2; }
     return orbis_error(e);
 }
 static int deadline_after(struct timespec *end, uint64_t usec) {
@@ -130,7 +144,7 @@ static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
 }
 /* Condition variables: opaque handles over host pthread_cond (CLOCK_REALTIME,
  * like FreeBSD's default), sharing the host mutex behind GuestMutex. */
-typedef struct { pthread_cond_t native; } GuestCond;
+typedef struct { pthread_cond_t native; uint32_t magic; } GuestCond;
 static size_t conds, waits, wakeups;
 static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     (void)attr; (void)name;
@@ -139,11 +153,13 @@ static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     if (!c) return orbis_error(ENOMEM);
     int e = pthread_cond_init(&c->native, NULL);
     if (e) { free(c); return orbis_error(e); }
+    c->magic = LIVE;
     *out = c; ++conds; return 0;
 }
 static int32_t ensure_cond(GuestCond **cond) {
     if (!cond) return orbis_error(EINVAL);
-    if (__atomic_load_n((uintptr_t *)cond, __ATOMIC_ACQUIRE) >= 2) return 0;
+    const uintptr_t value = __atomic_load_n((uintptr_t *)cond, __ATOMIC_ACQUIRE);
+    if (value >= 2) return ((GuestCond *)value)->magic == LIVE ? 0 : orbis_error(dead_use("cond use"));
     pthread_mutex_lock(&static_init);
     int32_t e = 0;
     if ((uintptr_t)*cond < 2) {
@@ -157,14 +173,16 @@ static int32_t ensure_cond(GuestCond **cond) {
 static ABI int32_t cond_destroy(GuestCond **cond) {
     if (!cond) return orbis_error(EINVAL);
     if ((uintptr_t)*cond < 2) return 0;
+    if ((*cond)->magic != LIVE) return orbis_error(dead_use("cond destroy"));
     int e = pthread_cond_destroy(&(*cond)->native);
-    if (!e) { free(*cond); *cond = NULL; }
+    if (!e) { (*cond)->magic = DEAD; *cond = NULL; }
     return orbis_error(e);
 }
 static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
     int32_t e = ensure_cond(cond);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
+    if ((*mutex)->magic != LIVE) return orbis_error(dead_use("cond wait"));
     ++waits;
     const uint64_t start = runtime_wait_clock();
     const int e2 = pthread_cond_wait(&(*cond)->native, &(*mutex)->native);

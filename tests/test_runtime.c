@@ -139,6 +139,13 @@ static void mutexes(void) {
     assert((uint32_t)lock(&mutex)==0x8002000b);
     assert((uint32_t)trylock(&mutex)==0x80020010);
     assert(unlock(&mutex)==0 && destroy(&mutex)==0);
+    /* A copy of a destroyed handle answers EINVAL (the memory is kept, never reused). */
+    mutex=NULL;
+    assert(init(&mutex,NULL,"copied")==0);
+    void *copy=mutex;
+    assert(destroy(&mutex)==0);
+    assert((uint32_t)lock(&copy)==0x80020016 && (uint32_t)trylock(&copy)==0x80020016);
+    assert((uint32_t)unlock(&copy)==0x80020016 && (uint32_t)destroy(&copy)==0x80020016);
 }
 static void posix_mutexes(void) {
     AttrInit init=GET(AttrInit,"dQHWEsJtoE4#libScePosix");
