@@ -1797,7 +1797,6 @@ std::string GameTemporal() {
 /// v0.3 native ultrawide (by tcosi): bbport.ini aspect_ratio, Settings > Display.
 /// 16:9 off; 21:9 needs a 2560x1080/3440x1440 output; 32:9 needs 5120x1440.
 std::string GameAspect() {
-    if (EuEdition()) return "16:9"; // tcosi's ultrawide patches are for CUSA13795 only (run.py too)
     const std::string v = g_app.game.Get("aspect_ratio", "16:9");
     if (v == "21:9" || v == "21x9") return "21:9";
     if (v == "32:9" || v == "32x9") return "32:9";
@@ -1942,15 +1941,8 @@ void SettingsTab() {
         // The ultrawide rows unlock only with a warm shader cache (a normal 16:9
         // launch to the menu first); otherwise every new player would hit the
         // launch-time refusal. run.py keeps the same guard as a safety net.
-        const bool eu = EuEdition();
-        const bool warm = !eu && UltrawideCacheWarm();
-        if (eu) {
-            ImGui::TextColored(kYellow, "%s",
-                               T("Edición europea (CUSA14876): el ultra-panorámico aún no está disponible (sus parches "
-                                 "son para CUSA13795). Las salidas 16:9 sí.",
-                                 "European edition (CUSA14876): ultrawide is not available yet (its patches are for "
-                                 "CUSA13795). The 16:9 outputs are."));
-        } else if (!warm) {
+        const bool warm = UltrawideCacheWarm();
+        if (!warm) {
             ImGui::TextColored(kYellow, "%s",
                                T("El ultra-panorámico se desbloquea tras jugar una vez en 16:9 hasta el menú.",
                                  "Ultrawide unlocks after playing once in 16:9 up to the menu."));
@@ -3320,6 +3312,62 @@ void ControlsTab() {
 
 ID3D11ShaderResourceView* MakeTexture(const uint32_t* bgra, int width, int height);  // after g_device
 
+// CTR Nitro-Fueled's trophies (both editions: CUSA13795 and CUSA14876 share the list), by id:
+// the original names, their grade and what to do (said in our own words). Checked against the
+// trophy icons of trophy00.trp. Used when the player has no trophy key to decrypt the game's own.
+struct BuiltinTrophy { int id; char grade; const char* name; const char* es; const char* en; };
+constexpr BuiltinTrophy kCtrTrophies[] = {
+    {0, 'P', "Woah!", "Consigue todos los demás logros.", "Earn every other trophy."},
+    {1, 'B', "Off to a Good Start", "Gana tu primera carrera en el modo Aventura.", "Win your first Adventure race."},
+    {2, 'B', "Crazier than the Ripper", "Vence a Ripper Roo en el modo Aventura.", "Beat Ripper Roo in Adventure."},
+    {3, 'B', "Me Fast, You Slow", "Vence a Papu Papu en el modo Aventura.", "Beat Papu Papu in Adventure."},
+    {4, 'B', "Komodone", "Vence a Komodo Joe en el modo Aventura.", "Beat Komodo Joe in Adventure."},
+    {5, 'B', "Why don't you get a job?", "Vence a Pinstripe en el modo Aventura.", "Beat Pinstripe in Adventure."},
+    {6, 'S', "Interstellar Challenge", "Vence a Nitros Oxide por primera vez.", "Beat Nitros Oxide for the first time."},
+    {7, 'G', "Galaxy's Fastest", "Vence a Nitros Oxide otra vez con la Aventura al 100 %.", "Beat Nitros Oxide again with Adventure at 100%."},
+    {8, 'B', "Arena Explorer", "Completa un desafío de cristales en el modo Aventura.", "Complete a Crystal Challenge in Adventure."},
+    {9, 'B', "Spare Change", "Gana un desafío CTR en el modo Aventura.", "Win a CTR Challenge in Adventure."},
+    {10, 'B', "Sprinter", "Gana una carrera de reliquias en el modo Aventura.", "Win a Relic Race in Adventure."},
+    {11, 'B', "Booyah, Grandma!", "Gana una copa en el modo Aventura.", "Win a Cup in Adventure."},
+    {12, 'S', "Relic Collector", "Consigue al menos la reliquia más baja en cada pista de la Aventura.", "Earn at least the lowest Relic on every Adventure track."},
+    {13, 'S', "Gem Collector", "Gana las cinco copas de gemas.", "Win all five Gem Cups."},
+    {14, 'S', "Token Collector", "Reúne todas las fichas CTR.", "Collect every CTR Token."},
+    {15, 'B', "Photo Finish", "Gana por menos de 0,3 segundos sobre el segundo.", "Finish less than 0.3 s ahead of second place."},
+    {16, 'B', "BOOM!", "Alcanza a dos rivales con una sola bomba.", "Hit two opponents with one Bowling Bomb."},
+    {17, 'B', "Super Boost!", "Haz un superturbo.", "Perform a Super Boost."},
+    {18, 'B', "Expert Dodger", "Vence a un jefe sin que te den sus objetos.", "Beat a boss without being hit by its Power-Ups."},
+    {19, 'B', "Drifter", "Derrapa 15 veces seguidas.", "Drift 15 times in a row."},
+    {20, 'S', "Master Drifter", "Encadena cinco triples turbos seguidos.", "Chain five triple Turbo Boosts in a row."},
+    {21, 'B', "Burning Rubber!", "Haz 500 turbos de derrape en total.", "Perform 500 Drift Boosts in total."},
+    {22, 'S', "Yeeee HAW!", "Completa el modo Aventura en Difícil.", "Complete Adventure on Hard."},
+    {23, 'B', "Hyper Speed", "Gana una carrera yendo último al empezar la última vuelta.", "Win after being last on the final lap."},
+    {24, 'B', "Rear-viewed", "Bloquea un misil con un frasco, una caja y una bomba.", "Block a missile with a Beaker, a Crate and a Bowling Bomb."},
+    {25, 'S', "The New Time-Master", "Supera todos los tiempos de N. Tropy en contrarreloj.", "Beat every N. Tropy Time Trial time."},
+    {26, 'G', "Gasmoxian Slug", "Supera todos los tiempos de Nitros Oxide en contrarreloj.", "Beat every Nitros Oxide Time Trial time."},
+    {27, 'B', "Natural", "Gana una carrera sin usar objetos.", "Win a race without using any Power-Ups."},
+    {28, 'S', "Nitrostalgia", "Gana en primer lugar en todas las pistas de CTR y CNK.", "Win first place on every CTR and CNK track."},
+    {29, 'B', "Can't Hide From Me", "Alcanza a un rival con los tres misiles de un triple misil.", "Hit an opponent with all three missiles of a Triple Missile."},
+    {30, 'B', "Weapon Technician", "Usa cada objeto al menos una vez.", "Use every Power-Up once."},
+    {31, 'B', "Dungeon Vaulter", "Usa el atajo del castillo de Cortex.", "Use the Cortex Castle shortcut."},
+    {32, 'B', "Arctic Hurdler", "Usa el atajo de Polar Pass.", "Use the Polar Pass shortcut."},
+    {33, 'B', "Winter Time Off-Roading", "Usa los cuatro atajos de Blizzard Bluff en una carrera.", "Use all four Blizzard Bluff shortcuts in one race."},
+    {34, 'B', "Pyramid Parkour", "Usa los dos atajos de la pirámide de Papu en una carrera.", "Use both Papu's Pyramid shortcuts in one race."},
+    {35, 'B', "Puddle Hopper", "Usa el atajo de Crash Cove.", "Use the Crash Cove shortcut."},
+    {36, 'B', "Half-Pipe Karting", "Usa el atajo de Sewer Speedway.", "Use the Sewer Speedway shortcut."},
+    {37, 'B', "Let me in!", "Usa el atajo de Tiger Temple.", "Use the Tiger Temple shortcut."},
+    {38, 'B', "Minekarting", "Usa el atajo de Dragon Mines sin que te aplasten.", "Use the Dragon Mines shortcut without being crushed."},
+    {39, 'B', "I know the way!", "Consigue los ocho logros de atajos.", "Earn all eight shortcut trophies."},
+    {40, 'B', "Juiced Up!", "Usa cada objeto potenciado (Juiced Up) una vez.", "Use every Juiced Up Power-Up once."},
+    {41, 'S', "Unstoppable", "Mantén el turbo activo durante una vuelta entera.", "Keep your boost active for a whole lap."},
+    {42, 'B', "The Dominator!", "Gana una partida en cada modo de Batalla.", "Win a match in each Battle mode."},
+    {43, 'B', "Get off me!", "Quítate de encima una caja de TNT.", "Escape a TNT crate."},
+    {44, 'B', "Alchemist", "Da a un rival con un frasco lanzado de frente.", "Hit an opponent directly with a thrown Beaker."},
+    {45, 'B', "That's How I Roll", "Personaliza tu kart.", "Customize your kart."},
+    {46, 'S', "Is everyone here?", "Desbloquea todos los personajes del plantel original.", "Unlock every character from the original roster."},
+    {47, 'B', "Oh, Shiny!", "Completa todos los desafíos de cristales (CTR y CNK).", "Complete every Crystal Challenge (CTR and CNK)."},
+};
+
+
 struct Trophy {
     int id = 0;
     char grade = 0;  // 'P' 'G' 'S' 'B', 0 unknown
@@ -3336,6 +3384,8 @@ struct TrophySet {
     std::vector<Trophy> list;
     ID3D11ShaderResourceView* icon = nullptr;
     bool names = false;         // names and grades known
+    bool builtin = false;       // ... from kCtrTrophies, not the game's own (encrypted) texts
+    bool spanish = false;       // the launcher language its built-in texts are in
     std::string error, note;
     fs::file_time_type unlocked_time{};
     double next_poll = 0.0;
@@ -3474,8 +3524,9 @@ std::string Sanitize(std::string s) {
     return s;
 }
 
-/// trophies.tsv: "#lang<TAB>code" then id, grade, hidden, name, detail per line.
-bool ReadTrophyTsv(const fs::path& file, const std::string& language, TrophySet& t) {
+/// trophies.tsv: "#source<TAB>key|builtin", "#lang<TAB>code", then id, grade, hidden, name,
+/// detail per line. True for the game's own texts (decrypted with the key) in this language.
+bool ReadTrophyTsv(const fs::path& file, const std::string& language, TrophySet& t, std::string* source = nullptr) {
     std::stringstream ss(ReadText(file));
     std::string line;
     bool right_language = false, any = false;
@@ -3486,6 +3537,7 @@ bool ReadTrophyTsv(const fs::path& file, const std::string& language, TrophySet&
         std::string field;
         while (std::getline(ls, field, '\t')) f.push_back(field);
         if (f.size() >= 2 && f[0] == "#lang") right_language = f[1] == language;
+        if (f.size() >= 2 && f[0] == "#source" && source) *source = f[1];
         if (f.size() >= 2 && f[0] == "#title") t.title_name = f[1];
         if (f.size() < 5 || f[0].empty() || !std::isdigit(static_cast<unsigned char>(f[0][0]))) continue;
         for (auto& tr : t.list)
@@ -3497,11 +3549,12 @@ bool ReadTrophyTsv(const fs::path& file, const std::string& language, TrophySet&
                 any = true;
             }
     }
-    return any && right_language;
+    return any && right_language && (!source || *source != "builtin");
 }
 
 void WriteTrophyTsv(const TrophySet& t) {
-    std::string out = "#lang\t" + t.language + "\n#title\t" + Sanitize(t.title_name) + "\n";
+    std::string out = std::string("#source\t") + (t.builtin ? "builtin" : "key") + "\n#lang\t" + t.language + "\n#title\t" +
+                      Sanitize(t.title_name) + "\n";
     for (const auto& tr : t.list)
         out += std::to_string(tr.id) + "\t" + std::string(1, tr.grade ? tr.grade : '?') + "\t" + (tr.hidden ? "1" : "0") + "\t" +
                Sanitize(tr.name) + "\t" + Sanitize(tr.detail) + "\n";
@@ -3562,6 +3615,7 @@ void LoadTrophies() {
     TrophySet& t = g_trophies;
     t.game = a.game_dir;
     t.language = GameLanguage();
+    t.spanish = g_spanish;
     t.title_id = GameTitleId();
     const fs::path trp = a.game_dir / L"sce_sys" / L"trophy" / L"trophy00.trp";
     const std::string data = ReadText(trp);
@@ -3603,8 +3657,13 @@ void LoadTrophies() {
             t.np_comm_id = npbind.substr(i, 12);
             break;
         }
-    // Names: trophies.tsv in this language, else decrypt with the key.
-    if (ReadTrophyTsv(TrophyDir(t.title_id) / L"trophies.tsv", t.language, t)) {
+    // Names: the game's own texts (trophies.tsv in this language, else decrypted with the key),
+    // else the built-in list.
+    std::string source;
+    TrophySet probe;
+    for (const auto& tr : t.list) probe.list.push_back(Trophy{tr.id});
+    if (ReadTrophyTsv(TrophyDir(t.title_id) / L"trophies.tsv", t.language, probe, &source)) {
+        ReadTrophyTsv(TrophyDir(t.title_id) / L"trophies.tsv", t.language, t);
         t.names = true;
     } else {
         const std::string key = TrophyKeyBytes(a.launcher.Get("trophy_key"));
@@ -3623,13 +3682,27 @@ void LoadTrophies() {
             }
         }
     }
+    if (!t.names && IsCtrTitle(t.title_id) && t.list.size() == std::size(kCtrTrophies)) {
+        for (auto& tr : t.list)
+            for (const auto& b : kCtrTrophies)
+                if (b.id == tr.id) {
+                    tr.grade = b.grade;
+                    tr.name = b.name;
+                    tr.detail = T(b.es, b.en);
+                }
+        t.title_name = "Crash Team Racing Nitro-Fueled";
+        t.names = t.builtin = true;
+        // The runtime's in-game notice reads the names and grades (and finds the platinum) here.
+        if (source != "key") WriteTrophyTsv(t);
+    }
     ReadUnlocked(t);
 }
 
 void TrophiesTab() {
     App& a = g_app;
     const std::string language = GameLanguage();
-    if (g_trophies_reload || g_trophies.game != a.game_dir || g_trophies.language != language) {
+    if (g_trophies_reload || g_trophies.game != a.game_dir || g_trophies.language != language ||
+        (g_trophies.builtin && g_trophies.spanish != g_spanish)) {
         g_trophies_reload = false;
         LoadTrophies();
     }
@@ -3697,19 +3770,33 @@ void TrophiesTab() {
     ImGui::EndGroup();
     EndCard();
 
-    // Names: the player's trophy key.
-    if (!t.names) {
+    // Names: the player's trophy key (the game's own texts, in its language).
+    bool show_key = !t.names;
+    if (t.builtin) {
+        ImGui::Spacing();
+        show_key = ImGui::CollapsingHeader(T("Usar los textos del propio juego (clave de trofeos)",
+                                             "Use the game's own texts (trophy key)"));
+    }
+    if (show_key) {
         ImGui::Spacing();
         BeginCard("trophy_key");
         ImGui::TextColored(kBlue, "%s", ICON_INFO);
         ImGui::SameLine();
         ImGui::PushTextWrapPos(0.0f);
-        ImGui::TextUnformatted(T("Los logros se guardan igual al jugar y aquí se ven con su imagen. Sus nombres y descripciones "
-                                 "vienen cifrados en el juego con la clave de trofeos de la PS4, que no se incluye: si la tienes "
-                                 "(es la misma que usa shadPS4), pégala o impórtala para verlos.",
-                                 "Trophies are recorded while you play and shown here with their pictures. Their names and "
-                                 "descriptions are encrypted in the game with the PS4's trophy key, which is not included: if "
-                                 "you have it (the same shadPS4 uses), paste or import it to see them."));
+        if (t.builtin)
+            ImGui::TextUnformatted(T("Los nombres son los oficiales y las descripciones, un resumen de qué hay que hacer. Los textos "
+                                     "del propio juego (en su idioma) vienen cifrados con la clave de trofeos de la PS4, que no se "
+                                     "incluye: si la tienes (la misma que usa shadPS4), pégala o impórtala para usarlos.",
+                                     "Names are the official ones and descriptions a summary of what to do. The game's own texts "
+                                     "(in its language) are encrypted with the PS4's trophy key, which is not included: if you "
+                                     "have it (the same shadPS4 uses), paste or import it to use them."));
+        else
+            ImGui::TextUnformatted(T("Los logros se guardan igual al jugar y aquí se ven con su imagen. Sus nombres y descripciones "
+                                     "vienen cifrados en el juego con la clave de trofeos de la PS4, que no se incluye: si la tienes "
+                                     "(es la misma que usa shadPS4), pégala o impórtala para verlos.",
+                                     "Trophies are recorded while you play and shown here with their pictures. Their names and "
+                                     "descriptions are encrypted in the game with the PS4's trophy key, which is not included: if "
+                                     "you have it (the same shadPS4 uses), paste or import it to see them."));
         ImGui::PopTextWrapPos();
         if (!t.note.empty()) ImGui::TextColored(kRed, "%s", t.note.c_str());
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);

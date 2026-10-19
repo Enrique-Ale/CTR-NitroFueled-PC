@@ -306,12 +306,12 @@ def main():
     title_id, app_version = (info + [TITLE_ID, APP_VERSION][len(info):])[:2]
     say(f'Game profile: {env["BB_GAME_PROFILE"]} ({title_id} {app_version})')
 
-    # UltraWide v1.0: dispatch the selected aspect-ratio patch (v0.3 native, Settings > Display).
-    # tcosi's patches and HUD shaders are made for the Americas build (CUSA13795) only.
+    # UltraWide v1.0 by tcosi: dispatch the selected aspect-ratio patch (Settings > Display). Made for
+    # CUSA13795; the European edition uses the ported data (scripts/ultrawide_eu.py, v0.4).
     try:
-        if title_id != TITLE_ID:
+        if title_id not in (TITLE_ID, 'CUSA14876'):
             if uw_aspect(config) in ('21:9', '32:9'):
-                say(f'Ultrawide: made for {TITLE_ID}; {title_id} runs at 16:9')
+                say(f'Ultrawide: made for {TITLE_ID} and CUSA14876; {title_id} runs at 16:9')
             uw_mode = uw_disabled(game, config)
         else:
             uw_mode = uw_prepare(PORT, data, env, game, config)
