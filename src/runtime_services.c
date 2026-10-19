@@ -414,7 +414,7 @@ static void trophy_record(int id, int notify) {
     if (notify && bbgpu_notify) {
         char text[512];
         if (trophy_names[id]) snprintf(text,sizeof(text),"%s",trophy_names[id]);
-        else snprintf(text,sizeof(text),trophy_spanish() ? "Logro %d" : "Trophy %d",id);
+        else snprintf(text,sizeof(text),trophy_spanish() ? "Logro #%d" : "Trophy #%d",id);
         const int kind=trophy_grade[id]=='P' ? 4 : trophy_grade[id]=='G' ? 3 : trophy_grade[id]=='S' ? 2 : trophy_grade[id]=='B' ? 1 : 0;
         bbgpu_notify(trophy_spanish() ? "Logro desbloqueado" : "Trophy unlocked",text,kind);
     }

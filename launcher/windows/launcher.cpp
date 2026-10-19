@@ -3766,7 +3766,15 @@ void TrophiesTab() {
         ImGui::TableSetupColumn("icon", ImGuiTableColumnFlags_WidthFixed, icon);
         ImGui::TableSetupColumn("text", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("state", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 9.0f);
-        for (const auto& tr : t.list) {
+        // The latest unlocked first, then the rest in the game's order.
+        std::vector<const Trophy*> order;
+        for (const auto& tr : t.list) order.push_back(&tr);
+        std::stable_sort(order.begin(), order.end(), [](const Trophy* x, const Trophy* y) {
+            if (bool(x->unlocked) != bool(y->unlocked)) return bool(x->unlocked);
+            return x->unlocked > y->unlocked;
+        });
+        for (const Trophy* item : order) {
+            const Trophy& tr = *item;
             if ((g_trophy_filter == 1 && !tr.unlocked) || (g_trophy_filter == 2 && tr.unlocked)) continue;
             const bool secret = tr.hidden && !tr.unlocked;
             ImGui::TableNextRow(0, icon + 8.0f * g_ui_scale);
@@ -3787,7 +3795,7 @@ void TrophiesTab() {
             ImGui::TableNextColumn();
             if (g_font_heading) ImGui::PushFont(g_font_heading, 0.0f);
             std::string name = secret ? T("Logro oculto", "Hidden trophy")
-                               : tr.name.empty() ? std::string(T("Logro ", "Trophy ")) + std::to_string(tr.id)
+                               : tr.name.empty() ? std::string(T("Logro #", "Trophy #")) + std::to_string(tr.id)
                                                  : tr.name;
             ImGui::TextColored(tr.unlocked ? kText : kGrey, "%s", name.c_str());
             if (g_font_heading) ImGui::PopFont();
