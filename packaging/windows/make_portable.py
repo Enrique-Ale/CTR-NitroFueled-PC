@@ -240,6 +240,9 @@ def main():
     shutil.copy2(ROOT / 'run.py', folder)
     for script in (ROOT / 'scripts').glob('*.py'):
         shutil.copy2(script, folder / 'scripts')
+    # Data the scripts read next to them (v0.4: ultrawide_eu.json, the European executable port).
+    for data_file in (ROOT / 'scripts').glob('*.json'):
+        shutil.copy2(data_file, folder / 'scripts')
     # v0.3 native ultrawide data (manifests, baseline, shaders): needed by run.py.
     for data in list((ROOT / 'scripts').glob('ultrawide_*_data')):
         if data.is_dir():
