@@ -4121,7 +4121,10 @@ void PlaySummary() {
     const std::string aspect = GameAspect();
     const std::string output = a.game.Get("output_res");
     const std::pair<std::string, std::string> rows[] = {
-        {T("Resolución interna", "Internal resolution"), res()},
+        {T("Resolución interna", "Internal resolution"),
+         GameAspect() != "16:9" && std::atoi(EffectiveRenderRes().c_str()) > 1440
+             ? std::string(T("1440p (el máximo con ultra-panorámico)", "1440p (the most with ultrawide)"))
+             : res()},
         {T("Escalado", "Upscaling"), GameAspect() != "16:9" ? T("(apagado con ultra-panorámico)", "(off with ultrawide)") : upscaler()},
         {T("Generación de cuadros", "Frame generation"),
          framegen == "fsr3" || framegen == "fsr" ? "AMD FSR 3" : T("Desactivada", "Off")},

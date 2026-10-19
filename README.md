@@ -96,7 +96,7 @@ choose a folder, the launcher says in green or red what it found.
 | Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.4: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
 | Any other tool | Works if the files end up in one of the two layouts above | Yes |
 | A `.pkg` file that was not extracted | | No: extract it first. Only the DLC tab takes `.pkg` files |
-| The European edition (CUSA14876) | Same layouts | Yes, from v0.4 (less tested; no ultrawide yet: tcosi's patches are for CUSA13795) |
+| The European edition (CUSA14876) | Same layouts | Yes, from v0.4, ultrawide included (tcosi's patches ported to its executable and archives) |
 | Another region or edition (JP…) | | No: each one has a different executable |
 | Encrypted files (straight from a disc or an official package) | `eboot.bin could not be read as a decrypted PS4 executable` | No: dump the game again |
 

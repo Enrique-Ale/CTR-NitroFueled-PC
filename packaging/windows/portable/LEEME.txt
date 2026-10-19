@@ -9,7 +9,7 @@ REQUISITOS (no incluidos, los pones tu)
    (carpeta CUSA13795-patch). Sin archivos del juego esto no arranca.
    Que dumps sirven:
    - Archivos descifrados de CUSA13795 (la edicion USA) o CUSA14876 (la
-     edicion europea, desde v0.4, menos probada y sin ultra-panoramico;
+     edicion europea, desde v0.4, con ultra-panoramico incluido;
      gracias a martijnhe). El nombre de las
      carpetas da igual; el launcher dice en verde o rojo que encontro.
    - Dump hecho desde tu PS4 con un dumper: eboot.bin, sce_module y
