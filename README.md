@@ -32,7 +32,8 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.4](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.4) | Redesigned launcher with a *Controls* tab (live controller test and rumble, players 1-4, gamepad buttons remapped by pressing them, stick dead zone; the keyboard page moves there); *Achievements*: trophies kept when unlocked, a notice in the game, and a tab with their pictures, progress and dates (names with your own PS4 trophy key); game languages per edition; internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
+| [v0.4](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.4) | Redesigned launcher with a *Controls* tab (live controller test and rumble, players 1-4, gamepad buttons remapped by pressing them, stick dead zone; the keyboard page moves there); *Achievements*: trophies kept when unlocked, a launcher-style notice in the game (picture, name, grade, what it was for) and a tab with all 48 (picture, name, what to do, progress and dates); the in-game menu restyled in tabs, in Spanish or English; game languages per edition; AMD FSR 4 (experimental) in the *Upscaling* list; *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); the European edition CUSA14876 (by martijnhe), ultrawide included; the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); rare libwinpthread crashes fixed; FSR 3 no longer turns off without Resizable BAR |
+| [v0.3](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.3) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1 or NVIDIA DLSS (temporal, experimental) with DLSS quality modes, output and model (Transformer/CNN); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -93,7 +94,7 @@ choose a folder, the launcher says in green or red what it found.
 | Your dump | What it looks like | Works? |
 |---|---|---|
 | Dumped from your own PS4 with a game dumper | `eboot.bin`, `sce_module\`, `sce_sys\param.sfo`… directly in each folder (base, update) | Yes |
-| Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.4: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
+| Extracted with **PS4 PKG Tool** | `Image0\` (eboot.bin, sce_module, the game data) and `Sc0\` (param.sfo and the rest of sce_sys) | Yes, from v0.3: choose the folder that holds `Image0` and `Sc0` and press *Prepare the game*. With v0.2.1, first copy **everything** in `Image0` to that folder and everything in `Sc0` to a new `sce_sys` folder in it |
 | Any other tool | Works if the files end up in one of the two layouts above | Yes |
 | A `.pkg` file that was not extracted | | No: extract it first. Only the DLC tab takes `.pkg` files |
 | The European edition (CUSA14876) | Same layouts | Yes, from v0.4, ultrawide included (tcosi's patches ported to its executable and archives) |
@@ -250,10 +251,11 @@ d-pad; *Controls › Keyboard* rebinds them (`key.<input>=` lines in `bbport.ini
 **Achievements** (v0.4). The game's trophies unlock as on a PS4: each one is kept in
 `user\trophies\<TITLE_ID>\unlocked.txt` with its date, shows a notice over the game, and the
 platinum comes once all the others are. The launcher's *Achievements* tab shows them with their
-pictures (from `sce_sys\trophy\trophy00.trp`), progress, dates and a reset (with a backup). Names,
-descriptions and grades are encrypted in the game with the PS4's trophy key, which this port does
-not include: with your own key (the same shadPS4 uses; paste it, or import it from shadPS4's
-`keys.json`) they are decrypted as shadPS4 does and kept in `trophies.tsv`.
+pictures (from `sce_sys\trophy\trophy00.trp`), names, what to do, grades, progress, dates and a
+reset (with a backup). The names and descriptions are built in (English and Spanish); the game's
+own texts are encrypted with the PS4's trophy key, which this port does not include: with your own
+key (the same shadPS4 uses; paste it, or import it from shadPS4's `keys.json`) they are decrypted
+as shadPS4 does, in the game's language, and kept in `trophies.tsv`.
 
 **PS4 Pro mode** (`BB_NEO=1`, the launcher's switch): the game sees a PS4 Pro (7-CPU mode,
 5568 MiB of direct memory) and takes its Pro rendering path; with the 1080p patch it renders
