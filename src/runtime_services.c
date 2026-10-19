@@ -7,6 +7,7 @@
 #define _GNU_SOURCE
 #include "runtime.h"
 #include "gpu/bbgpu.h"
+#include "ctr_trophies.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -334,9 +335,10 @@ static char trophy_title[16]="";
 static int trophy_loaded, trophy_total=-1, trophy_platinum=-1;
 static uint64_t trophy_unlocked_at[TROPHY_MAX];      /* 0: locked */
 static char trophy_grade[TROPHY_MAX];                 /* 'P' 'G' 'S' 'B', 0 unknown */
-static char *trophy_names[TROPHY_MAX];
+static char *trophy_names[TROPHY_MAX], *trophy_details[TROPHY_MAX];
 /* Weak: tests link this module without the GPU library. */
-__attribute__((weak)) void bbgpu_notify(const char *title_utf8, const char *text_utf8, int kind);
+__attribute__((weak)) void bbgpu_notify(const char *title_utf8, const char *name_utf8, const char *detail_utf8, int kind,
+                                        const void *png, uint64_t png_size);
 
 void runtime_trophy_configure(const char *title) {
     if (title && *title) snprintf(trophy_title,sizeof(trophy_title),"%s",title);
@@ -344,25 +346,36 @@ void runtime_trophy_configure(const char *title) {
 static void trophy_path(char *out, size_t size, const char *file) {
     snprintf(out,size,"%s/trophies/%s/%s",runtime_file_user_dir(),trophy_title[0] ? trophy_title : "UNKNOWN",file);
 }
-/* The number of trophies: TROPnnn.PNG entries of the game's trophy00.trp (big-endian header,
- * 64-byte entries at 0x60 with a 32-byte name). */
-static int trophy_count_from_trp(void) {
+/* The game's trophy00.trp (big-endian header, 64-byte entries at 0x60: 32-byte name, offset,
+ * size): the number of trophies (TROPnnn.PNG entries) or, with `id` >= 0, that trophy's picture
+ * (a malloc'ed PNG in *png). */
+static int trophy_trp(int id, unsigned char **png, uint64_t *png_size) {
     int fd=(int)runtime_file_open("/app0/sce_sys/trophy/trophy00.trp",0,0);
     if (fd<0) return -1;
     unsigned char header[0x60];
     int count=-1;
+    char want[16]="";
+    if (id>=0) snprintf(want,sizeof(want),"TROP%03d.PNG",id);
     if (runtime_file_read(fd,header,sizeof(header))==sizeof(header) && header[0]==0xDC && header[1]==0xA2) {
         const uint32_t entries=(uint32_t)header[16]<<24|header[17]<<16|header[18]<<8|header[19];
         count=0;
         for (uint32_t i=0;i<entries && i<512;++i) {
             unsigned char e[64];
-            if (runtime_file_read(fd,e,sizeof(e))!=sizeof(e)) break;
+            if (runtime_file_pread(fd,e,sizeof(e),0x60+(int64_t)i*64)!=sizeof(e)) break;
             if (!memcmp(e,"TROP",4) && e[4]>='0' && e[4]<='9' && e[7]=='.' && !memcmp(e+8,"PNG",3)) ++count;
+            if (want[0] && !memcmp(e,want,12)) {
+                uint64_t at=0, size=0;
+                for (int b=0;b<8;++b) { at=at<<8|e[32+b]; size=size<<8|e[40+b]; }
+                if (size && size<(4u<<20) && (*png=malloc(size)) && runtime_file_pread(fd,*png,size,(int64_t)at)==(int64_t)size) *png_size=size;
+                else { free(*png); *png=NULL; }
+                break;
+            }
         }
     }
     runtime_file_close(fd);
     return count;
 }
+static int trophy_count_from_trp(void) { return trophy_trp(-1,NULL,NULL); }
 static void trophy_load(void) {
     if (trophy_loaded) return;
     trophy_loaded=1;
@@ -388,9 +401,23 @@ static void trophy_load(void) {
         trophy_grade[id]=fields[1][0];
         if (fields[1][0]=='P') trophy_platinum=id;
         if (n>=4 && fields[3] && *fields[3]) { free(trophy_names[id]); trophy_names[id]=strdup(fields[3]); }
+        if (n>=5 && fields[4] && *fields[4]) { free(trophy_details[id]); trophy_details[id]=strdup(fields[4]); }
     }
     if (f) fclose(f);
     trophy_total=listed ? listed : trophy_count_from_trp();
+    /* No trophies.tsv (the launcher writes it): CTR's own list (ctr_trophies.h). */
+    if (!listed && trophy_total==CTR_TROPHY_COUNT && (!strcmp(trophy_title,"CUSA13795") || !strcmp(trophy_title,"CUSA14876"))) {
+        const char *lang=getenv("BB_LANGUAGE");
+        const int es=lang && (!strcmp(lang,"3") || !strcmp(lang,"20"));
+        for (int i=0;i<CTR_TROPHY_COUNT;++i) {
+            const CtrTrophy *t=&ctr_trophies[i];
+            trophy_grade[t->id]=t->grade;
+            if (t->grade=='P') trophy_platinum=t->id;
+            trophy_names[t->id]=strdup(t->name);
+            trophy_details[t->id]=strdup(es ? t->es : t->en);
+        }
+        listed=CTR_TROPHY_COUNT;
+    }
     if (trophy_platinum<0 && !listed && trophy_total>1) trophy_platinum=0; /* the usual id when the grades are unknown */
     int before=0;
     for (int i=0;i<TROPHY_MAX;++i) before+=trophy_unlocked_at[i]!=0;
@@ -416,7 +443,11 @@ static void trophy_record(int id, int notify) {
         if (trophy_names[id]) snprintf(text,sizeof(text),"%s",trophy_names[id]);
         else snprintf(text,sizeof(text),trophy_spanish() ? "Logro #%d" : "Trophy #%d",id);
         const int kind=trophy_grade[id]=='P' ? 4 : trophy_grade[id]=='G' ? 3 : trophy_grade[id]=='S' ? 2 : trophy_grade[id]=='B' ? 1 : 0;
-        bbgpu_notify(trophy_spanish() ? "Logro desbloqueado" : "Trophy unlocked",text,kind);
+        unsigned char *png=NULL; uint64_t png_size=0;
+        trophy_trp(id,&png,&png_size);
+        bbgpu_notify(trophy_spanish() ? "Logro desbloqueado" : "Trophy unlocked",text,trophy_details[id] ? trophy_details[id] : "",
+                     kind,png,png_size);
+        free(png);
     }
 }
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {

@@ -34,8 +34,10 @@ int bbgpu_overlay_captures_input(void);
 /* SacredFire: 1 once after the in-game menu's "Rescan controllers" button (runtime_pad.c restarts
  * SDL's gamepad subsystem and enumerates devices afresh); cleared by the call. */
 int bbgpu_pad_rescan_take(void);
-/* v0.4: a notice over the game for a few seconds (an unlocked trophy; kind: its grade 1-4). */
-void bbgpu_notify(const char *title_utf8, const char *text_utf8, int kind);
+/* v0.4: a notice over the game for a few seconds (an unlocked trophy: its name, what it was for,
+ * kind = its grade 1-4, its PNG picture or NULL). */
+void bbgpu_notify(const char *title_utf8, const char *name_utf8, const char *detail_utf8, int kind,
+                  const void *png, uint64_t png_size);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
