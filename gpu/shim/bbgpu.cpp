@@ -406,6 +406,10 @@ extern "C" int bbgpu_overlay_captures_input(void) {
     return BbOverlay::CapturesInput() ? 1 : 0;
 }
 
+extern "C" void bbgpu_notify(const char* title, const char* text, int kind) {
+    BbOverlay::Notify(title ? title : "", text ? text : "", kind);
+}
+
 extern "C" int bbgpu_pad_rescan_take(void) {
     return BbOverlay::TakePadRescan() ? 1 : 0;
 }

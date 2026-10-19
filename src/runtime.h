@@ -128,6 +128,8 @@ void runtime_services_user_change(int user, int login);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
+/* The game's TITLE_ID: where its trophies are kept (<user>/trophies/<title>/). */
+void runtime_trophy_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
 void runtime_savedata_report(void);
 void runtime_thread_attach_host(const char *name);

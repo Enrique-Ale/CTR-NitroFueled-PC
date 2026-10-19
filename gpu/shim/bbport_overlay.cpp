@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <mutex>
 #include <string>
 
@@ -63,6 +64,35 @@ float base_scale = 1.0f;
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
+
+// v0.4: notices over the game (an unlocked trophy), one at a time, each for a few seconds.
+struct Notice {
+    std::string title, text;
+    int kind = 0; // trophy grade: 1 bronze, 2 silver, 3 gold, 4 platinum, 0 unknown
+    std::chrono::steady_clock::time_point start{};
+};
+std::mutex notice_mutex;
+std::deque<Notice> notices;
+constexpr float kNoticeSeconds = 6.0f;
+
+/// The notice to draw now (its age in seconds), dropping finished ones.
+bool CurrentNotice(Notice& out, float& age) {
+    std::scoped_lock lock{notice_mutex};
+    const auto now = std::chrono::steady_clock::now();
+    while (!notices.empty()) {
+        Notice& n = notices.front();
+        if (n.start == std::chrono::steady_clock::time_point{}) {
+            n.start = now;
+        }
+        age = std::chrono::duration<float>(now - n.start).count();
+        if (age < kNoticeSeconds) {
+            out = n;
+            return true;
+        }
+        notices.pop_front();
+    }
+    return false;
+}
 
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
@@ -839,6 +869,53 @@ void FpsCounter() {
     ImGui::End();
 }
 
+void NoticeBox(const Notice& n, float age) {
+    // Slides in from the top, stays, fades out.
+    const float in = std::min(age / 0.35f, 1.0f), out = std::clamp((kNoticeSeconds - age) / 0.6f, 0.0f, 1.0f);
+    const float alpha = std::min(in, out);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float pad = 18.0f * base_scale;
+    const float y = viewport->WorkPos.y + pad - (1.0f - in) * 60.0f * base_scale;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f, y), ImGuiCond_Always,
+                            ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.88f * alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f * base_scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f * base_scale, 10.0f * base_scale));
+    ImGui::Begin("##notice", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    static const ImVec4 grades[] = {
+        ImVec4(1.0f, 0.54f, 0.12f, 1.0f),  // unknown: the port's orange
+        ImVec4(0.82f, 0.54f, 0.32f, 1.0f), // bronze
+        ImVec4(0.80f, 0.83f, 0.88f, 1.0f), // silver
+        ImVec4(1.0f, 0.80f, 0.29f, 1.0f),  // gold
+        ImVec4(0.55f, 0.83f, 1.0f, 1.0f),  // platinum
+    };
+    const ImVec4 color = grades[std::clamp(n.kind, 0, 4)];
+    // A cup: bowl, handles' place and base, in the grade's colour.
+    const float h = ImGui::GetTextLineHeight() * 2.0f, w = h * 0.8f;
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const ImU32 c = ImGui::GetColorU32(color);
+    dl->AddRectFilled(ImVec2(p.x + w * 0.15f, p.y + h * 0.08f), ImVec2(p.x + w * 0.85f, p.y + h * 0.50f), c,
+                      w * 0.30f, ImDrawFlags_RoundCornersBottom);
+    dl->AddRectFilled(ImVec2(p.x + w * 0.44f, p.y + h * 0.50f), ImVec2(p.x + w * 0.56f, p.y + h * 0.74f), c);
+    dl->AddRectFilled(ImVec2(p.x + w * 0.22f, p.y + h * 0.74f), ImVec2(p.x + w * 0.78f, p.y + h * 0.86f), c,
+                      2.0f * base_scale);
+    dl->AddCircle(ImVec2(p.x + w * 0.12f, p.y + h * 0.24f), w * 0.12f, c, 16, 2.0f * base_scale);
+    dl->AddCircle(ImVec2(p.x + w * 0.88f, p.y + h * 0.24f), w * 0.12f, c, 16, 2.0f * base_scale);
+    ImGui::Dummy(ImVec2(w, h));
+    ImGui::SameLine(0.0f, 12.0f * base_scale);
+    ImGui::BeginGroup();
+    ImGui::TextColored(color, "%s", n.title.c_str());
+    ImGui::TextUnformatted(n.text.c_str());
+    ImGui::EndGroup();
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
 void TextPrompt() {
     std::string title, text;
     {
@@ -1040,7 +1117,19 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    bool notice = false;
+    {
+        std::scoped_lock lock{notice_mutex};
+        notice = !notices.empty();
+    }
+    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || notice);
+}
+
+void Notify(const std::string& title, const std::string& text, int kind) {
+    std::scoped_lock lock{notice_mutex};
+    if (notices.size() < 16) {
+        notices.push_back(Notice{title, text, kind, {}});
+    }
 }
 
 bool MenuOpen() {
@@ -1090,6 +1179,13 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (prompt_active && !menu_open) {
         TextPrompt();
+    }
+    {
+        Notice notice;
+        float age = 0.0f;
+        if (CurrentNotice(notice, age)) {
+            NoticeBox(notice, age);
+        }
     }
     ImGui::Render();
 

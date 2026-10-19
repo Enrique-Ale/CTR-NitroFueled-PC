@@ -260,7 +260,7 @@ if (WIN32)
     target_include_directories(ctr-launcher PRIVATE third_party/imgui third_party/imgui/backends ${SDL3_INCLUDE_DIRS})
     target_compile_definitions(ctr-launcher PRIVATE UNICODE _UNICODE)
     target_link_options(ctr-launcher PRIVATE -static -municode -s)
-    target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid)
+    target_link_libraries(ctr-launcher PRIVATE d3d11 dxgi d3dcompiler dwmapi ole32 shell32 uuid windowscodecs bcrypt)
     set_target_properties(ctr-launcher PROPERTIES OUTPUT_NAME CTR-NitroFueled-PC INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 

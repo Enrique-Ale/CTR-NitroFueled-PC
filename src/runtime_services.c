@@ -12,6 +12,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <sys/stat.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -321,18 +322,142 @@ static ABI int32_t ime_result(uint32_t *result) {
 }
 static ABI int32_t ime_term(void) { memset(&ime,0,sizeof(ime)); return 0; }
 
-/* ---- Trophies: accepted locally, recorded in the log ---- */
+/* ---- Trophies (v0.4): unlocks are kept in <user>/trophies/<TITLE_ID>/unlocked.txt, one
+ * "<id> <unix time>" line each, and shown as a notice over the game. The launcher's Achievements
+ * tab reads the same file; it also writes trophies.tsv (id, grade, hidden, name, detail; from
+ * sce_sys/trophy/trophy00.trp when the player gave it their PS4's trophy key), which gives the
+ * notice its name and the platinum its id. The platinum unlocks itself once every other trophy
+ * is, as on a PS4. */
+#define TROPHY_MAX 128
+static pthread_mutex_t trophy_lock=PTHREAD_MUTEX_INITIALIZER;
+static char trophy_title[16]="";
+static int trophy_loaded, trophy_total=-1, trophy_platinum=-1;
+static uint64_t trophy_unlocked_at[TROPHY_MAX];      /* 0: locked */
+static char trophy_grade[TROPHY_MAX];                 /* 'P' 'G' 'S' 'B', 0 unknown */
+static char *trophy_names[TROPHY_MAX];
+/* Weak: tests link this module without the GPU library. */
+__attribute__((weak)) void bbgpu_notify(const char *title_utf8, const char *text_utf8, int kind);
+
+void runtime_trophy_configure(const char *title) {
+    if (title && *title) snprintf(trophy_title,sizeof(trophy_title),"%s",title);
+}
+static void trophy_path(char *out, size_t size, const char *file) {
+    snprintf(out,size,"%s/trophies/%s/%s",runtime_file_user_dir(),trophy_title[0] ? trophy_title : "UNKNOWN",file);
+}
+/* The number of trophies: TROPnnn.PNG entries of the game's trophy00.trp (big-endian header,
+ * 64-byte entries at 0x60 with a 32-byte name). */
+static int trophy_count_from_trp(void) {
+    int fd=(int)runtime_file_open("/app0/sce_sys/trophy/trophy00.trp",0,0);
+    if (fd<0) return -1;
+    unsigned char header[0x60];
+    int count=-1;
+    if (runtime_file_read(fd,header,sizeof(header))==sizeof(header) && header[0]==0xDC && header[1]==0xA2) {
+        const uint32_t entries=(uint32_t)header[16]<<24|header[17]<<16|header[18]<<8|header[19];
+        count=0;
+        for (uint32_t i=0;i<entries && i<512;++i) {
+            unsigned char e[64];
+            if (runtime_file_read(fd,e,sizeof(e))!=sizeof(e)) break;
+            if (!memcmp(e,"TROP",4) && e[4]>='0' && e[4]<='9' && e[7]=='.' && !memcmp(e+8,"PNG",3)) ++count;
+        }
+    }
+    runtime_file_close(fd);
+    return count;
+}
+static void trophy_load(void) {
+    if (trophy_loaded) return;
+    trophy_loaded=1;
+    char path[800], line[2048];
+    trophy_path(path,sizeof(path),"unlocked.txt");
+    FILE *f=fopen(path,"r");
+    while (f && fgets(line,sizeof(line),f)) {
+        int id; unsigned long long at;
+        if (sscanf(line,"%d %llu",&id,&at)==2 && id>=0 && id<TROPHY_MAX && !trophy_unlocked_at[id]) trophy_unlocked_at[id]=at ? at : 1;
+    }
+    if (f) fclose(f);
+    trophy_path(path,sizeof(path),"trophies.tsv");
+    f=fopen(path,"r");
+    int listed=0;
+    while (f && fgets(line,sizeof(line),f)) {
+        char *fields[5]={0}; int n=0;
+        line[strcspn(line,"\r\n")]=0;
+        for (char *p=line; n<5; ++n) { fields[n]=p; char *tab=strchr(p,'\t'); if (!tab) { ++n; break; } *tab=0; p=tab+1; }
+        if (n<2 || fields[0][0]<'0' || fields[0][0]>'9') continue;
+        const int id=atoi(fields[0]);
+        if (id<0 || id>=TROPHY_MAX) continue;
+        ++listed;
+        trophy_grade[id]=fields[1][0];
+        if (fields[1][0]=='P') trophy_platinum=id;
+        if (n>=4 && fields[3] && *fields[3]) { free(trophy_names[id]); trophy_names[id]=strdup(fields[3]); }
+    }
+    if (f) fclose(f);
+    trophy_total=listed ? listed : trophy_count_from_trp();
+    if (trophy_platinum<0 && !listed && trophy_total>1) trophy_platinum=0; /* the usual id when the grades are unknown */
+    int before=0;
+    for (int i=0;i<TROPHY_MAX;++i) before+=trophy_unlocked_at[i]!=0;
+    printf("Runtime: trophies: %d in the game, %d unlocked before%s\n",trophy_total,before,
+           listed ? "" : " (names: the launcher's Achievements tab)");
+}
+static int trophy_spanish(void) {
+    const char *lang=getenv("BB_LANGUAGE");
+    return lang && (!strcmp(lang,"3") || !strcmp(lang,"20"));
+}
+static void trophy_record(int id, int notify) {
+    trophy_unlocked_at[id]=(uint64_t)time(NULL);
+    char path[800];
+    trophy_path(path,sizeof(path),"");
+    char dirs[800]; snprintf(dirs,sizeof(dirs),"%s",path);
+    for (char *p=dirs+1;*p;++p) if (*p=='/' || *p=='\\') { const char c=*p; *p=0; mkdir(dirs,0755); *p=c; }
+    trophy_path(path,sizeof(path),"unlocked.txt");
+    FILE *f=fopen(path,"a");
+    if (f) { fprintf(f,"%d %llu\n",id,(unsigned long long)trophy_unlocked_at[id]); fclose(f); }
+    printf("Runtime: trophy %d unlocked%s%s\n",id,trophy_names[id] ? ": " : "",trophy_names[id] ? trophy_names[id] : "");
+    if (notify && bbgpu_notify) {
+        char text[512];
+        if (trophy_names[id]) snprintf(text,sizeof(text),"%s",trophy_names[id]);
+        else snprintf(text,sizeof(text),trophy_spanish() ? "Logro %d" : "Trophy %d",id);
+        const int kind=trophy_grade[id]=='P' ? 4 : trophy_grade[id]=='G' ? 3 : trophy_grade[id]=='S' ? 2 : trophy_grade[id]=='B' ? 1 : 0;
+        bbgpu_notify(trophy_spanish() ? "Logro desbloqueado" : "Trophy unlocked",text,kind);
+    }
+}
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {
     (void)user; (void)label; (void)options;
     if (!ctx) return TROPHY_INVALID;
     *ctx=new_id(); return 0;
 }
 static ABI int32_t trophy_handle(int32_t *handle) { if (!handle) return TROPHY_INVALID; *handle=new_id(); return 0; }
-static ABI int32_t trophy_register(int32_t ctx,int32_t handle,uint64_t options) { (void)ctx; (void)handle; (void)options; return 0; }
+static ABI int32_t trophy_register(int32_t ctx,int32_t handle,uint64_t options) {
+    (void)ctx; (void)handle; (void)options;
+    pthread_mutex_lock(&trophy_lock); trophy_load(); pthread_mutex_unlock(&trophy_lock);
+    return 0;
+}
+#define TROPHY_ALREADY_UNLOCKED ((int32_t)0x8055160F)
 static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *platinum) {
     (void)ctx; (void)handle;
-    printf("Runtime: trophy %d unlocked\n",id);
     if (platinum) *platinum=-1;
+    if (id<0 || id>=TROPHY_MAX) return TROPHY_INVALID;
+    pthread_mutex_lock(&trophy_lock);
+    trophy_load();
+    if (trophy_unlocked_at[id]) { pthread_mutex_unlock(&trophy_lock); return TROPHY_ALREADY_UNLOCKED; }
+    trophy_record(id,1);
+    /* Every other trophy unlocked: the platinum too. */
+    if (trophy_platinum>=0 && trophy_platinum<TROPHY_MAX && id!=trophy_platinum && !trophy_unlocked_at[trophy_platinum] && trophy_total>1) {
+        int missing=0;
+        for (int i=0;i<trophy_total && i<TROPHY_MAX;++i) if (i!=trophy_platinum && !trophy_unlocked_at[i]) ++missing;
+        if (!missing) { trophy_record(trophy_platinum,1); if (platinum) *platinum=trophy_platinum; }
+    }
+    pthread_mutex_unlock(&trophy_lock);
+    return 0;
+}
+/* SceNpTrophyFlagArray: 128 bits, bit id%32 of word id/32; count: the game's trophies. */
+static ABI int32_t trophy_unlock_state(int32_t ctx,int32_t handle,uint32_t *flags,uint32_t *count) {
+    (void)ctx; (void)handle;
+    if (!flags || !count) return TROPHY_INVALID;
+    pthread_mutex_lock(&trophy_lock);
+    trophy_load();
+    memset(flags,0,16);
+    for (int i=0;i<TROPHY_MAX;++i) if (trophy_unlocked_at[i]) flags[i/32]|=1u<<(i%32);
+    *count=(uint32_t)(trophy_total>0 ? trophy_total : 0);
+    pthread_mutex_unlock(&trophy_lock);
     return 0;
 }
 static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,void *data) {
@@ -610,6 +735,7 @@ static const RuntimeExport exports[]={
     {"sceNpTrophyCreateContext",trophy_context}, {"sceNpTrophyCreateHandle",trophy_handle},
     {"sceNpTrophyRegisterContext",trophy_register}, {"sceNpTrophyUnlockTrophy",trophy_unlock},
     {"sceNpTrophyGetGameInfo",trophy_game_info}, {"sceNpTrophyGetTrophyInfo",trophy_info},
+    {"sceNpTrophyGetTrophyUnlockState",trophy_unlock_state},
     {"scePlayGoInitialize",playgo_init}, {"scePlayGoOpen",playgo_open}, {"scePlayGoGetChunkId",playgo_chunk_ids},
     {"scePlayGoGetLocus",playgo_locus}, {"scePlayGoSetInstallSpeed",playgo_speed},
     {"scePlayGoGetInstallSpeed",playgo_get_speed}, {"scePlayGoGetProgress",playgo_progress}, {"scePlayGoGetEta",playgo_eta},

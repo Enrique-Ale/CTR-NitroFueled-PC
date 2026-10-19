@@ -40,6 +40,10 @@ bool TakePadRescan();
 /// The settings menu is open: the window shows the system cursor over it.
 bool MenuOpen();
 
+/// Any thread: a notice drawn over the game for a few seconds (v0.4: an unlocked trophy; kind is
+/// its grade, 1 bronze to 4 platinum, 0 unknown). Notices queue up.
+void Notify(const std::string& title, const std::string& text, int kind);
+
 /// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
 
