@@ -32,7 +32,7 @@ in the background with the experimental switch.
 
 | Release | What it brought |
 |---|---|
-| [v0.4](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.4) | Internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
+| [v0.4](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.4) | Redesigned launcher with a *Controls* tab (live controller test and rumble, players 1-4, gamepad buttons remapped by pressing them, stick dead zone; the keyboard page moves there); game languages per edition; internal resolution 480p to native 4K (the game's own render scale; replaces the PS4 Pro switch); one *Upscaling* list: AMD FSR 1, AMD FSR 3.1, AMD FSR 4 (experimental) or NVIDIA DLSS with DLSS quality modes, output and model (Transformer/CNN); *Frame generation* (AMD FSR 3, experimental): an interpolated frame between each pair of game frames; *Aspect ratio* 16:9, 21:9 UltraWide or 32:9 Super UltraWide with centered HUD (by tcosi, in Settings > Display, not Patches); game languages of this build (English, Latin American Spanish, French, Brazilian Portuguese); PS4 PKG Tool dumps (Image0 + Sc0); the European edition CUSA14876 (by martijnhe); the game's 2x MSAA as a setting, off by default (fixes dotted sky lines); CPUs without MOVBE/BMI1/LZCNT (by MetaHeart); damaged dumps reported (by Naif Alqurashi); fullscreen switch in game fixed |
 | [v0.2.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.1) | The 1.21 update built for firmware 6.72+ is accepted (patches found by signature); keyboard page in the launcher to rebind keys |
 | [v0.2.0](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.2.0) | Launcher (`CTR-NitroFueled-PC.exe`): game setup with hard-link merge, settings, patches, save backups and imports, optional DLC; bundled Python; the project's icon |
 | [v0.1.1](https://github.com/GetLostIn/CTR-NitroFueled-PC/releases/tag/v0.1.1) | First portable build: FPS limit up to 240, fullscreen switch, licenses in the package |
@@ -237,14 +237,15 @@ game folder into your icon theme; the game window shows it too.
 **In-game menu** (Insert, or L3+R3 on the pad): game patches, controller ports for split
 screen, FPS limit, fullscreen, FPS counter, menu language. It is saved to `bbport.ini`; patches apply after a restart.
 
-**Controllers.** SDL3 gamepads; the launcher's *Controller* page or `BB_GAMEPAD=<GUID or part
-of the name>` picks the one for port 1, and the port switches to whichever pad was used last
-when the chosen one is missing. Split screen: assign pads to ports 2–4 in the in-game menu (or
-`port.N=<GUID>` in `bbport.ini`); each port logs a user in and out as the pad comes and goes.
+**Controllers.** SDL3 gamepads. The launcher's *Controls* tab (v0.4) lists the connected ones
+through the game's own SDL3 with a live test and rumble, assigns players 1–4 (`port.N=<GUID>` in
+`bbport.ini`, as the in-game menu does; player 1 also `BB_GAMEPAD=<GUID or part of the name>`),
+rebinds the gamepad buttons by pressing them (`pad.<input>=` lines) and sets the sticks' dead
+zone (`BB_PAD_DEADZONE`, `BB_PAD_DEADZONE_OUTER`). Player 1 on automatic switches to whichever
+pad was used last. Ports 2–4 log a user in and out as their pad comes and goes (split screen).
 The keyboard works next to a gamepad: WASD left stick, arrow keys right stick, Space Cross,
 LShift Circle, E Square, Q Triangle, 1/3 L1/R1, R/F L2/R2, Z/C L3/R3, Enter Options, IJKL
-d-pad. The launcher's *Keyboard* page rebinds them (`key.<input>=` lines in `bbport.ini`;
-`pad.<input>=` rebinds gamepad buttons).
+d-pad; *Controls › Keyboard* rebinds them (`key.<input>=` lines in `bbport.ini`).
 
 **PS4 Pro mode** (`BB_NEO=1`, the launcher's switch): the game sees a PS4 Pro (7-CPU mode,
 5568 MiB of direct memory) and takes its Pro rendering path; with the 1080p patch it renders

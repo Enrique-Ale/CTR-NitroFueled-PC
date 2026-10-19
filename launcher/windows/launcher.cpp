@@ -2753,7 +2753,7 @@ void KeyboardTab() {
     if (ImGui::BeginTable("keys", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn(T("Teclas", "Keys"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
         for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
             const KeyInput& in = kKeyInputs[i];
@@ -3175,7 +3175,7 @@ void ControllersPage() {
     if (ImGui::BeginTable("padbuttons", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn(T("Acción", "Action"), ImGuiTableColumnFlags_WidthStretch, 1.2f);
         ImGui::TableSetupColumn(T("Botones", "Buttons"), ImGuiTableColumnFlags_WidthStretch, 1.4f);
-        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
+        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 14.0f);
         ImGui::TableHeadersRow();
         for (int i = 0; i < int(std::size(kKeyInputs)); ++i) {
             const KeyInput& in = kKeyInputs[i];
@@ -3361,6 +3361,13 @@ void ToolsTab() {
                              "Temporal upscaling: AMD FidelityFX FSR 3.1 (MIT) and NVIDIA DLSS. DLSS uses the NVIDIA DLSS "
                              "SDK (nvngx_dlss.dll, redistributed under its license, in licenses\\) through IFreemz's "
                              "bridge (MIT). NVIDIA, DLSS and GeForce RTX are trademarks of NVIDIA Corporation."));
+    ImGui::Spacing();
+    ImGui::TextUnformatted(T("FSR 3.1, la generación de cuadros FSR 3.1.6 y FSR 4 vienen de AMD FidelityFX a través de "
+                             "FireBurn/FSR-Vulkan (MIT). Ultra-panorámico de tcosi; edición europea basada en "
+                             "OCTR-NitroFueled-PC-EU de martijnhe; CPUs antiguas (MetaHeart) y dumps dañados (Naif Alqurashi).",
+                             "FSR 3.1, FSR 3.1.6 frame generation and FSR 4 come from AMD FidelityFX through "
+                             "FireBurn/FSR-Vulkan (MIT). Ultrawide by tcosi; the European edition is based on martijnhe's "
+                             "OCTR-NitroFueled-PC-EU; old CPUs (MetaHeart) and damaged dumps (Naif Alqurashi)."));
     ImGui::PopTextWrapPos();
     {
         std::error_code ec;
