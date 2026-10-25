@@ -9,15 +9,30 @@ import shutil
 import sys
 import tempfile
 
-# Top-level folders of the game's dvdroot_ps4: a mod made of these is a dvdroot_ps4 itself.
-GAME_FOLDERS = {'action', 'chr', 'event', 'facegen', 'font', 'map', 'menu', 'movie', 'msg', 'mtd',
-                'obj', 'other', 'param', 'paramdef', 'parts', 'remo', 'script', 'sfx', 'shader',
-                'sound'}
+# Top-level data folders of CTR's game folder: archives/ holds the IGA archives (*.pak) and the
+# Bink videos. The game's own folders are added at run time (game_folders), so a mod for any
+# other folder the dump has is found too.
+GAME_FOLDERS = {'archives'}
+# Folders a dump or a mod's download puts around the game's folders.
+WRAPPERS = ('app0', 'CUSA13795', 'CUSA14876', 'Image0')
+# The executable and system files: never replaced by a mod (patches go through patches.py).
+SYSTEM = {'eboot.bin', 'sce_module', 'sce_sys'}
+# Readme, pictures and notes that come with a mod and stay out of the game.
+EXTRAS = ('.txt', '.md', '.jpg', '.jpeg', '.png', '.gif', '.webp', '.ini', '.json', '.url', '.pdf')
+
+
+def game_folders(game):
+    """GAME_FOLDERS and the game folder's own data folders, case-folded."""
+    folders = set(GAME_FOLDERS)
+    for entry in (Path(game).iterdir() if game and Path(game).is_dir() else ()):
+        if entry.is_dir() and entry.name.casefold() not in SYSTEM:
+            folders.add(entry.name.casefold())
+    return folders
 
 
 def child(folder, name):
     """`name` inside `folder`, matching an existing entry case-insensitively (mods made on
-    Windows often differ from the game's lower-case names)."""
+    Windows often differ from the game's names)."""
     folder = Path(folder)
     for entry in (folder.iterdir() if folder.is_dir() else ()):
         if entry.name.casefold() == name.casefold():
@@ -25,41 +40,41 @@ def child(folder, name):
     return folder / name
 
 
-def content_root(folder):
+def content_root(folder, folders=GAME_FOLDERS):
     """(root, prefix): where a mod's files are and the game path they go to, or None.
 
-    Accepted layouts: <mod>/dvdroot_ps4, <mod>/app0/dvdroot_ps4, <mod>/CUSA03173/dvdroot_ps4,
-    one wrapper folder around any of these (an archive extracted into a folder of its name), and
-    the game's folders without dvdroot_ps4 (<mod>/chr, <mod>/parts, ...)."""
+    Accepted layouts: the game's folders (<mod>/archives/...), the same inside app0, CUSA13795,
+    CUSA14876 or Image0 (<mod>/CUSA13795/archives/...), bare archives (<mod>/*.pak, which go to
+    archives/), and one wrapper folder around any of these (a download extracted into a folder of
+    its name, with a readme or pictures beside it)."""
     folder = Path(folder)
     if not folder.is_dir():
         return None
-    for wrapper in ('', 'app0', 'CUSA03173'):
+    for wrapper in ('', *WRAPPERS):
         base = child(folder, wrapper) if wrapper else folder
-        dvdroot = child(base, 'dvdroot_ps4')
-        if dvdroot.is_dir():
+        if any(child(base, name).is_dir() for name in folders):
             return base, ''
     entries = [e for e in folder.iterdir() if not e.name.startswith('.')]
-    folders = [e for e in entries if e.is_dir()]
-    if folders and all(e.name.casefold() in GAME_FOLDERS for e in folders):
-        return folder, 'dvdroot_ps4'
-    if len(folders) == 1 and not [e for e in entries if e.is_file() and
-                                  e.suffix.casefold() not in ('.txt', '.md', '.jpg', '.png', '.ini')]:
-        return content_root(folders[0])
+    files = [e for e in entries if e.is_file() and e.suffix.casefold() not in EXTRAS]
+    if any(e.suffix.casefold() == '.pak' for e in files):
+        return folder, 'archives'
+    subfolders = [e for e in entries if e.is_dir()]
+    if len(subfolders) == 1 and not files:
+        return content_root(subfolders[0], folders)
     return None
 
 
-def discover(root):
+def discover(root, folders=GAME_FOLDERS):
     """Named mods: folders of `root` with an accepted layout (content_root)."""
     root = Path(root)
     if not root.is_dir():
         return []
-    return sorted((p.name for p in root.iterdir() if p.is_dir() and content_root(p)),
+    return sorted((p.name for p in root.iterdir() if p.is_dir() and content_root(p, folders)),
                   key=lambda name: (name.casefold(), name))
 
 
-def selected(root, config):
-    available = discover(root)
+def selected(root, config, folders=GAME_FOLDERS):
+    available = discover(root, folders)
     if not config or not Path(config).is_file():
         return available
     settings = json.loads(Path(config).read_text())
@@ -75,26 +90,31 @@ def selected(root, config):
                              if n in available and n not in disabled))
 
 
-def mod_files(folder):
-    """(game path, source) of every file a mod replaces or adds under dvdroot_ps4."""
-    layout = content_root(folder)
+def mod_files(folder, folders=GAME_FOLDERS):
+    """(game path, source) of every file a mod replaces or adds in the game's data folders."""
+    layout = content_root(folder, folders)
     if not layout:
-        raise ValueError(f'{folder}: expected dvdroot_ps4 (or chr/, parts/, ...) inside the mod folder')
+        raise ValueError(f'{folder}: expected archives/ (or *.pak files) inside the mod folder')
     root, prefix = layout
     root = root.resolve()
-    for directory, folders, files in os.walk(root, followlinks=False):
+    for directory, subfolders, files in os.walk(root, followlinks=False):
         directory = Path(directory)
-        for name in [*folders, *files]:
+        for name in [*subfolders, *files]:
             if (directory / name).is_symlink():
                 raise ValueError(f'Mod symlinks are unsupported: {directory / name}')
         for name in sorted(files):
             source = directory / name
-            relative = Path(prefix) / source.relative_to(root) if prefix else source.relative_to(root)
+            relative = source.relative_to(root)
+            if relative.parts[0].casefold() in SYSTEM:
+                raise ValueError(f'Executable/system replacement is unsupported: {source}')
+            if prefix:
+                # Bare archives: only the mod folder's own *.pak files go to archives/.
+                if len(relative.parts) > 1 or source.suffix.casefold() != '.pak':
+                    continue
+                relative = Path(prefix) / relative
             # Readme/metadata stay outside the mounted game. This loader handles assets;
             # executable patches use the existing patch compiler, with address validation.
-            if relative.parts[0].casefold() != 'dvdroot_ps4':
-                if relative.parts[0].casefold() in ('eboot.bin', 'sce_module', 'sce_sys'):
-                    raise ValueError(f'Executable/system replacement is unsupported: {source}')
+            elif len(relative.parts) == 1 or relative.parts[0].casefold() not in folders:
                 continue
             if not source.is_file():
                 raise ValueError(f'Not a regular mod file: {source}')
@@ -170,11 +190,12 @@ def expand(directory):
 
 def build_overlay(game, out, mods):
     game = Path(game).resolve(strict=True)
+    folders = game_folders(game)
     replacements = []
     owners = {}
     for name, root in mods:
         count = 0
-        for relative, source in mod_files(root):
+        for relative, source in mod_files(root, folders):
             key = relative.as_posix().casefold()
             if key in owners:
                 print(f'Mods: {relative}: {owners[key]} -> {name}', file=sys.stderr)
@@ -225,16 +246,17 @@ def main():
     parser.add_argument('--enabled', choices=('0', '1'), default='1')
     args = parser.parse_args()
     layers = []
+    folders = game_folders(args.game)
     if args.enabled == '1':
         # shadPS4's loose overlay convention, beside the original game.
         legacy = Path(str(args.game.resolve()) + '-mods')
         if legacy.is_dir():
             layers.append((legacy.name, legacy))
-        # A directly selected loose overlay is also accepted.
-        if child(args.mods_dir, 'dvdroot_ps4').is_dir():
+        # A directly selected loose overlay (the mods folder holds archives/ itself) is also accepted.
+        if any(child(args.mods_dir, name).is_dir() for name in folders):
             layers.append((args.mods_dir.name, args.mods_dir))
         else:
-            for name in selected(args.mods_dir, args.config):
+            for name in selected(args.mods_dir, args.config, folders):
                 layers.append((name, args.mods_dir / name))
     print(build_overlay(args.game, args.out, layers))
 

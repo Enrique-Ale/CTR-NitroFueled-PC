@@ -183,7 +183,7 @@ wrapper folder, or the game folders such as `chr/` directly; file name case does
 with enable switches and load order. A sibling `CUSA03173-mods/` overlay also works.
 The original game is preserved; later mods override conflicting files.
 **Third-party patches:** shadPS4-format XML patch files in the data directory's `patches/`,
-switched on and off in the launcher. See [mods and patches](docs/MODS.md).
+switched on and off in the launcher. See [mods and patches](MODS.ru.md).
 
 **Launcher language:** Russian, English or Brazilian Portuguese (follows the system language by default).
 

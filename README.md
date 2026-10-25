@@ -261,9 +261,9 @@ as shadPS4 does, in the game's language, and kept in `trophies.tsv`.
 5568 MiB of direct memory) and takes its Pro rendering path; with the 1080p patch it renders
 at 1920×1080. Off by default: the Steam Deck is closer to a base PS4.
 
-**Mods:** loose-file mod folders (with the game's folders inside) are overlaid on the game
+**Mods:** loose-file mod folders (`archives/*.pak` replacements, or bare `*.pak` files) are overlaid on the game
 folder at start, with enable switches and load order in `mods.json`
-(`scripts/mods.py`, [docs/MODS.md](docs/MODS.md), written for bbport). Further shadPS4-format
+(`scripts/mods.py`, [docs/MODS.md](docs/MODS.md); en español: [docs/MODS.es.md](docs/MODS.es.md)). Further shadPS4-format
 patch files go into `patches/` or `BB_PATCHES_DIR`, selected through `patches.json`.
 
 ## AppImage (Steam Deck)
