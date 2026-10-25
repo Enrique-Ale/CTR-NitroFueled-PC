@@ -1,106 +1,85 @@
-# Файловые моды
+# File mods
 
-В лаунчере появилась группа **Моды**: выбор папки, общий переключатель,
-включение каждого мода и стрелки порядка загрузки. Изменения применяются при
-следующем запуске. Нижний включённый мод имеет больший приоритет; при совпадении
-файлов в журнале выводится, какой мод заменил предыдущий.
+*En español: [MODS.es.md](MODS.es.md).*
 
-По умолчанию используется `bbport/mods/`, а в AppImage —
-`~/.local/share/bbport/mods/`. Распакуйте скачанный мод так:
+CTR Nitro-Fueled keeps its data in `archives/` of the game folder: IGA archives (`*.pak`) holding
+the game's IGZ (Alchemy) files, next to the Bink videos (`*.bk2`). A file mod replaces whole
+archives (or adds ones). `scripts/mods.py` overlays the enabled mods on the game folder at every
+start; the game folder itself is never written.
+
+## Installing a mod
+
+Put each mod in its own folder inside the mods folder:
+
+| Install | Mods folder |
+|---|---|
+| Windows portable | `mods\` next to the launcher (`BB_DATA_DIR`) |
+| AppImage | `~/.local/share/sacredfire/mods/` |
+| From the repository (`run.sh`) | `mods/` in the repository, or `BB_MODS_DIR` |
+
+Unpack ZIP/7z downloads first. Accepted layouts (names in any case):
 
 ```text
 mods/
-  Название мода/
-    dvdroot_ps4/
-      chr/...
-      param/...
-      menu/...
+  My kart/
+    archives/
+      loadingscreen_octane.pak
+  Wrapped/
+    CUSA13795/archives/...      (also app0/, CUSA14876/ or Image0/)
+  Just archives/
+    juicedomain_hub.pak         (bare *.pak files go to archives/)
+    readme.txt
+  Downloaded v1.2/
+    Downloaded v1.2/archives/...   (one wrapper folder, as an archive extracted into its name)
 ```
 
-Также принимаются:
+Any other data folder the game folder has (other than `sce_module` and `sce_sys`) can be replaced
+the same way. Readme files, pictures and folders that are not game folders stay out of the game.
+The start log says what each mod brought: `Mods: My kart: 1 files`, then
+`Mods: 1 game files replaced, 0 added`. A mod that should replace files but says `0 game files
+replaced` has the wrong paths inside.
 
-- `Название мода/app0/dvdroot_ps4/...` и `Название мода/CUSA03173/dvdroot_ps4/...`;
-- лишняя папка-обёртка, как после распаковки архива в папку с его именем:
-  `Название мода/Название мода v1.2/dvdroot_ps4/...` (рядом могут лежать readme/картинки);
-- мод без `dvdroot_ps4`, в котором сразу лежат папки игры: `Название мода/chr/...`,
-  `Название мода/parts/...` (`chr`, `parts`, `map`, `menu`, `msg`, `param`, `sfx`,
-  `sound`, `font` и другие папки `dvdroot_ps4`).
+## Order and switches
 
-Регистр имён в моде не важен: `DVDROOT_PS4/Chr/C0000.chrbnd.dcx` из мода, собранного
-под Windows, заменяет игровой `dvdroot_ps4/chr/c0000.chrbnd.dcx`. Раньше такой файл
-добавлялся рядом под своим именем, и игра его не видела. В журнале запуска видно, сколько
-файлов игры мод заменил и сколько добавил: `Mods: 12 game files replaced, 0 added`.
-Если мод должен заменять файлы, а пишет `0 game files replaced`, проверьте пути внутри мода.
-Архивы ZIP/7z нужно предварительно распаковать. Поддерживаются готовые замены
-файлов `dvdroot_ps4`: текстуры, модели, параметры, интерфейс, звук и шрифты.
-Менеджер не объединяет содержимое двух одинаковых `.dcx`/`.bnd` файлов: последняя
-замена выигрывает целиком.
+New mod folders are enabled and appended in alphabetical order. `mods.json` in the data folder
+keeps the order and the disabled ones; the mod lower in `order` wins:
 
-Для уже подготовленной папки shadPS4 работает соседний каталог
-`CUSA03173-mods/dvdroot_ps4/...` рядом с `CUSA03173/`. Он подключается автоматически
-перед модами из списка. Общий переключатель выключает и его. Можно также выбрать
-папку, непосредственно содержащую `dvdroot_ps4`, как папку модов; такая папка
-подключается целиком, без списка отдельных модов.
-Соглашение `-mods` проверено по
-[исходникам shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/file_sys/fs.cpp).
+```json
+{"order": ["First", "Second"], "disabled": ["First"]}
+```
 
-Оригиналы игры не перезаписываются. На время запуска создаётся отдельное
-объединённое дерево ссылок в каталоге данных `out/mod-game-*`; чтение, stat и
-перечисление каталогов видят выбранные замены и остальные оригинальные файлы.
-Игровые `/app0` и `/hostapp` доступны только для чтения. Сохранения остаются
-в прежней папке и доступны для записи. При обычном завершении или остановке
-лаунчером временное дерево удаляется. После SIGKILL/аварийного отключения оно
-может остаться; такие каталоги не используются в следующем запуске.
+When two mods replace the same file the log names both (`Mods: archives/x.pak: First -> Second`).
+Archives are never merged: the last one wins whole. `BB_MODS_ENABLED=0` turns all mods off,
+`BB_MODS_CONFIG` names another `mods.json`.
 
-Моды с заменой `eboot.bin`, `sce_module` или `sce_sys`, инжекторы DLL и скриптовые
-плагины этим загрузчиком не поддерживаются. Патчи исполняемого кода остаются
-в существующей системе `patches/` / `BB_PATCHES`. Символьные ссылки внутри мода
-не принимаются. Совместимость конкретного мода с CUSA03173 1.09 определяется
-его автором.
-
-Для запуска из терминала:
+A folder `CUSA13795-mods/` beside the game folder (shadPS4's convention) is loaded first. A mods
+folder that holds `archives/` itself is loaded as one mod.
 
 ```sh
-BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_DIR=/path/to/mods bash run.sh
-BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_ENABLED=0 bash run.sh
+BB_GAME_DIR=/path/to/CUSA13795 BB_MODS_DIR=/path/to/mods bash run.sh
+BB_GAME_DIR=/path/to/CUSA13795 BB_MODS_ENABLED=0 bash run.sh
 ```
 
-Порядок и отключения сохраняются в каталоге данных `mods.json`:
+`BB_MOD_TRACE=1` (with `BB_MODS_DIR`) logs the first reads of the mods' files.
 
-```json
-{"order": ["Первый", "Второй"], "disabled": ["Первый"]}
-```
+## Limits
 
-Новые папки включаются автоматически и добавляются в конец по алфавиту.
-`BB_MODS_CONFIG` меняет путь профиля. `BB_MOD_TRACE=1` с `BB_MODS_DIR` выводит
-первые чтения реально подключённых файлов для диагностики.
+- **Ultrawide** (Settings > Display > Aspect ratio 21:9 or 32:9) edits 13 archives in its own
+  prepared view: `h100_hub`, `juicedomain_hub`, `juicedomain_permanent`, `juicedomain_race`,
+  `juicedomain_race_flareday`, `juicedomain_race_flarenight`, `juicedomain_startscreen`, `legal`,
+  `loadingscreen_octane`, `octane_startscreen`, `update`, `update2`, `update_hub2`. Mods apply on
+  top of that view: a mod that replaces one of these archives wins and that part of the screen
+  goes back to 16:9.
+- The executable and system files (`eboot.bin`, `sce_module/`, `sce_sys/`) are refused; code
+  changes are patches (`patches/`, shadPS4 XML). Symbolic links inside a mod are refused.
+- Mods must be made for the PS4 game (CUSA13795 1.21, or CUSA14876 for the European edition).
+  Archives from the Switch or Xbox versions are a different platform's build and are not expected
+  to load. Some of the European edition's files differ from the USA ones in their dependency
+  records, so a USA mod may need porting (`tools/igz_merge.py` merges a USA edit into an EU file).
 
-# Сторонние патчи (XML shadPS4)
+## How it works
 
-Папка `patches/` в каталоге данных (в AppImage — `~/.local/share/bbport/patches/`, в лаунчере
-группа **Сторонние патчи**, там же можно выбрать другую папку). Подходят XML-файлы патчей в
-формате shadPS4/GoldHEN: берутся `Metadata` для `AppVer="01.09"` и `eboot.bin`, файлы с
-`TitleID` других игр пропускаются. Включение по умолчанию — из `isEnabled` файла, выбор в
-лаунчере сохраняется в `patches.json` каталога данных:
-
-```json
-{"enabled": ["файл.xml/Имя патча"], "disabled": ["файл.xml/Другой патч"]}
-```
-
-Поддерживаются строки `bytes`, `bytes16/32/64`, `float32/64`, `utf8`, `utf16`.
-Патч со строками `mask` (поиск по шаблону) или с адресом вне eboot пропускается целиком,
-с сообщением в журнале. Сторонние патчи применяются после встроенных
-(`patches/Bloodborne.xml`): при пересечении побеждает сторонний. Из терминала:
-`BB_PATCHES_DIR=/путь BB_PATCHES_CONFIG=/путь/patches.json bash run.sh`.
-
-Патчи, которые заменяют указатели в таблицах (как `60 FPS++` и `90 FPS++`), загрузчик
-переносит на реальный адрес образа. Раньше такие патчи останавливали запуск ошибкой
-`patch overlaps a relocation`.
-
-# Резкость TAA
-
-Настройки `sharpen` и `sharpness` теперь работают также для TAA, в лаунчере и
-меню игры. Диапазон — **0…1**; при 0 или выключенном переключателе дополнительного
-прохода нет. RCAS применяется к готовой сцене перед HUD. В историю TAA сохраняется
-цвет до повышения резкости, чтобы она не усиливалась при повторном накоплении.
-Ровные участки сохраняют исходный цвет, включая HDR; дополнительный буфер не нужен.
+The overlay is a tree of links in the data folder (`out/mod-game-*`, beside the game on another
+Windows drive without the symlink privilege): every game entry is linked, and each folder a mod
+touches is opened one level so only the replaced files point at the mod. The game reads the tree
+as `/app0`, read-only. It is removed when the game ends; a tree left by a crash is not reused.
